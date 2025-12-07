@@ -22,7 +22,9 @@ sudo -u <username> -i ssh -W localhost:22 <host-alias>
 
 - **`sudo -u <username>`**:  切换到指定用户（或自动检测的实际用户），解决文件权限问题。
 - **`-i` (Login Shell)**: 加载用户的完整登录环境（读取 `.zshrc`/`.bashrc`），确保 `PATH` 包含所有必要工具。
-- **`-W localhost:22`**: 建立一条透传 TCP 隧道到目标主机的 SSH 端口，Mihomo 在此隧道上进行自己的加密握手。
+- **`-W localhost:<port>`**: 建立一条透传 TCP 隧道到目标主机的 SSH 端口。
+    - **关于端口**：这里的 `<port>` 取自 Mihomo 配置中的 `port` 字段。
+    - **技术细节**：这代表了**隧道内目标地址**。即使服务器外部端口是 10022，只要内部 SSHD 监听 22，这里就必须是 22。外部连接端口由系统 SSH 根据 config 自动处理。
 
 ### 3. 代码变更
 
