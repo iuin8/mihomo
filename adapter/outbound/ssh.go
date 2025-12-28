@@ -65,20 +65,9 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 		return s.client, nil
 	}
 
-	var c net.Conn
-
-	// 如果使用系统 ssh 命令（完整 SSH config 支持）
-	if s.useSystemSsh {
-		c, err = s.dialViaSystemSsh(ctx, s.option.Server)
-		if err != nil {
-			return nil, fmt.Errorf("system ssh failed: %w", err)
-		}
-	} else {
-		// 原有的纯 Go 实现
-        c, err := s.dialer.DialContext(ctx, "tcp", addr)
-        if err != nil {
-            return nil, err
-        }
+	c, err := s.dial(ctx, addr)
+	if err != nil {
+		return nil, err
 	}
 
 	defer func(c net.Conn) {
@@ -109,6 +98,13 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 	}()
 
 	return client, nil
+}
+
+func (s *Ssh) dial(ctx context.Context, addr string) (net.Conn, error) {
+	if s.useSystemSsh {
+		return s.dialViaSystemSsh(ctx, s.option.Server)
+	}
+	return s.dialer.DialContext(ctx, "tcp", addr)
 }
 
 // ProxyInfo implements C.ProxyAdapter
