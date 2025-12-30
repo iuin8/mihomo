@@ -1,7 +1,7 @@
 package outbound
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -71,14 +71,16 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 	targetAddr := fmt.Sprintf("localhost:%d", port)
 
 	if actualUser != "" {
-		// 以实际用户身份执行: sudo -u username -i ssh -W ...
-		// -i: 加载用户的登录环境（包括 PATH，确保 cloudflared 等命令可用）
-		cmdArgs = []string{"-u", actualUser, "-i", "ssh", "-W", targetAddr, hostAlias}
-		log.Infoln("[SSH] Running as user: %s (with login env)", actualUser)
+		// 以实际用户身份执行: sudo -n -u username -H ssh -o BatchMode=yes -W ...
+		// -n: 非交互模式，如果需要密码则立即失败
+		// -H: 设置 HOME 环境变量为目标用户的主目录
+		// -o BatchMode=yes: 禁止 ssh 询问密码或确认主机密钥
+		cmdArgs = []string{"-n", "-u", actualUser, "-H", "ssh", "-o", "BatchMode=yes", "-W", targetAddr, hostAlias}
+		log.Infoln("[SSH] Running as user: %s (non-interactive)", actualUser)
 		log.Infoln("[SSH] Command: sudo %s", strings.Join(cmdArgs, " "))
 	} else {
-		// 回退：直接执行（可能失败）
-		cmdArgs = []string{"-W", targetAddr, hostAlias}
+		// 回退：直接执行（BatchMode 确保不挂起）
+		cmdArgs = []string{"-o", "BatchMode=yes", "-W", targetAddr, hostAlias}
 		log.Warnln("[SSH] Could not determine actual user, running ssh directly")
 		log.Infoln("[SSH] Command: ssh %s", strings.Join(cmdArgs, " "))
 	}
@@ -107,9 +109,11 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 		return nil, fmt.Errorf("failed to get stdout pipe: %w", err)
 	}
 
-	// 捕获 stderr
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	// 获取 stderr pipe 用于实时日志
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
 
 	// 启动命令
 	if err := cmd.Start(); err != nil {
@@ -118,15 +122,23 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 
 	log.Infoln("[SSH] SSH subprocess started, PID: %d", cmd.Process.Pid)
 
+	// 实时转发 stderr 到日志
+	go func() {
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			log.Warnln("[SSH-STDERR] %s", scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			log.Debugln("[SSH-STDERR] pipe error: %v", err)
+		}
+	}()
+
 	// 监控进程退出
 	go func() {
 		if err := cmd.Wait(); err != nil {
-			output := stderr.String()
-			if len(output) > 0 {
-				log.Errorln("[SSH] SSH process exited with error: %v, stderr: %s", err, output)
-			} else {
-				log.Errorln("[SSH] SSH process exited with error: %v", err)
-			}
+			log.Errorln("[SSH] SSH process exited with error: %v", err)
+		} else {
+			log.Infoln("[SSH] SSH process exited normally")
 		}
 	}()
 
@@ -135,7 +147,6 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 		stdin:  stdin,
 		stdout: stdout,
 		cmd:    cmd,
-		stderr: &stderr,
 	}, nil
 }
 
@@ -144,7 +155,6 @@ type sshCmdConn struct {
 	stdin  io.WriteCloser
 	stdout io.ReadCloser
 	cmd    *exec.Cmd
-	stderr *bytes.Buffer
 }
 
 func (c *sshCmdConn) Read(b []byte) (n int, err error) {
@@ -156,8 +166,11 @@ func (c *sshCmdConn) Write(b []byte) (n int, err error) {
 }
 
 func (c *sshCmdConn) Close() error {
-	c.stdin.Close()
-	c.stdout.Close()
+	_ = c.stdin.Close()
+	_ = c.stdout.Close()
+	if c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
+	}
 	return c.cmd.Wait()
 }
 

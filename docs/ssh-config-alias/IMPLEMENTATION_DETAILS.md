@@ -46,8 +46,21 @@ sudo -u <username> -i ssh -W localhost:22 <host-alias>
     - `SshUserHome` (string): 用户主目录辅助字段。
 - 在 `connect` 方法中增加分支判断，当启用该功能时调用 `dialViaSystemSsh`。
 
-### 4. 优势
+### 5. 关于“双层 SSH 隧道”的深度解析
 
-- **零配置拥有高级功能**：只要系统终端能 `ssh host` 通，Mihomo 就能用。
-- **无需密钥迁移**：不需要把密钥复制到 Mihomo 的配置中，直接读取 `~/.ssh/id_rsa`。
-- **兼容性强**：支持所有 OpenSSH 客户端支持的指令（`Match`, `Include`, `Certificate` 等）。
+在启用 `use-ssh-config-alias` 后，连接实际上由两个独立的 SSH 握手组成，这解释了为什么即使系统 SSH 配置了私钥，Mihomo 订阅中仍需配置私钥：
+
+#### 第一层：系统级隧道 (Outer Layer)
+*   **执行者**：系统 `ssh` 命令（通过 `sudo -n -u fa ssh -W ...` 调用）。
+*   **逻辑**：它像一根“引出的网线”，利用系统 `.ssh/config` 中的 `ProxyJump`、`IdentityFile` 等高级功能穿透复杂网络环境。
+*   **产出**：它通过 `-W` 参数，在 Mihomo 进程与目标机器的 22 端口之间建立了一个原始的 TCP 通道。
+
+#### 第二层：Mihomo 内核协议 (Inner Layer)
+*   **执行者**：Mihomo 内部集成的 Go 语言 SSH 客户端。
+*   **逻辑**：在第一层提供的 TCP 通道之上再次发起 SSH 握手认证。
+*   **原因**：SSH 是有状态的应用层协议。虽然通道通了，但远程 SSH 服务需要验证当前连接者的身份才能授权执行 `direct-tcpip` 指令（用于代理上网流量）。
+*   **凭据**：这一层必须读取 Mihomo 订阅文件中的 `private-key`。
+
+> [!TIP]
+> **为什么要这么做？**
+> 这种“双层模式”能实现完美的解耦：系统 SSH 负责解决“怎么连上服务器”（极其复杂的网络路径），而 Mihomo 负责解决“怎么通过服务器代理流量”。这样无需在 Go 代码中复刻 OpenSSH 复杂的配置解析逻辑。
