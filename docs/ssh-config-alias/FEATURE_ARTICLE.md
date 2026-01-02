@@ -1,12 +1,6 @@
 # 深度集成 SSH Config：让 Mihomo 完美复用 ~/.ssh/config 魔法，告别繁琐代理链！
 
-## 🔗 项目信息
-
-- **Fork 仓库**: [https://github.com/iuin8/mihomo](https://github.com/iuin8/mihomo)
-- **分支**: (请确保查看包含 `ssh-config-alias` 功能的分支, 例如: `ssh_system_v1.19.18`)
-- **核心文件**: `adapter/outbound/ssh.go`, `adapter/outbound/ssh_system.go`
-
----
+![clash-ui-show](./imgs/clash-ui-show.png)
 
 ## 📖 需求背景
 
@@ -67,10 +61,19 @@ proxies:
 
 ---
 
+## 🔗 项目信息
+
+- **Fork 仓库**: [https://github.com/iuin8/mihomo](https://github.com/iuin8/mihomo)
+- **分支**: (请确保查看包含 `ssh-config-alias` 功能的分支, 例如: `ssh_system_v1.19.18`)
+- **核心文件**: `adapter/outbound/ssh.go`, `adapter/outbound/ssh_system.go`
+
+---
+
 ## 📚 参考文档
 
-* [实现原理](./IMPLEMENTATION.md)
-* [使用指南](./USER_GUIDE.md)
+* [实现原理](https://github.com/iuin8/mihomo/blob/ssh_system_v1.19.18/docs/ssh-config-alias/IMPLEMENTATION_DETAILS.md)
+* [使用指南](https://github.com/iuin8/mihomo/blob/ssh_system_v1.19.18/docs/ssh-config-alias/USER_GUIDE.md)
+* [打包命令](https://github.com/iuin8/mihomo/blob/ssh_system_v1.19.18/docs/package.md)
 * [SSH Config 官方文档](https://man.openbsd.org/ssh_config)
 * [fork from MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)
 
