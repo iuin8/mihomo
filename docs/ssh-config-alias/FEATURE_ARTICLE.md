@@ -2,8 +2,8 @@
 
 ## 🔗 项目信息
 
-- **Fork 仓库**: [https://github.com/MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)
-- **分支**: (请确保查看包含 `ssh-config-alias` 功能的分支, 例如: `ssh_system_v1.19.17`)
+- **Fork 仓库**: [https://github.com/iuin8/mihomo](https://github.com/iuin8/mihomo)
+- **分支**: (请确保查看包含 `ssh-config-alias` 功能的分支, 例如: `ssh_system_v1.19.18`)
 - **核心文件**: `adapter/outbound/ssh.go`, `adapter/outbound/ssh_system.go`
 
 ---
