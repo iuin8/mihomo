@@ -1,6 +1,6 @@
 # 深度集成 SSH Config：让 Mihomo 完美复用 ~/.ssh/config 魔法，告别繁琐代理链！
 
-![clash-ui-show](./imgs/clash-ui-show.png)
+![clash-ui-show](https://github.com/iuin8/mihomo/blob/ssh_system_v1.19.18/docs/ssh-config-alias/imgs/clash-ui-show.png?raw=true)
 
 ## 📖 需求背景
 
