@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -144,19 +143,6 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 	if err != nil {
 		log.Warnln("[SSH] Failed to capture full environment: %v, falling back to basic env", err)
 		env = os.Environ()
-		// 补齐常用路径作为兜底
-		extraPaths := "/usr/local/bin:/opt/homebrew/bin"
-		foundPath := false
-		for i, e := range env {
-			if strings.HasPrefix(e, "PATH=") {
-				env[i] = e + ":" + extraPaths
-				foundPath = true
-				break
-			}
-		}
-		if !foundPath {
-			env = append(env, "PATH="+os.Getenv("PATH")+":"+extraPaths)
-		}
 	}
 	cmd.Env = env
 
@@ -167,27 +153,43 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 
 	log.Debugln("[SSH] Command: %s %s", cmd.Path, strings.Join(cmd.Args[1:], " "))
 
-	// 获取 stdin/stdout
-	stdin, err := cmd.StdinPipe()
+	// 手动创建 Pipe 以获得 *os.File，从而支持 SetDeadline
+	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get stdin pipe: %w", err)
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get stdout pipe: %w", err)
-	}
+	cmd.Stdin = stdinR
+	cmd.Stdout = stdoutW
 
 	// 获取 stderr pipe 用于实时日志
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		return nil, fmt.Errorf("failed to get stderr pipe: %w", err)
 	}
 
 	// 启动命令
 	if err := cmd.Start(); err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		return nil, fmt.Errorf("failed to start ssh: %w", err)
 	}
+
+	// 关闭子进程使用的那一端，保留当前进程使用的这一端
+	_ = stdinR.Close()
+	_ = stdoutW.Close()
 
 	log.Infoln("[SSH] SSH subprocess started, PID: %d", cmd.Process.Pid)
 
@@ -212,16 +214,16 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 
 	// 返回包装的连接
 	return &sshCmdConn{
-		stdin:  stdin,
-		stdout: stdout,
+		stdin:  stdinW,
+		stdout: stdoutR,
 		cmd:    cmd,
 	}, nil
 }
 
 // sshCmdConn 实现 net.Conn 接口
 type sshCmdConn struct {
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
+	stdin  *os.File
+	stdout *os.File
 	cmd    *exec.Cmd
 }
 
@@ -251,13 +253,14 @@ func (c *sshCmdConn) RemoteAddr() net.Addr {
 }
 
 func (c *sshCmdConn) SetDeadline(t time.Time) error {
-	return nil
+	_ = c.stdin.SetDeadline(t)
+	return c.stdout.SetDeadline(t)
 }
 
 func (c *sshCmdConn) SetReadDeadline(t time.Time) error {
-	return nil
+	return c.stdout.SetReadDeadline(t)
 }
 
 func (c *sshCmdConn) SetWriteDeadline(t time.Time) error {
-	return nil
+	return c.stdin.SetWriteDeadline(t)
 }

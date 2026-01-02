@@ -1,91 +1,70 @@
 # SSH Config Alias Support - 使用指南 (User Guide)
 
-本功能允许 Mihomo 直接使用你系统中的 SSH 配置文件（`~/.ssh/config`），从而支持 `ProxyJump`（跳板机）和 `ProxyCommand`（如 Cloudflare Access）等高级功能。
+本功能允许 Mihomo 直接使用系统 SSH 配置文件（`~/.ssh/config`），支持 `ProxyJump`、`ProxyCommand`（如 Cloudflare Tunnel/ESA）等高级功能。
+
+---
 
 ## 1. 基础配置
 
-在你的 Mihomo 配置文件（`config.yaml`）中，按如下方式配置 SSH 代理节点：
+在 Mihomo 配置文件（`config.yaml`）中，按如下方式配置：
 
 ```yaml
 proxies:
   - name: "SSH-System-Proxy"
     type: ssh
-    server: "my-host-alias"    # 这里填写你在 ~/.ssh/config 中定义的 Host 名称
-    port: 22                   # 通常填 22，实际连接端口由 SSH config 决定
-    username: "root"           # 这里的用户名为目标机器的登录用户（可选，部分场景需匹配）
-    # private-key: ...         # 不需要填写私钥，会自动读取系统配置
+    server: "my-host-alias"    # 填写 ~/.ssh/config 中定义的 Host 别名
+    port: 22                   # 必填，通常填 22（见下方端口说明）
+    username: "dev"            # 目标服务器的登录用户名
+    password: "..."            # (可选) 目标服务器密码
+    private-key: "..."         # (重要) 仍需提供私钥或路径，用于内层协议握手
     
-    # === 关键配置 ===
-    use-ssh-config-alias: true # 启用系统 SSH 配置支持
-    ssh-user: "fa"             # (推荐) 指定你电脑上原本能成功 SSH 的用户名
+    # === 关键系统代理配置 ===
+    use-ssh-config-alias: true # 启用开关
+    ssh-user: "fa"             # (强烈推荐) 本地能成功 SSH 的用户名，用于权限切换
 ```
 
-## 2. 常见场景配置
+> [!IMPORTANT]
+> **关于双层认证 (Dual-Layer Auth)**
+> 虽然外层连接使用了系统 SSH 及其配置好的私钥，但 **Mihomo 配置中仍需提供 `private-key`**。
+> - **外层 (系统 SSH)**：利用系统密钥穿透跳板机、完成通道建立。
+> - **内层 (Mihomo 协议)**：在通道内发起最终认证。这是安全防范的要求，确保连接者有权代理流量。
+
+---
+
+## 2. 核心特性说明
+
+### 🛡️ 智能环境抓取 (Zero Config)
+你无需在 Mihomo 中配置 `PATH` 或手动指定 `cloudflared` 的位置。
+- **原理**：Mihomo 会自动以 `ssh-user` 身份执行“贪婪环境抓取”，加载用户的全量登录变量。
+- **自愈能力**：如果 `ProxyCommand` 因为 Token 失效报错，缓存会自动清除。你只需再次发起请求，系统会重新抓取最新的环境（如更新后的 Token）。
+
+### 🧊 极速且纯净的管道
+- **进程复用**：系统 SSH 子进程被适配为原生的 Socket，支持完整的 **SetDeadline**。
+- **稳如泰山**：完美支持超过 60 秒的耗时请求，不再会出现空闲断连的情况。
+- **静默登陆**：自动屏蔽 `Last login` 等冗余输出，防止污染 SSH 握手协议。
+
+---
+
+## 3. 常见场景配置
 
 ### 场景 A：使用跳板机 (ProxyJump)
+只要你在 `~/.ssh/config` 中配置好了 `ProxyJump`，Mihomo 端只需填写目标节点的别名，就像在终端操作一样简单。
 
-假设你的 `~/.ssh/config` 配置如下：
-```ssh
-Host jump-server
-  HostName jump.example.com
-  User admin
+### 场景 B：云端隧道 (ProxyCommand)
+支持 Cloudflare Tunnel (`cloudflared`) 和 阿里云 ESA 等边缘加速节点。这些工具依赖的身份变量会被 Mihomo 自动捕获。
 
-Host internal-server
-  HostName 10.0.0.5
-  User dev
-  ProxyJump jump-server    # 通过跳板机连接
-```
-
-**Mihomo 配置：**
-```yaml
-proxies:
-  - name: "Internal-Via-Jump"
-    type: ssh
-    server: "internal-server"   # 直接填最终目标的 Host 别名
-    use-ssh-config-alias: true
-    ssh-user: "your-local-username"
-```
-
-### 场景 B：使用 Cloudflare Access (ProxyCommand)
-
-假设 SSH 配置如下：
-```ssh
-Host cf-protected-server
-  HostName ssh.example.com
-  ProxyCommand cloudflared access ssh --hostname %h
-```
-
-**Mihomo 配置：**
-```yaml
-proxies:
-  - name: "CF-Access-SSH"
-    type: ssh
-    server: "cf-protected-server"
-    use-ssh-config-alias: true
-    ssh-user: "your-local-username"
-```
-
-## 3. 配置项说明
-
-| 选项 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `use-ssh-config-alias` | bool | 是 | 设置为 `true` 以启用此功能。 |
-| `port` | int | 否 | **重要**：请填写服务器**内部**监听的端口（通常是 **22**）。即使你在 `~/.ssh/config` 中配置了 `Port 10022` 这种外部映射端口，这里也只需填 22。因为外部连接是由系统 SSH 处理的，而这个 port 是用于隧道建立后的内部数据传输。 |
-| `ssh-user` | string | 推荐 | 指定执行 `ssh` 命令的本地系统用户名。Mihomo 可能会以 root 运行，此选项确保它切换回你的用户身份去读取正确的 keys 和 config。 |
-| `ssh-user-home` | string | 否 | 指定用户主目录（辅助自动检测），一般只需配置 `ssh-user` 即可。 |
-
-### ⚠️ 关于端口配置的重要提示
-
-**即使使用了非标准 SSH 端口，这里也应该填 22！**
-
-- **场景**：目标服务器（容器）外部映射端口为 `12202`，内部是 `22`。
-- **SSH Config**：必须配置 `Port 12202`，系统 SSH 获取以此建立连接。
-- **Mihomo Config**：必须配置 `port: 22`。Mihomo 会请求 "请转发流量到 localhost:22"。如果填了 12202，会被拒绝（因为容器内部并没有监听 12202）。
+---
 
 ## 4. 故障排查
 
-如果连接失败，请检查：
+如果连接不稳定或报错，请查看 Mihomo 日誌，注意以下标识：
 
-1. **终端测试**：首先确保在终端中执行 `ssh <server>` 能成功连接且**不需要输入密码**（使用密钥认证）。
-2. **sudo 权限**：Mihomo 需要有权限执行 `sudo -u <user> -i`。如果 Mihomo 是以普通用户运行的，确保该用户有 sudo 权限或直接即是目标用户。
-3. **Cloudflared 路径**：如果使用 `ProxyCommand`，确保相关命令（如 `cloudflared`）在用户的 `PASS` 环境变量中。本功能已自动添加 `-i` 参数来加载用户环境，一般能正常工作。
+1.  **`[SSH-STDERR]`**：这是 SSH 子进程直接抛出的原始错误（如 `Permission denied`, `Could not resolve hostname`）。这是最直接的诊断信息。
+2.  **`[SSH] SSH process exited with error`**：说明环境抓取或子进程崩溃。常见于 `ssh-user` 配置错误或密钥文件权限不正确（通常需 600）。
+3.  **终端先行原则**：
+    - 在终端执行 `ssh <alias>`。
+    - 确保**无需任何交互/输入密码**就能直接进入远程 Shell。
+    - 如果终端都连不上，Mihomo 也无法连接。
+
+---
+*Last Updated: 2026-01-02*
