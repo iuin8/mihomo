@@ -1,66 +1,69 @@
-# SSH Config Alias Support - 实现细节 (Implementation Details)
+# SSH Config Alias Support - 功能原理与实现说明
 
-## 核心工作内容
+本项目为 Mihomo 引入了对系统 SSH 配置文件（`~/.ssh/config`）的完美支持。通过调用系统 `ssh` 命令作为“传输层”，Mihomo 能够无缝利用 `ProxyJump`、`ProxyCommand`、密钥别名等高级功能。
 
-本项目旨在解决 Mihomo SSH 出站适配器无法利用系统 SSH 配置文件（`~/.ssh/config`）的高级功能（如 `ProxyJump`、`ProxyCommand`）的问题。
+---
 
-### 1. 遇到的挑战
+## 核心设计原理
 
-- **权限隔离**：Mihomo 通常以 root 权限运行（用于 TUN 模式等），但用户的 SSH 配置文件和密钥通常位于普通用户目录下，且权限严格限制（需 600/700）。
-- **环境依赖**：某些 `ProxyCommand`（如 `cloudflared`）依赖用户的环境变量（`PATH`）才能正确执行。
-- **协议冲突**：简单的 `ssh -W` 转发如果处理不当，会产生双层 SSH 握手冲突。
+### 1. 双层 SSH 隧道 (Dual-Layer SSH)
+这是本设计的核心。连接被分解为两个逻辑层：
 
-### 2. 解决方案：系统 SSH 代理模式
+*   **外层 (Outer Layer - 传输层)**：由系统 `ssh` 命令执行。
+    *   **命令**：`sudo -u fa ssh -o BatchMode=yes -W localhost:22 <alias>`
+    *   **职责**：负责穿透复杂的网络环境（如跳板机等）。
+    *   **产出**：通过 `-W` 参数建立一个原始的 TCP 流管道。
+*   **内层 (Inner Layer - 协议层)**：由 Mihomo 内置的 Go SSH 内核执行。
+    *   **逻辑**：在“外层”提供的管道上发起 SSH 握手。
+    *   **职责**：进行最终的身份认证并执行 `direct-tcpip` 指令，用于转发上网流量。
 
-我们不尝试在 Go 语言中重新实现 SSH 配置解析，而是直接调用系统的 `ssh` 命令来建立隧道。
+> [!NOTE]
+> 这种设计实现了完美的解耦：系统 SSH 解决“怎么连上服务器”，Mihomo 解决“连上后怎么代理流量”。
 
-#### 核心命令
+---
 
-```bash
-sudo -u <username> -i ssh -W localhost:22 <host-alias>
-```
+### 2. 贪婪环境抓取 (Greedy Environment Capture)
+为了解决 `ProxyCommand`（如 `cloudflared`）对环境变量（`PATH`、Token）的强依赖，我们引入了“贪婪抓取”机制。
 
-- **`sudo -u <username>`**:  切换到指定用户（或自动检测的实际用户），解决文件权限问题。
-- **`-i` (Login Shell)**: 加载用户的完整登录环境（读取 `.zshrc`/`.bashrc`），确保 `PATH` 包含所有必要工具。
-- **`-W localhost:<port>`**: 建立一条透传 TCP 隧道到目标主机的 SSH 端口。
-    - **关于端口**：这里的 `<port>` 取自 Mihomo 配置中的 `port` 字段。
-    - **技术细节**：这代表了**隧道内目标地址**。即使服务器外部端口是 10022，只要内部 SSHD 监听 22，这里就必须是 22。外部连接端口由系统 SSH 根据 config 自动处理。
+*   **执行环境隔离**：Mihomo 通常运行在 root 下，而用户配置在普通用户（如 `fa`）下。
+*   **静默抓取**：在第一次连接前，自动执行 `sudo -u fa -i env`。
+*   **环境解析**：捕获登录 Shell 的**全量**环境变量，并将其缓存。
+*   **安全注入**：实际执行 SSH 连接时，注入这些变量。这保证了 `cloudflared` 能正确找到其认证信息。
 
-### 3. 代码变更
+---
 
-#### 新增文件: `adapter/outbound/ssh_system.go`
+### 3. 自愈式环境缓存 (Self-Healing Cache)
+为了保证长期运行的稳定性，缓存具备自愈能力：
 
-- 封装了系统命令的调用逻辑。
-- 实现了 `sshCmdConn` 结构体，将 SSH 子进程的标准输入/输出（stdin/stdout）适配为 `net.Conn` 接口，使其能无缝集成到 Mihomo 的连接池中。
-- 增加了用户自动检测逻辑：
-    1. 优先使用配置的 `ssh-user`。
-    2. 尝试从 `ssh-user-home` 路径推断。
-    3. 尝试读取 `SUDO_USER` 环境变量。
-    4. 扫描 `/Users` 目录（macOS）作为降级方案。
+*   **失效检测**：持续监控 SSH 子进程的退出状态。
+*   **自动清理**：一旦子进程异常退出（如因 Token 过期导致连接失败），系统会立即**清除**该用户的环境缓存。
+*   **自动恢复**：下一次连接尝试会自动重新触发“环境抓取”，从而捕获最新的变量或重新生成的 Token。
 
-#### 修改文件: `adapter/outbound/ssh.go`
+---
 
-- 扩展了 `SshOption` 配置结构，新增：
-    - `UseSshConfigAlias` (bool): 启用开关。
-    - `SshUser` (string): 显式指定执行用户。
-    - `SshUserHome` (string): 用户主目录辅助字段。
-- 在 `connect` 方法中增加分支判断，当启用该功能时调用 `dialViaSystemSsh`。
+### 4. 智能 Sudo 探测 (Smart Sudo)
+为了减少不必要的性能开销和环境剥离：
 
-### 5. 关于“双层 SSH 隧道”的深度解析
+*   **用户比对**：判断当前执行 Mihomo 的进程用户与目标 SSH 用户。
+*   **动态切换**：如果用户一致，直接执行 `ssh`，跳过 `sudo` 环节。这显著降低了环境污染的概率并提高了启动速度。
 
-在启用 `use-ssh-config-alias` 后，连接实际上由两个独立的 SSH 握手组成，这解释了为什么即使系统 SSH 配置了私钥，Mihomo 订阅中仍需配置私钥：
+---
 
-#### 第一层：系统级隧道 (Outer Layer)
-*   **执行者**：系统 `ssh` 命令（通过 `sudo -n -u fa ssh -W ...` 调用）。
-*   **逻辑**：它像一根“引出的网线”，利用系统 `.ssh/config` 中的 `ProxyJump`、`IdentityFile` 等高级功能穿透复杂网络环境。
-*   **产出**：它通过 `-W` 参数，在 Mihomo 进程与目标机器的 22 端口之间建立了一个原始的 TCP 通道。
+## 协议冲突保护 (Stdout Protection)
 
-#### 第二层：Mihomo 内核协议 (Inner Layer)
-*   **执行者**：Mihomo 内部集成的 Go 语言 SSH 客户端。
-*   **逻辑**：在第一层提供的 TCP 通道之上再次发起 SSH 握手认证。
-*   **原因**：SSH 是有状态的应用层协议。虽然通道通了，但远程 SSH 服务需要验证当前连接者的身份才能授权执行 `direct-tcpip` 指令（用于代理上网流量）。
-*   **凭据**：这一层必须读取 Mihomo 订阅文件中的 `private-key`。
+这是一个极为关键的技术细节。SSH 握手对 `stdout` 非常敏感，任何非协议数据的混入（如 `Last login`、`MOTD` 消息）都会导致 `Invalid SSH identification string` 报错。
 
-> [!TIP]
-> **为什么要这么做？**
-> 这种“双层模式”能实现完美的解耦：系统 SSH 负责解决“怎么连上服务器”（极其复杂的网络路径），而 Mihomo 负责解决“怎么通过服务器代理流量”。这样无需在 Go 代码中复刻 OpenSSH 复杂的配置解析逻辑。
+*   **双步分离方案**：
+    1.  **抓取环境时**：使用 `-i` (Login Shell) 以获取完整变量，此时我们不关心握手。
+    2.  **建立连接时**：使用 **非交互模式** (不带 `-i`)，但注入第一步抓取的环境变量。
+*   **结果**：既拥有了全量变量，又保证了连接管道的绝对纯净。
+
+---
+
+## 代码结构
+
+*   [ssh.go](/adapter/outbound/ssh.go): 负责高层逻辑分发和订阅配置解析。
+*   [ssh_system.go](/adapter/outbound/ssh_system.go): 核心实现，包含环境抓取、进程管理、管道适配和缓存逻辑。
+
+---
+*Last Updated: 2026-01-02*

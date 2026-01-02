@@ -8,11 +8,73 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/metacubex/mihomo/log"
 )
+
+var (
+	userEnvCache = make(map[string][]string)
+	envMutex     sync.RWMutex
+)
+
+// fetchUserEnv 获取指定用户的全量登录环境变量
+func fetchUserEnv(ctx context.Context, actualUser string) ([]string, error) {
+	currentUser, _ := user.Current()
+	if actualUser == "" || (currentUser != nil && currentUser.Username == actualUser) {
+		return os.Environ(), nil
+	}
+
+	envMutex.RLock()
+	if cached, ok := userEnvCache[actualUser]; ok {
+		envMutex.RUnlock()
+		return cached, nil
+	}
+	envMutex.RUnlock()
+
+	log.Debugln("[SSH] Capturing full login environment for user: %s", actualUser)
+
+	// 使用 sudo -n -u <user> -H -i env 抓取
+	// -i 保证是登录 Shell，能加载 .zshrc/.bashrc 等
+	cmd := exec.CommandContext(ctx, "sudo", "-n", "-u", actualUser, "-H", "-i", "env")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to capture user env: %w", err)
+	}
+
+	var env []string
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// 简单验证是否是有效的 KEY=VALUE 格式，过滤掉可能的 MOTD 信息
+		if strings.Contains(line, "=") && !strings.HasPrefix(line, "Last login:") {
+			env = append(env, line)
+		}
+	}
+
+	envMutex.Lock()
+	userEnvCache[actualUser] = env
+	envMutex.Unlock()
+
+	return env, nil
+}
+
+// clearUserEnv 清除指定用户的环境缓存
+func clearUserEnv(actualUser string) {
+	if actualUser == "" {
+		return
+	}
+	envMutex.Lock()
+	delete(userEnvCache, actualUser)
+	envMutex.Unlock()
+	log.Warnln("[SSH] Cleared environment cache for user: %s due to failure", actualUser)
+}
 
 // dialViaSystemSsh 使用系统 SSH 命令建立连接
 func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn, error) {
@@ -30,7 +92,6 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 	// 方法0: 用户显式指定（最高优先级）
 	if s.option.SshUser != "" {
 		actualUser = s.option.SshUser
-		log.Infoln("[SSH] Using configured user: %s", actualUser)
 	}
 
 	// 方法1: 从配置中的 ssh-user-home 提取
@@ -39,16 +100,12 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 		parts := strings.Split(s.option.SshUserHome, "/")
 		if len(parts) >= 3 && parts[1] == "Users" {
 			actualUser = parts[2]
-			log.Infoln("[SSH] Detected user from ssh-user-home: %s", actualUser)
 		}
 	}
 
 	// 方法2: 从环境变量获取
 	if actualUser == "" {
 		actualUser = os.Getenv("SUDO_USER")
-		if actualUser != "" {
-			log.Infoln("[SSH] Detected user from SUDO_USER: %s", actualUser)
-		}
 	}
 
 	// 方法3: 检查/Users目录（macOS）- 跳过隐藏目录
@@ -57,11 +114,9 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 		if err == nil {
 			for _, entry := range entries {
 				name := entry.Name()
-				// 跳过隐藏目录(.开头)、系统目录
 				if entry.IsDir() && !strings.HasPrefix(name, ".") &&
 					name != "Shared" && name != "Guest" {
 					actualUser = name
-					log.Infoln("[SSH] Auto-detected user from /Users: %s", actualUser)
 					break
 				}
 			}
@@ -70,33 +125,47 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 
 	targetAddr := fmt.Sprintf("localhost:%d", port)
 
-	if actualUser != "" {
-		// 以实际用户身份执行: sudo -n -u username -H ssh -o BatchMode=yes -W ...
-		// -n: 非交互模式，如果需要密码则立即失败
-		// -H: 设置 HOME 环境变量为目标用户的主目录
-		// -o BatchMode=yes: 禁止 ssh 询问密码或确认主机密钥
-		cmdArgs = []string{"-n", "-u", actualUser, "-H", "ssh", "-o", "BatchMode=yes", "-W", targetAddr, hostAlias}
-		log.Infoln("[SSH] Running as user: %s (non-interactive)", actualUser)
-		log.Infoln("[SSH] Command: sudo %s", strings.Join(cmdArgs, " "))
-	} else {
-		// 回退：直接执行（BatchMode 确保不挂起）
-		cmdArgs = []string{"-o", "BatchMode=yes", "-W", targetAddr, hostAlias}
-		log.Warnln("[SSH] Could not determine actual user, running ssh directly")
-		log.Infoln("[SSH] Command: ssh %s", strings.Join(cmdArgs, " "))
-	}
-
+	sshArgs := []string{"-o", "BatchMode=yes", "-W", targetAddr, hostAlias}
 	var cmd *exec.Cmd
-	if actualUser != "" {
+
+	// 检查当前进程用户
+	currentUser, _ := user.Current()
+	if actualUser != "" && (currentUser == nil || currentUser.Username != actualUser) {
+		cmdArgs = append([]string{"-n", "-u", actualUser, "-H", "ssh"}, sshArgs...)
 		cmd = exec.CommandContext(ctx, "sudo", cmdArgs...)
+		log.Infoln("[SSH] Dialing as user: %s via sudo", actualUser)
 	} else {
-		cmd = exec.CommandContext(ctx, "ssh", cmdArgs...)
+		cmd = exec.CommandContext(ctx, "ssh", sshArgs...)
+		log.Infoln("[SSH] Dialing as current user: %s", actualUser)
 	}
 
-	// 设置 HOME 环境变量（如果用户指定）
-	if s.option.SshUserHome != "" {
-		cmd.Env = append(cmd.Environ(), "HOME="+s.option.SshUserHome)
-		log.Infoln("[SSH] Setting HOME=%s for SSH command", s.option.SshUserHome)
+	// 抓取并注入全量环境变量，确保 ProxyCommand (如 cloudflared) 的 Context/Token 完整
+	env, err := fetchUserEnv(ctx, actualUser)
+	if err != nil {
+		log.Warnln("[SSH] Failed to capture full environment: %v, falling back to basic env", err)
+		env = os.Environ()
+		// 补齐常用路径作为兜底
+		extraPaths := "/usr/local/bin:/opt/homebrew/bin"
+		foundPath := false
+		for i, e := range env {
+			if strings.HasPrefix(e, "PATH=") {
+				env[i] = e + ":" + extraPaths
+				foundPath = true
+				break
+			}
+		}
+		if !foundPath {
+			env = append(env, "PATH="+os.Getenv("PATH")+":"+extraPaths)
+		}
 	}
+	cmd.Env = env
+
+	// 设置 HOME 环境变量（如果用户指定，且 env 中没有或需要覆盖）
+	if s.option.SshUserHome != "" {
+		cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
+	}
+
+	log.Debugln("[SSH] Command: %s %s", cmd.Path, strings.Join(cmd.Args[1:], " "))
 
 	// 获取 stdin/stdout
 	stdin, err := cmd.StdinPipe()
@@ -137,8 +206,7 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 	go func() {
 		if err := cmd.Wait(); err != nil {
 			log.Errorln("[SSH] SSH process exited with error: %v", err)
-		} else {
-			log.Infoln("[SSH] SSH process exited normally")
+			clearUserEnv(actualUser)
 		}
 	}()
 
