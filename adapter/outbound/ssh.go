@@ -33,8 +33,8 @@ type SshOption struct {
 	BasicOption
 	Name                 string   `proxy:"name"`
 	Server               string   `proxy:"server"`
-	Port                 int      `proxy:"port"`
-	UserName             string   `proxy:"username"`
+	Port                 int      `proxy:"port,omitempty"`
+	UserName             string   `proxy:"username,omitempty"`
 	Password             string   `proxy:"password,omitempty"`
 	PrivateKey           string   `proxy:"private-key,omitempty"`
 	PrivateKeyPassphrase string   `proxy:"private-key-passphrase,omitempty"`
@@ -65,7 +65,7 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 		return s.client, nil
 	}
 
-	c, err := s.dial(ctx, addr)
+	c, dialAddr, err := s.dial(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 		defer done(&err)
 	}
 
-	clientConn, chans, reqs, err := ssh.NewClientConn(c, addr, s.config)
+	clientConn, chans, reqs, err := ssh.NewClientConn(c, dialAddr, s.config)
 	if err != nil {
 		return nil, err
 	}
@@ -100,11 +100,17 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 	return client, nil
 }
 
-func (s *Ssh) dial(ctx context.Context, addr string) (net.Conn, error) {
+func (s *Ssh) dial(ctx context.Context, addr string) (net.Conn, string, error) {
 	if s.useSystemSsh {
-		return s.dialViaSystemSsh(ctx, s.option.Server)
+		newAddr, err := s.prepareSshConfig(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		c, err := s.dialViaSystemSsh(ctx, s.option.Server)
+		return c, newAddr, err
 	}
-	return s.dialer.DialContext(ctx, "tcp", addr)
+	c, err := s.dialer.DialContext(ctx, "tcp", addr)
+	return c, addr, err
 }
 
 // ProxyInfo implements C.ProxyAdapter

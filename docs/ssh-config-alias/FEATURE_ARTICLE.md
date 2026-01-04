@@ -12,11 +12,13 @@
 
 ## ✨ 核心技术特性
 
-### 1. 原生级 SSH 配置继承
-全量支持系统 SSH 客户端的各项高级指令，无需重复逻辑开发：
-- ✅ **多级跳转继承**：支持 `ProxyJump` 级联，轻松穿透多层堡垒机。
-- ✅ **命令行集成**：完美兼容 `ProxyCommand`，支持与多种企业级接入工具（如 `cloudflared`）协同工作。
-- ✅ **配置策略复用**：自动适配 `IdentityFile`、`Match` 及 `Include` 等复杂逻辑。
+### 1. 极致零配置 (Zero-Config)
+这是本项目最令开发者兴奋的特性。
+- **自动属性发现**：Mihomo 现在可以自动识别 SSH Host 别名。你只需配置 `server: alias`，系统会自动拉取 `username`、`port` 甚至 **`private-key`**。
+- **配置即生产**：无需在 Mihomo 和 `~/.ssh/config` 之间进行繁琐的配置同步，系统 SSH 连接逻辑现在只需管理一处资产。
+
+### 2. 深度集成 SSH Config
+支持系统 SSH 客户端的所有指令，包括但不限于：
 
 ### 2. 智能环境感知 (Greedy Environment Capture)
 针对企业级工具链对环境变量（如 `PATH`、Access Token）的强依赖，我们设计了智能抓取机制：

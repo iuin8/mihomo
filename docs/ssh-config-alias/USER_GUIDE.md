@@ -1,27 +1,21 @@
-# SSH Config Alias Support - 使用指南 (User Guide)
+## 1. 基础配置 (极简模式 - Zero Config)
 
-本功能允许 Mihomo 直接使用系统 SSH 配置文件（`~/.ssh/config`），支持 `ProxyJump`、`ProxyCommand`（如 Cloudflare Tunnel/ESA）等高级功能。
-
----
-
-## 1. 基础配置
-
-在 Mihomo 配置文件（`config.yaml`）中，按如下方式配置：
+由于我们支持了 `ssh -G` 自动探测技术，你的配置现在可以极其精简。**如果你不配置 `username`, `port` 或 `private-key`，Mihomo 会尝试从你的系统 SSH 配置中自动抓取。**
 
 ```yaml
 proxies:
-  - name: "SSH-System-Proxy"
+  - name: "SSH-Zero-Config"
     type: ssh
-    server: "my-host-alias"    # 填写 ~/.ssh/config 中定义的 Host 别名
-    port: 22                   # 必填，通常填 22（见下方端口说明）
-    username: "dev"            # 目标服务器的登录用户名
-    password: "..."            # (可选) 目标服务器密码
-    private-key: "..."         # (重要) 仍需提供私钥或路径，用于内层协议握手
-    
-    # === 关键系统代理配置 ===
+    server: "my-host-alias"    # 填写 ~/.ssh/config 中的别名
     use-ssh-config-alias: true # 启用开关
-    ssh-user: "fa"             # (强烈推荐) 本地能成功 SSH 的用户名，用于权限切换
+    ssh-user: "fa"             # (推荐) 本地用户名
 ```
+
+> [!TIP]
+> **自动填充逻辑**：
+> 1. **用户名**：自动抓取并在内层握手时使用。
+> 2. **端口**：如果 Mihomo 没配 `port`，自动从 config 读；如果配了（如 `port: 22`），则优先用 Mihomo 的配置（适用于 frp 映射场景）。
+> 3. **私钥**：自动查找 `IdentityFile` 路径并尝试加载。
 
 > [!IMPORTANT]
 > **关于双层认证 (Dual-Layer Auth)**
