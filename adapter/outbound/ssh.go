@@ -21,7 +21,8 @@ import (
 type Ssh struct {
 	*Base
 
-	option *SshOption
+	option       *SshOption
+	useSystemSsh bool
 
 	config *ssh.ClientConfig
 	client *ssh.Client
@@ -32,13 +33,16 @@ type SshOption struct {
 	BasicOption
 	Name                 string   `proxy:"name"`
 	Server               string   `proxy:"server"`
-	Port                 int      `proxy:"port"`
-	UserName             string   `proxy:"username"`
+	Port                 int      `proxy:"port,omitempty"`
+	UserName             string   `proxy:"username,omitempty"`
 	Password             string   `proxy:"password,omitempty"`
 	PrivateKey           string   `proxy:"private-key,omitempty"`
 	PrivateKeyPassphrase string   `proxy:"private-key-passphrase,omitempty"`
 	HostKey              []string `proxy:"host-key,omitempty"`
 	HostKeyAlgorithms    []string `proxy:"host-key-algorithms,omitempty"`
+	UseSshConfigAlias    bool     `proxy:"use-ssh-config-alias,omitempty"`
+	SshUser              string   `proxy:"ssh-user,omitempty"`
+	SshUserHome          string   `proxy:"ssh-user-home,omitempty"`
 }
 
 func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
@@ -60,7 +64,8 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 	if s.client != nil {
 		return s.client, nil
 	}
-	c, err := s.dialer.DialContext(ctx, "tcp", addr)
+
+	c, dialAddr, err := s.dial(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +79,7 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 		defer done(&err)
 	}
 
-	clientConn, chans, reqs, err := ssh.NewClientConn(c, addr, s.config)
+	clientConn, chans, reqs, err := ssh.NewClientConn(c, dialAddr, s.config)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +98,19 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 	}()
 
 	return client, nil
+}
+
+func (s *Ssh) dial(ctx context.Context, addr string) (net.Conn, string, error) {
+	if s.useSystemSsh {
+		newAddr, err := s.prepareSshConfig(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		c, err := s.dialViaSystemSsh(ctx, s.option.Server)
+		return c, newAddr, err
+	}
+	c, err := s.dialer.DialContext(ctx, "tcp", addr)
+	return c, addr, err
 }
 
 // ProxyInfo implements C.ProxyAdapter
@@ -181,6 +199,8 @@ func NewSsh(option SshOption) (*Ssh, error) {
 	}
 	config.ClientVersion = version
 
+	useSystemSsh := option.UseSshConfigAlias
+
 	outbound := &Ssh{
 		Base: &Base{
 			name:   option.Name,
@@ -192,8 +212,9 @@ func NewSsh(option SshOption) (*Ssh, error) {
 			rmark:  option.RoutingMark,
 			prefer: option.IPVersion,
 		},
-		option: &option,
-		config: &config,
+		option:       &option,
+		useSystemSsh: useSystemSsh,
+		config:       &config,
 	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
 	return outbound, nil
