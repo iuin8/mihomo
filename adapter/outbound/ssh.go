@@ -27,6 +27,7 @@ type Ssh struct {
 	config *ssh.ClientConfig
 	client *ssh.Client
 	cMutex sync.Mutex
+	closed bool // 标记是否由 Close() 主动关闭，阻止自动重连
 }
 
 type SshOption struct {
@@ -43,10 +44,11 @@ type SshOption struct {
 	UseSshConfigAlias    bool     `proxy:"use-ssh-config-alias,omitempty"`
 	SshUser              string   `proxy:"ssh-user,omitempty"`
 	SshUserHome          string   `proxy:"ssh-user-home,omitempty"`
+	SshFlags             []string `proxy:"ssh-flags,omitempty"`
 }
 
 func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
-	client, err := s.connect(ctx, s.addr)
+	client, err := s.connectWithRetry(ctx, s.addr)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +63,9 @@ func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, 
 func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err error) {
 	s.cMutex.Lock()
 	defer s.cMutex.Unlock()
+	if s.closed {
+		return nil, fmt.Errorf("ssh adapter is closed")
+	}
 	if s.client != nil {
 		return s.client, nil
 	}
@@ -96,6 +101,7 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 			s.client = nil
 		}
 	}()
+	go s.startHealthCheck(client)
 
 	return client, nil
 }
@@ -124,6 +130,7 @@ func (s *Ssh) ProxyInfo() C.ProxyInfo {
 func (s *Ssh) Close() error {
 	s.cMutex.Lock()
 	defer s.cMutex.Unlock()
+	s.closed = true
 	if s.client != nil {
 		return s.client.Close()
 	}

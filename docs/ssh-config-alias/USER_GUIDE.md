@@ -9,6 +9,9 @@ proxies:
     server: "my-host-alias"    # 填写 ~/.ssh/config 中的别名
     use-ssh-config-alias: true # 启用开关
     ssh-user: "fa"             # (推荐) 本地用户名
+    ssh-flags:                 # (可选) 额外的 SSH 参数
+      - "-o"
+      - "ControlMaster=no"     # 推荐: 禁用复用，提高稳定性
 ```
 
 > [!TIP]

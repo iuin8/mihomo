@@ -88,8 +88,44 @@
 
 ## 代码结构
 
-*   [ssh.go](/adapter/outbound/ssh.go): 负责高层逻辑分发和订阅配置解析。
-*   [ssh_system.go](/adapter/outbound/ssh_system.go): 核心实现，包含环境抓取、进程管理、管道适配和缓存逻辑。
+*   [ssh.go](/adapter/outbound/ssh.go): 负责高层逻辑分发和订阅配置解析。这是上游核心文件，保持最小改动（仅 5 行 Diff）。
+*   [ssh_system.go](/adapter/outbound/ssh_system.go): 传输层实现。包含系统 SSH 拨号、HostConfig 解析、Zero-Config 逻辑和 Pipe 适配。
+*   [ssh_resilience.go](/adapter/outbound/ssh_resilience.go): 可靠性层实现。包含 TTL 环境缓存、健康探活、主动重连和退避重试逻辑。
 
 ---
-*Last Updated: 2026-01-02*
+
+---
+
+### 8. SSH Agent与环境变量生命周期
+
+针对用户常问的 `SSH_AUTH_SOCK` 机制，Mihomo 采用了以下策略：
+
+*   **捕获时机**：仅在**初次连接**或**缓存被清除/过期后的首次重试**时，通过 `sudo -u <user> -i env` 捕获。
+*   **TTL 过期 (Time-Based)**：
+    *   缓存默认 30 分钟后**自动过期**，强制重新抓取最新环境。
+    *   防止长期运行的进程持有过时的 `SSH_AUTH_SOCK` 路径。
+*   **失败即失效 (Fail-Fast)**：
+    *   SSH 连接异常退出时，立即清空缓存（不等 TTL）。
+*   **重新获取**：
+    *   下一次连接尝试时，系统发现缓存为空或过期，会自动重新执行环境抓取。
+
+---
+
+### 9. 连接生命周期管理 (Connection Lifecycle)
+
+Mihomo 的 SSH 连接具备完整的**自愈能力**：
+
+*   **健康探活 (Health Probe)**：
+    *   每 30 秒发送一次 `keepalive@openssh.com` 请求。
+    *   如果探活失败，立即关闭连接并触发重连。
+*   **主动重连 (Proactive Reconnect)**：
+    *   连接意外断开后，立即在后台以指数退避（2s → 4s → 8s）尝试重连。
+    *   用户几乎感知不到断连。
+*   **请求级重试 (DialContext Retry)**：
+    *   每次 `DialContext` 调用自带最多 3 次重试（含退避）。
+    *   对于瞬时网络抖动，用户完全无感。
+*   **优雅关闭 (Graceful Shutdown)**：
+    *   调用 `Close()` 时设置 `closed` 标志，阻止后台自动重连。
+
+---
+*Last Updated: 2026-02-13*
