@@ -67,8 +67,10 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 	actualUser := s.resolveActualUser()
 
 	// 构建 SSH 参数
+	// ControlMaster=no 是必须的：Mihomo 使用 os.Pipe() 接管 I/O，
+	// 与 ControlMaster 的 fd 复用机制冲突，会导致管道断裂。
 	targetAddr := fmt.Sprintf("localhost:%d", port)
-	sshArgs := []string{"-o", "BatchMode=yes"}
+	sshArgs := []string{"-o", "BatchMode=yes", "-o", "ControlMaster=no"}
 	sshArgs = append(sshArgs, s.option.SshFlags...)
 	sshArgs = append(sshArgs, "-W", targetAddr, hostAlias)
 
