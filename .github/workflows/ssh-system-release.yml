@@ -3,7 +3,7 @@ name: SSH System Release
 on:
   push:
     tags:
-      - 'ssh_system_v*'
+      - '*'
 
 jobs:
   release:
