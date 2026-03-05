@@ -87,20 +87,24 @@ func clearUserEnv(actualUser string) {
 // ─── Connection Lifecycle ────────────────────────────────────────────────────
 
 // connectWithRetry 包装 connect，支持指数退避重试
-func (s *Ssh) connectWithRetry(ctx context.Context, addr string) (*ssh.Client, error) {
+// 注意：不要直接使用上游的 ctx，它通常带有很短的拨号超时（例如 5 秒）。
+// 如果建立长连接耗时超过 5 秒，ctx 取消会导致所有后续重试瞬间失败。
+// 构建 SSH 隧道是一个独立的后台长生命周期事件，应使用独立的 context。
+func (s *Ssh) connectWithRetry(originalCtx context.Context, addr string) (*ssh.Client, error) {
 	var lastErr error
 	for attempt := 0; attempt <= sshMaxRetries; attempt++ {
 		if attempt > 0 {
 			delay := sshReconnectBaseDelay * time.Duration(1<<uint(attempt-1))
 			log.Warnln("[SSH] Attempt %d/%d for %s failed: %v, retry in %v",
-				attempt, sshMaxRetries+1, s.option.Name, lastErr, delay)
-			select {
-			case <-time.After(delay):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
+				attempt, sshMaxRetries, s.option.Name, lastErr, delay)
+			time.Sleep(delay) // 直接 Sleep 退避，不依赖 originalCtx，保证隧道一定能建立
 		}
+		
+		// 每次重试给 30 秒超时，足够建立复杂的代理甚至跳板机连接
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		client, err := s.connect(ctx, addr)
+		cancel()
+
 		if err == nil {
 			return client, nil
 		}

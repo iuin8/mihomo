@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/mihomo/log"
@@ -159,21 +160,24 @@ func (s *Ssh) loadIdentityFile(path, actualUser string) {
 // ─── sshCmdConn: net.Conn over SSH subprocess pipes ─────────────────────────
 
 type sshCmdConn struct {
-	stdin  *os.File
-	stdout *os.File
-	cmd    *exec.Cmd
+	stdin            *os.File
+	stdout           *os.File
+	cmd              *exec.Cmd
+	intentionalClose *atomic.Bool
 }
 
 func (c *sshCmdConn) Read(b []byte) (int, error)  { return c.stdout.Read(b) }
 func (c *sshCmdConn) Write(b []byte) (int, error) { return c.stdin.Write(b) }
 
 func (c *sshCmdConn) Close() error {
+	c.intentionalClose.Store(true)
 	_ = c.stdin.Close()
 	_ = c.stdout.Close()
 	if c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
 	}
-	return c.cmd.Wait()
+	// 不在此处调用 c.cmd.Wait()，因为 startSshProcess 的后台 goroutine 已经在 Wait
+	return nil
 }
 
 func (c *sshCmdConn) LocalAddr() net.Addr  { return &net.TCPAddr{IP: net.IPv4zero} }
@@ -279,12 +283,23 @@ func startSshProcess(cmd *exec.Cmd, actualUser string) (*sshCmdConn, error) {
 	}()
 
 	// 监控进程退出
+	intentionalClose := &atomic.Bool{}
 	go func() {
-		if err := cmd.Wait(); err != nil {
+		err := cmd.Wait()
+		if intentionalClose.Load() {
+			log.Debugln("[SSH] Process exited normally after Close() for %s", actualUser)
+			return
+		}
+		if err != nil {
 			log.Errorln("[SSH] Process exited with error: %v", err)
 			clearUserEnv(actualUser)
 		}
 	}()
 
-	return &sshCmdConn{stdin: stdinW, stdout: stdoutR, cmd: cmd}, nil
+	return &sshCmdConn{
+		stdin:            stdinW,
+		stdout:           stdoutR,
+		cmd:              cmd,
+		intentionalClose: intentionalClose,
+	}, nil
 }
