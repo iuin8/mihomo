@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,9 +22,9 @@ import (
 // ─── Host Config Cache ──────────────────────────────────────────────────────
 
 type HostConfig struct {
-	User         string
-	Port         int
-	IdentityFile string
+	User          string
+	Port          int
+	IdentityFiles []string
 }
 
 var (
@@ -106,9 +107,8 @@ func (s *Ssh) resolveActualUser() string {
 		return s.option.SshUser
 	}
 	if s.option.SshUserHome != "" {
-		if parts := strings.Split(s.option.SshUserHome, "/"); len(parts) >= 3 && parts[1] == "Users" {
-			return parts[2]
-		}
+		// Use filepath.Base to cross-platform extract the user's folder name from their home dir
+		return filepath.Base(s.option.SshUserHome)
 	}
 	return os.Getenv("SUDO_USER")
 }
@@ -126,35 +126,46 @@ func (s *Ssh) prepareSshConfig(ctx context.Context) (string, error) {
 		if s.option.Port == 0 && hostCfg.Port != 0 {
 			s.option.Port = hostCfg.Port
 		}
-		if s.option.PrivateKey == "" && hostCfg.IdentityFile != "" {
-			s.loadIdentityFile(hostCfg.IdentityFile, actualUser)
+		if s.option.PrivateKey == "" && len(hostCfg.IdentityFiles) > 0 {
+			s.loadIdentityFiles(hostCfg.IdentityFiles, actualUser)
 		}
 	}
 	return net.JoinHostPort(s.option.Server, strconv.Itoa(s.option.Port)), nil
 }
 
-// loadIdentityFile 自动加载私钥文件
-func (s *Ssh) loadIdentityFile(path, actualUser string) {
-	if strings.HasPrefix(path, "~/") {
-		home := s.option.SshUserHome
-		if home == "" && actualUser != "" {
-			home = "/Users/" + actualUser
+// loadIdentityFiles 自动加载私钥文件，尝试列表直到成功
+func (s *Ssh) loadIdentityFiles(paths []string, actualUser string) {
+	for _, path := range paths {
+		if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+			home := s.option.SshUserHome
+			if home == "" {
+				if actualUser != "" {
+					if u, err := user.Lookup(actualUser); err == nil {
+						home = u.HomeDir
+					}
+				}
+				if home == "" {
+					home, _ = os.UserHomeDir()
+				}
+			}
+			path = filepath.Join(home, path[2:])
 		}
-		path = strings.Replace(path, "~", home, 1)
-	}
 
-	b, err := os.ReadFile(path)
-	if err != nil {
-		log.Warnln("[SSH] Cannot read key %s: %v", path, err)
-		return
+		b, err := os.ReadFile(path)
+		if err != nil {
+			log.Debugln("[SSH] Skipping identity %s: %v", path, err)
+			continue
+		}
+		pKey, err := ssh.ParsePrivateKey(b)
+		if err != nil {
+			log.Warnln("[SSH] Cannot parse key %s: %v", path, err)
+			continue
+		}
+		s.config.Auth = append(s.config.Auth, ssh.PublicKeys(pKey))
+		log.Infoln("[SSH] Auto-loaded key %s for %s", path, s.option.Server)
+		return // 成功加载一个即可用
 	}
-	pKey, err := ssh.ParsePrivateKey(b)
-	if err != nil {
-		log.Warnln("[SSH] Cannot parse key %s: %v", path, err)
-		return
-	}
-	s.config.Auth = append(s.config.Auth, ssh.PublicKeys(pKey))
-	log.Infoln("[SSH] Auto-loaded key for %s", s.option.Server)
+	log.Warnln("[SSH] All identity files failed to load for %s", s.option.Server)
 }
 
 // ─── sshCmdConn: net.Conn over SSH subprocess pipes ─────────────────────────
@@ -215,8 +226,8 @@ func parseSshGOutput(output string) *HostConfig {
 		case "port":
 			cfg.Port, _ = strconv.Atoi(parts[1])
 		case "identityfile":
-			if cfg.IdentityFile == "" && parts[1] != "~/.ssh/id_rsa" && !strings.Contains(parts[1], "none") {
-				cfg.IdentityFile = parts[1]
+			if !strings.Contains(parts[1], "none") {
+				cfg.IdentityFiles = append(cfg.IdentityFiles, parts[1])
 			}
 		}
 	}
