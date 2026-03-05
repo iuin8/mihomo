@@ -5,11 +5,34 @@ on:
     tags:
       - '*'
 
+env:
+  VERSION: ${{ github.ref_name }}
+  CGO_ENABLED: 0
+
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: darwin
+            arch: amd64
+            amd64: v3
+            name: mihomo-darwin-amd64-v3
+            compress: tar
+          - os: darwin
+            arch: arm64
+            name: mihomo-darwin-arm64
+            compress: tar
+          - os: windows
+            arch: amd64
+            amd64: v3
+            name: mihomo-windows-amd64-v3
+            compress: zip
+          - os: windows
+            arch: arm64
+            name: mihomo-windows-arm64
+            compress: zip
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -23,43 +46,57 @@ jobs:
           check-latest: true
 
       - name: Set Variables
-        id: vars
         run: |
-          VERSION=${GITHUB_REF_NAME}
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "BUILDTIME=$(date -u)" >> $GITHUB_ENV
-          echo "CGO_ENABLED=0" >> $GITHUB_ENV
 
-      - name: Build Darwin AMD64 (v3)
+      - name: Build
         run: |
-          GOARCH=amd64 GOOS=darwin GOAMD64=v3 go build -tags with_gvisor -trimpath -ldflags "-X 'github.com/metacubex/mihomo/constant.Version=${{ env.VERSION }}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${{ env.BUILDTIME }}' -w -s -buildid=" -o bin/mihomo
-          chmod +x bin/mihomo
-          tar -czf bin/mihomo-darwin-amd64-v3-${{ env.VERSION }}.tar.gz -C bin mihomo
-          rm bin/mihomo
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            BIN_NAME="bin/${{ matrix.name }}.exe"
+          else
+            BIN_NAME="bin/mihomo"
+          fi
+          
+          GOARCH=${{ matrix.arch }} GOOS=${{ matrix.os }} GOAMD64=${{ matrix.amd64 }} go build -tags with_gvisor -trimpath -ldflags "-X 'github.com/metacubex/mihomo/constant.Version=${{ env.VERSION }}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${{ env.BUILDTIME }}' -w -s -buildid=" -o $BIN_NAME
+          
+          if [ "${{ matrix.compress }}" = "zip" ]; then
+            zip -j bin/${{ matrix.name }}-${{ env.VERSION }}.zip $BIN_NAME
+            rm $BIN_NAME
+          else
+            chmod +x $BIN_NAME
+            tar -czf bin/${{ matrix.name }}-${{ env.VERSION }}.tar.gz -C bin mihomo
+            rm $BIN_NAME
+          fi
 
-      - name: Build Darwin ARM64
-        run: |
-          GOARCH=arm64 GOOS=darwin go build -tags with_gvisor -trimpath -ldflags "-X 'github.com/metacubex/mihomo/constant.Version=${{ env.VERSION }}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${{ env.BUILDTIME }}' -w -s -buildid=" -o bin/mihomo
-          chmod +x bin/mihomo
-          tar -czf bin/mihomo-darwin-arm64-${{ env.VERSION }}.tar.gz -C bin mihomo
-          rm bin/mihomo
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: bin/*
+          retention-days: 1
 
-      - name: Build Windows AMD64 (v3)
-        run: |
-          GOARCH=amd64 GOOS=windows GOAMD64=v3 go build -tags with_gvisor -trimpath -ldflags "-X 'github.com/metacubex/mihomo/constant.Version=${{ env.VERSION }}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${{ env.BUILDTIME }}' -w -s -buildid=" -o bin/mihomo-windows-amd64-v3.exe
-          zip -j bin/mihomo-windows-amd64-v3-${{ env.VERSION }}.zip bin/mihomo-windows-amd64-v3.exe
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bin
+          merge-multiple: true
 
-      - name: Build Windows ARM64
+      - name: Generate Checksums
         run: |
-          GOARCH=arm64 GOOS=windows go build -tags with_gvisor -trimpath -ldflags "-X 'github.com/metacubex/mihomo/constant.Version=${{ env.VERSION }}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${{ env.BUILDTIME }}' -w -s -buildid=" -o bin/mihomo-windows-arm64.exe
-          zip -j bin/mihomo-windows-arm64-${{ env.VERSION }}.zip bin/mihomo-windows-arm64.exe
+          cd bin
+          sha256sum * > sha256sums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            bin/*.tar.gz
-            bin/*.zip
+            bin/*
           name: ${{ env.VERSION }}
           draft: false
           prerelease: false
@@ -73,3 +110,6 @@ jobs:
             | macOS | arm64 | `mihomo-darwin-arm64-${{ env.VERSION }}.tar.gz` |
             | Windows | amd64 (v3) | `mihomo-windows-amd64-v3-${{ env.VERSION }}.zip` |
             | Windows | arm64 | `mihomo-windows-arm64-${{ env.VERSION }}.zip` |
+
+            ## Checksums
+            A `sha256sums.txt` file is included for verification.
