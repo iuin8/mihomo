@@ -74,7 +74,7 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 	sshArgs = append(sshArgs, s.option.SshFlags...)
 	sshArgs = append(sshArgs, "-W", targetAddr, hostAlias)
 
-	cmd := buildSshCommand(ctx, actualUser, sshArgs)
+	cmd := buildSshCommand(actualUser, sshArgs)
 
 	// 注入用户环境变量
 	env, err := fetchUserEnv(ctx, actualUser)
@@ -220,15 +220,18 @@ func parseSshGOutput(output string) *HostConfig {
 }
 
 // buildSshCommand 构建 SSH 命令（需要 sudo 时自动包装）
-func buildSshCommand(ctx context.Context, actualUser string, sshArgs []string) *exec.Cmd {
+// 注意：不要使用 exec.CommandContext(ctx, ...)，因为传入的 ctx 通常是 DialContext，
+// 带有很短的超时时间（如 5s）。如果连接比较慢，ctx 会取消并发送 SIGKILL 杀掉 SSH 进程，
+// 导致整个长连接隧道崩溃。我们通过内部的 os.Pipe() 和 client.Close() 自己管理生命周期。
+func buildSshCommand(actualUser string, sshArgs []string) *exec.Cmd {
 	cur, _ := user.Current()
 	if actualUser != "" && (cur == nil || cur.Username != actualUser) {
 		args := append([]string{"-n", "-u", actualUser, "-H", "ssh"}, sshArgs...)
 		log.Infoln("[SSH] Dialing as user: %s via sudo", actualUser)
-		return exec.CommandContext(ctx, "sudo", args...)
+		return exec.Command("sudo", args...)
 	}
 	log.Infoln("[SSH] Dialing as current user: %s", actualUser)
-	return exec.CommandContext(ctx, "ssh", sshArgs...)
+	return exec.Command("ssh", sshArgs...)
 }
 
 // startSshProcess 启动 SSH 子进程，设置 pipe 并返回 net.Conn
