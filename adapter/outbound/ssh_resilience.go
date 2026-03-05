@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,10 @@ func fetchUserEnv(ctx context.Context, actualUser string) ([]string, error) {
 
 	log.Infoln("[SSH] Capturing fresh environment for user: %s", actualUser)
 	cmd := buildEnvCommand(ctx, actualUser)
+	if cmd == nil {
+		log.Infoln("[SSH] Env capture skipped, using process environment for %s", actualUser)
+		return os.Environ(), nil
+	}
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -184,8 +189,23 @@ func (s *Ssh) reconnectWithBackoff() {
 
 // buildEnvCommand 构建抓取环境变量的命令（同用户用 Shell，跨用户用 sudo）
 func buildEnvCommand(ctx context.Context, actualUser string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		// Windows 上暂不支持跨用户抓取环境（没有通用的 sudo），直接返回空让 fetchUserEnv 使用 os.Environ()
+		return nil
+	}
+
 	cur, _ := user.Current()
-	if cur != nil && cur.Username == actualUser {
+	// 简单检查用户名（忽略 Windows 可能的域名/机器名前缀）
+	isSameUser := false
+	if cur != nil {
+		curName := cur.Username
+		if idx := strings.LastIndex(curName, "\\"); idx != -1 {
+			curName = curName[idx+1:]
+		}
+		isSameUser = (curName == actualUser)
+	}
+
+	if isSameUser {
 		shell := os.Getenv("SHELL")
 		if shell == "" {
 			shell = "/bin/zsh"

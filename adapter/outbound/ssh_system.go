@@ -80,13 +80,24 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 	cmd := buildSshCommand(actualUser, sshArgs)
 
 	// 注入用户环境变量
-	env, err := fetchUserEnv(ctx, actualUser)
-	if err != nil {
-		env = os.Environ()
-	}
-	cmd.Env = env
-	if s.option.SshUserHome != "" {
-		cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
+	env, _ := fetchUserEnv(ctx, actualUser)
+	if runtime.GOOS == "windows" {
+		// Windows 上，如果 fetchUserEnv 返回的是基础环境，我们尽量不手动设置 cmd.Env
+		// 避免 Go 在处理系统环境变量（如 SYSTEMROOT）时出现微妙的缺失导致 ssh 无法解析主机名
+		if s.option.SshUserHome != "" {
+			cmd.Env = os.Environ()
+			cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
+			cmd.Env = append(cmd.Env, "USERPROFILE="+s.option.SshUserHome)
+		}
+	} else {
+		if env != nil {
+			cmd.Env = env
+		} else {
+			cmd.Env = os.Environ()
+		}
+		if s.option.SshUserHome != "" {
+			cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
+		}
 	}
 
 	log.Debugln("[SSH] Command: %s %s", cmd.Path, strings.Join(cmd.Args[1:], " "))
@@ -102,7 +113,7 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 
 // ─── Zero-Config Resolution ─────────────────────────────────────────────────
 
-// resolveActualUser 按优先级解析实际用户名（ssh-user > ssh-user-home > SUDO_USER）
+// resolveActualUser 按优先级解析实际用户名（ssh-user > ssh-user-home > SUDO_USER > current）
 func (s *Ssh) resolveActualUser() string {
 	if s.option.SshUser != "" {
 		return s.option.SshUser
@@ -111,7 +122,17 @@ func (s *Ssh) resolveActualUser() string {
 		// Use filepath.Base to cross-platform extract the user's folder name from their home dir
 		return filepath.Base(s.option.SshUserHome)
 	}
-	return os.Getenv("SUDO_USER")
+	if u := os.Getenv("SUDO_USER"); u != "" {
+		return u
+	}
+	if cur, _ := user.Current(); cur != nil {
+		name := cur.Username
+		if idx := strings.LastIndex(name, "\\"); idx != -1 {
+			name = name[idx+1:]
+		}
+		return name
+	}
+	return ""
 }
 
 // prepareSshConfig 自动填充缺失的 User/Port/Key（Zero-Config）
