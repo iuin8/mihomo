@@ -36,7 +36,7 @@ var (
 )
 
 // fetchUserEnv 抓取指定用户的最新登录环境变量（带 TTL 缓存）。
-// Long-Running 进程的 os.Environ() 可能包含过期的 SSH_AUTH_SOCK，因此始终通过 Shell 重新抓取。
+// Long-Running 进程 of os.Environ() 可能包含过期的 SSH_AUTH_SOCK，因此始终通过 Shell 重新抓取。
 func fetchUserEnv(ctx context.Context, actualUser string) ([]string, error) {
 	envMutex.RLock()
 	if e, ok := userEnvCache[actualUser]; ok && time.Since(e.capturedAt) < envCacheTTL {
@@ -78,13 +78,7 @@ func clearUserEnv(actualUser string) {
 	delete(userEnvCache, actualUser)
 	envMutex.Unlock()
 
-	hostMutex.Lock()
-	for k := range hostConfigCache {
-		if strings.HasPrefix(k, actualUser+":") {
-			delete(hostConfigCache, k)
-		}
-	}
-	hostMutex.Unlock()
+	clearHostConfigCache(actualUser)
 
 	log.Warnln("[SSH] Cleared all caches for user: %s", actualUser)
 }

@@ -1,7 +1,6 @@
 package outbound
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -13,20 +12,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/metacubex/mihomo/log"
 	"golang.org/x/crypto/ssh"
 )
 
 // ─── Host Config Cache ──────────────────────────────────────────────────────
-
-type HostConfig struct {
-	User          string
-	Port          int
-	IdentityFiles []string
-}
 
 var (
 	hostConfigCache = make(map[string]*HostConfig)
@@ -59,28 +50,58 @@ func fetchSshHostConfig(ctx context.Context, actualUser, hostAlias string) (*Hos
 	return cfg, nil
 }
 
+// clearHostConfigCache 清除指定用户的配置缓存
+func clearHostConfigCache(actualUser string) {
+	hostMutex.Lock()
+	defer hostMutex.Unlock()
+	for k := range hostConfigCache {
+		if strings.HasPrefix(k, actualUser+":") {
+			delete(hostConfigCache, k)
+		}
+	}
+}
+
 // ─── System SSH Dialing ─────────────────────────────────────────────────────
 
 // dialViaSystemSsh 使用系统 SSH 命令建立连接，返回 net.Conn
 func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn, error) {
+	actualUser := s.resolveActualUser()
+	sshArgs := s.buildSshArgs(hostAlias)
+	cmd := buildSshCommand(actualUser, sshArgs)
+
+	// 注入用户环境变量
+	capturedEnv, _ := fetchUserEnv(ctx, actualUser)
+	s.applyEnv(cmd, capturedEnv)
+
+	log.Debugln("[SSH] Command: %s %s", cmd.Path, strings.Join(cmd.Args[1:], " "))
+
+	conn, err := s.startSshProcess(cmd, actualUser)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Infoln("[SSH] Subprocess started for %s (PID: %d)", hostAlias, cmd.Process.Pid)
+	return conn, nil
+}
+
+// buildSshArgs 构建 SSH 命令行参数
+func (s *Ssh) buildSshArgs(hostAlias string) []string {
 	port := s.option.Port
 	if port == 0 {
 		port = 22
 	}
-	actualUser := s.resolveActualUser()
 
-	// 构建 SSH 参数
 	// ControlMaster=no 是必须的：Mihomo 使用 os.Pipe() 接管 I/O，
 	// 与 ControlMaster 的 fd 复用机制冲突，会导致管道断裂。
 	targetAddr := fmt.Sprintf("localhost:%d", port)
-	sshArgs := []string{"-o", "BatchMode=yes", "-o", "ControlMaster=no"}
-	sshArgs = append(sshArgs, s.option.SshFlags...)
-	sshArgs = append(sshArgs, "-W", targetAddr, hostAlias)
+	args := []string{"-o", "BatchMode=yes", "-o", "ControlMaster=no"}
+	args = append(args, s.option.SshFlags...)
+	args = append(args, "-W", targetAddr, hostAlias)
+	return args
+}
 
-	cmd := buildSshCommand(actualUser, sshArgs)
-
-	// 注入用户环境变量
-	env, _ := fetchUserEnv(ctx, actualUser)
+// applyEnv 为 SSH 进程注入环境变量
+func (s *Ssh) applyEnv(cmd *exec.Cmd, capturedEnv []string) {
 	if runtime.GOOS == "windows" {
 		// Windows 上，如果 fetchUserEnv 返回的是基础环境，我们尽量不手动设置 cmd.Env
 		// 避免 Go 在处理系统环境变量（如 SYSTEMROOT）时出现微妙的缺失导致 ssh 无法解析主机名
@@ -89,26 +110,18 @@ func (s *Ssh) dialViaSystemSsh(ctx context.Context, hostAlias string) (net.Conn,
 			cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
 			cmd.Env = append(cmd.Env, "USERPROFILE="+s.option.SshUserHome)
 		}
+		return
+	}
+
+	if capturedEnv != nil {
+		cmd.Env = capturedEnv
 	} else {
-		if env != nil {
-			cmd.Env = env
-		} else {
-			cmd.Env = os.Environ()
-		}
-		if s.option.SshUserHome != "" {
-			cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
-		}
+		cmd.Env = os.Environ()
 	}
 
-	log.Debugln("[SSH] Command: %s %s", cmd.Path, strings.Join(cmd.Args[1:], " "))
-
-	conn, err := startSshProcess(cmd, actualUser)
-	if err != nil {
-		return nil, err
+	if s.option.SshUserHome != "" {
+		cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
 	}
-
-	log.Infoln("[SSH] Subprocess started for %s (PID: %d)", hostAlias, cmd.Process.Pid)
-	return conn, nil
 }
 
 // ─── Zero-Config Resolution ─────────────────────────────────────────────────
@@ -141,35 +154,31 @@ func (s *Ssh) prepareSshConfig(ctx context.Context) (string, error) {
 	hostCfg, err := fetchSshHostConfig(ctx, actualUser, s.option.Server)
 	if err != nil {
 		log.Warnln("[SSH] Host config resolution failed for %s: %v", s.option.Server, err)
-	} else {
-		if s.option.UserName == "" && hostCfg.User != "" {
-			s.config.User = hostCfg.User
-		}
-		if s.option.Port == 0 && hostCfg.Port != 0 {
-			s.option.Port = hostCfg.Port
-		}
-		if s.option.PrivateKey == "" && len(hostCfg.IdentityFiles) > 0 {
-			s.loadIdentityFiles(hostCfg.IdentityFiles, actualUser)
-		}
+		return net.JoinHostPort(s.option.Server, strconv.Itoa(s.option.Port)), nil
 	}
+
+	s.updateFromHostConfig(hostCfg, actualUser)
 	return net.JoinHostPort(s.option.Server, strconv.Itoa(s.option.Port)), nil
+}
+
+// updateFromHostConfig 根据主机配置更新 SSH 选项
+func (s *Ssh) updateFromHostConfig(cfg *HostConfig, actualUser string) {
+	if s.option.UserName == "" && cfg.User != "" {
+		s.config.User = cfg.User
+	}
+	if s.option.Port == 0 && cfg.Port != 0 {
+		s.option.Port = cfg.Port
+	}
+	if s.option.PrivateKey == "" && len(cfg.IdentityFiles) > 0 {
+		s.loadIdentityFiles(cfg.IdentityFiles, actualUser)
+	}
 }
 
 // loadIdentityFiles 自动加载私钥文件，尝试列表直到成功
 func (s *Ssh) loadIdentityFiles(paths []string, actualUser string) {
 	for _, path := range paths {
 		if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
-			home := s.option.SshUserHome
-			if home == "" {
-				if actualUser != "" {
-					if u, err := user.Lookup(actualUser); err == nil {
-						home = u.HomeDir
-					}
-				}
-				if home == "" {
-					home, _ = os.UserHomeDir()
-				}
-			}
+			home := s.resolveUserHome(actualUser)
 			path = filepath.Join(home, path[2:])
 		}
 
@@ -190,153 +199,4 @@ func (s *Ssh) loadIdentityFiles(paths []string, actualUser string) {
 	log.Warnln("[SSH] All identity files failed to load for %s", s.option.Server)
 }
 
-// ─── sshCmdConn: net.Conn over SSH subprocess pipes ─────────────────────────
 
-type sshCmdConn struct {
-	stdin            *os.File
-	stdout           *os.File
-	cmd              *exec.Cmd
-	intentionalClose *atomic.Bool
-}
-
-func (c *sshCmdConn) Read(b []byte) (int, error)  { return c.stdout.Read(b) }
-func (c *sshCmdConn) Write(b []byte) (int, error) { return c.stdin.Write(b) }
-
-func (c *sshCmdConn) Close() error {
-	c.intentionalClose.Store(true)
-	_ = c.stdin.Close()
-	_ = c.stdout.Close()
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	// 不在此处调用 c.cmd.Wait()，因为 startSshProcess 的后台 goroutine 已经在 Wait
-	return nil
-}
-
-func (c *sshCmdConn) LocalAddr() net.Addr  { return &net.TCPAddr{IP: net.IPv4zero} }
-func (c *sshCmdConn) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.IPv4zero} }
-
-func (c *sshCmdConn) SetDeadline(t time.Time) error {
-	_ = c.stdin.SetDeadline(t)
-	return c.stdout.SetDeadline(t)
-}
-func (c *sshCmdConn) SetReadDeadline(t time.Time) error  { return c.stdout.SetReadDeadline(t) }
-func (c *sshCmdConn) SetWriteDeadline(t time.Time) error { return c.stdin.SetWriteDeadline(t) }
-
-// ─── Internal Helpers ───────────────────────────────────────────────────────
-
-// buildSshGCommand 构建 ssh -G 命令
-func buildSshGCommand(ctx context.Context, actualUser, hostAlias string) *exec.Cmd {
-	if runtime.GOOS != "windows" {
-		cur, _ := user.Current()
-		if actualUser != "" && (cur == nil || cur.Username != actualUser) {
-			return exec.CommandContext(ctx, "sudo", "-n", "-u", actualUser, "-H", "ssh", "-G", hostAlias)
-		}
-	}
-	return exec.CommandContext(ctx, "ssh", "-G", hostAlias)
-}
-
-// parseSshGOutput 从 ssh -G 输出中提取 User/Port/IdentityFile
-func parseSshGOutput(output string) *HostConfig {
-	cfg := &HostConfig{}
-	for _, line := range strings.Split(output, "\n") {
-		parts := strings.Fields(strings.TrimSpace(line))
-		if len(parts) < 2 {
-			continue
-		}
-		switch strings.ToLower(parts[0]) {
-		case "user":
-			cfg.User = parts[1]
-		case "port":
-			cfg.Port, _ = strconv.Atoi(parts[1])
-		case "identityfile":
-			if !strings.Contains(parts[1], "none") {
-				cfg.IdentityFiles = append(cfg.IdentityFiles, parts[1])
-			}
-		}
-	}
-	return cfg
-}
-
-// buildSshCommand 构建 SSH 命令（需要 sudo 时自动包装）
-// 注意：不要使用 exec.CommandContext(ctx, ...)，因为传入的 ctx 通常是 DialContext，
-// 带有很短的超时时间（如 5s）。如果连接比较慢，ctx 会取消并发送 SIGKILL 杀掉 SSH 进程，
-// 导致整个长连接隧道崩溃。我们通过内部的 os.Pipe() 和 client.Close() 自己管理生命周期。
-func buildSshCommand(actualUser string, sshArgs []string) *exec.Cmd {
-	if runtime.GOOS != "windows" {
-		cur, _ := user.Current()
-		if actualUser != "" && (cur == nil || cur.Username != actualUser) {
-			args := append([]string{"-n", "-u", actualUser, "-H", "ssh"}, sshArgs...)
-			log.Infoln("[SSH] Dialing as user: %s via sudo", actualUser)
-			return exec.Command("sudo", args...)
-		}
-	}
-	log.Infoln("[SSH] Dialing as current user: %s", actualUser)
-	return exec.Command("ssh", sshArgs...)
-}
-
-// startSshProcess 启动 SSH 子进程，设置 pipe 并返回 net.Conn
-func startSshProcess(cmd *exec.Cmd, actualUser string) (*sshCmdConn, error) {
-	stdinR, stdinW, err := os.Pipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdin pipe: %w", err)
-	}
-	stdoutR, stdoutW, err := os.Pipe()
-	if err != nil {
-		_ = stdinR.Close()
-		_ = stdinW.Close()
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-
-	cmd.Stdin = stdinR
-	cmd.Stdout = stdoutW
-
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		_ = stdinR.Close()
-		_ = stdinW.Close()
-		_ = stdoutR.Close()
-		_ = stdoutW.Close()
-		return nil, fmt.Errorf("stderr pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		_ = stdinR.Close()
-		_ = stdinW.Close()
-		_ = stdoutR.Close()
-		_ = stdoutW.Close()
-		return nil, fmt.Errorf("start ssh: %w", err)
-	}
-
-	_ = stdinR.Close()
-	_ = stdoutW.Close()
-
-	// stderr → log
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			log.Warnln("[SSH-STDERR] %s", scanner.Text())
-		}
-	}()
-
-	// 监控进程退出
-	intentionalClose := &atomic.Bool{}
-	go func() {
-		err := cmd.Wait()
-		if intentionalClose.Load() {
-			log.Debugln("[SSH] Process exited normally after Close() for %s", actualUser)
-			return
-		}
-		if err != nil {
-			log.Errorln("[SSH] Process exited with error: %v", err)
-			clearUserEnv(actualUser)
-		}
-	}()
-
-	return &sshCmdConn{
-		stdin:            stdinW,
-		stdout:           stdoutR,
-		cmd:              cmd,
-		intentionalClose: intentionalClose,
-	}, nil
-}
