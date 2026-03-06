@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,7 +24,7 @@ var (
 )
 
 // fetchSshHostConfig 通过 ssh -G 获取并缓存主机配置
-func fetchSshHostConfig(ctx context.Context, actualUser, hostAlias string) (*HostConfig, error) {
+func (s *Ssh) fetchSshHostConfig(ctx context.Context, actualUser, hostAlias string) (*HostConfig, error) {
 	cacheKey := actualUser + ":" + hostAlias
 
 	hostMutex.RLock()
@@ -36,6 +35,9 @@ func fetchSshHostConfig(ctx context.Context, actualUser, hostAlias string) (*Hos
 	hostMutex.RUnlock()
 
 	cmd := buildSshGCommand(ctx, actualUser, hostAlias)
+	capturedEnv, _ := fetchUserEnv(ctx, actualUser)
+	s.applyEnv(cmd, capturedEnv)
+
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("ssh -G failed: %w", err)
@@ -94,7 +96,10 @@ func (s *Ssh) buildSshArgs(hostAlias string) []string {
 	// ControlMaster=no 是必须的：Mihomo 使用 os.Pipe() 接管 I/O，
 	// 与 ControlMaster 的 fd 复用机制冲突，会导致管道断裂。
 	targetAddr := fmt.Sprintf("localhost:%d", port)
-	args := []string{"-o", "BatchMode=yes", "-o", "ControlMaster=no"}
+	// -T: 禁用 TTY，避免交互挂起
+	// StrictHostKeyChecking=no: 确保在非交互环境下不会因为未知 Host Key 导致阻塞
+	// Tunnel=no: 强制禁用 SSH 自带的隧道功能，防止其尝试创建系统 utun 接口与 Mihomo 的 TUN 模式冲突
+	args := []string{"-T", "-o", "BatchMode=yes", "-o", "ControlMaster=no", "-o", "StrictHostKeyChecking=no", "-o", "Tunnel=no"}
 	args = append(args, s.option.SshFlags...)
 	args = append(args, "-W", targetAddr, hostAlias)
 	return args
@@ -102,38 +107,19 @@ func (s *Ssh) buildSshArgs(hostAlias string) []string {
 
 // applyEnv 为 SSH 进程注入环境变量
 func (s *Ssh) applyEnv(cmd *exec.Cmd, capturedEnv []string) {
-	if runtime.GOOS == "windows" {
-		// Windows 上，如果 fetchUserEnv 返回的是基础环境，我们尽量不手动设置 cmd.Env
-		// 避免 Go 在处理系统环境变量（如 SYSTEMROOT）时出现微妙的缺失导致 ssh 无法解析主机名
-		if s.option.SshUserHome != "" {
-			cmd.Env = os.Environ()
-			cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
-			cmd.Env = append(cmd.Env, "USERPROFILE="+s.option.SshUserHome)
-		}
-		return
-	}
-
 	if capturedEnv != nil {
 		cmd.Env = capturedEnv
 	} else {
 		cmd.Env = os.Environ()
 	}
-
-	if s.option.SshUserHome != "" {
-		cmd.Env = append(cmd.Env, "HOME="+s.option.SshUserHome)
-	}
 }
 
 // ─── Zero-Config Resolution ─────────────────────────────────────────────────
 
-// resolveActualUser 按优先级解析实际用户名（ssh-user > ssh-user-home > SUDO_USER > current）
+// resolveActualUser 按优先级解析实际用户名（ssh-user > SUDO_USER > current）
 func (s *Ssh) resolveActualUser() string {
 	if s.option.SshUser != "" {
 		return s.option.SshUser
-	}
-	if s.option.SshUserHome != "" {
-		// Use filepath.Base to cross-platform extract the user's folder name from their home dir
-		return filepath.Base(s.option.SshUserHome)
 	}
 	if u := os.Getenv("SUDO_USER"); u != "" {
 		return u
@@ -151,11 +137,14 @@ func (s *Ssh) resolveActualUser() string {
 // prepareSshConfig 自动填充缺失的 User/Port/Key（Zero-Config）
 func (s *Ssh) prepareSshConfig(ctx context.Context) (string, error) {
 	actualUser := s.resolveActualUser()
-	hostCfg, err := fetchSshHostConfig(ctx, actualUser, s.option.Server)
+	hostCfg, err := s.fetchSshHostConfig(ctx, actualUser, s.option.Server)
 	if err != nil {
 		log.Warnln("[SSH] Host config resolution failed for %s: %v", s.option.Server, err)
 		return net.JoinHostPort(s.option.Server, strconv.Itoa(s.option.Port)), nil
 	}
+
+	log.Infoln("[SSH] ssh -G resolved %s -> hostname=%s port=%d user=%s identities=%d",
+		s.option.Server, hostCfg.HostName, hostCfg.Port, hostCfg.User, len(hostCfg.IdentityFiles))
 
 	s.updateFromHostConfig(hostCfg, actualUser)
 	return net.JoinHostPort(s.option.Server, strconv.Itoa(s.option.Port)), nil
@@ -166,27 +155,38 @@ func (s *Ssh) updateFromHostConfig(cfg *HostConfig, actualUser string) {
 	if s.option.UserName == "" && cfg.User != "" {
 		s.config.User = cfg.User
 	}
+	// 仅在用户未指定端口时（port: 0），才使用从 ssh -G 自动探测到的服务器端口。
+	// 否则尊重用户手动指定的 port (作为 -W 隧道的 Target Port)。
 	if s.option.Port == 0 && cfg.Port != 0 {
 		s.option.Port = cfg.Port
 	}
-	if s.option.PrivateKey == "" && len(cfg.IdentityFiles) > 0 {
+	// 只有当配置中没有私钥 且 尚未加载过认证方式时，才尝试自动加载。
+	if s.option.PrivateKey == "" && len(s.config.Auth) == 0 && len(cfg.IdentityFiles) > 0 {
 		s.loadIdentityFiles(cfg.IdentityFiles, actualUser)
 	}
 }
 
 // loadIdentityFiles 自动加载私钥文件，尝试列表直到成功
 func (s *Ssh) loadIdentityFiles(paths []string, actualUser string) {
+	home := s.resolveUserHome(actualUser)
+	
 	for _, path := range paths {
 		if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
-			home := s.resolveUserHome(actualUser)
 			path = filepath.Join(home, path[2:])
 		}
+		path = filepath.Clean(path)
 
 		b, err := os.ReadFile(path)
 		if err != nil {
-			log.Debugln("[SSH] Skipping identity %s: %v", path, err)
+			// 对于默认路径，如果不存在，我们只打 Debug 日志
+			if os.IsNotExist(err) {
+				log.Debugln("[SSH] Identity file not found: %s", path)
+			} else {
+				log.Warnln("[SSH] Failed to read identity %s: %v", path, err)
+			}
 			continue
 		}
+
 		pKey, err := ssh.ParsePrivateKey(b)
 		if err != nil {
 			log.Warnln("[SSH] Cannot parse key %s: %v", path, err)
@@ -196,7 +196,11 @@ func (s *Ssh) loadIdentityFiles(paths []string, actualUser string) {
 		log.Infoln("[SSH] Auto-loaded key %s for %s", path, s.option.Server)
 		return // 成功加载一个即可用
 	}
-	log.Warnln("[SSH] All identity files failed to load for %s", s.option.Server)
+
+	if s.useSystemSsh {
+		// system SSH 模式下，即便 Go 层加载失败，外层进程仍可能成功，所以仅做 Debug 提示
+		log.Debugln("[SSH] No valid local identity files loaded for %s (system ssh will use its own auth)", s.option.Server)
+	} else if len(s.config.Auth) == 0 {
+		log.Warnln("[SSH] All local identity files failed to load for %s", s.option.Server)
+	}
 }
-
-

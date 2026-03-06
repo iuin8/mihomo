@@ -20,6 +20,7 @@ import (
 // ─── Host Config ────────────────────────────────────────────────────────────
 
 type HostConfig struct {
+	HostName      string
 	User          string
 	Port          int
 	IdentityFiles []string
@@ -80,6 +81,8 @@ func parseSshGOutput(output string) *HostConfig {
 			continue
 		}
 		switch strings.ToLower(parts[0]) {
+		case "hostname":
+			cfg.HostName = parts[1]
 		case "user":
 			cfg.User = parts[1]
 		case "port":
@@ -149,9 +152,8 @@ func (s *Ssh) startSshProcess(cmd *exec.Cmd, actualUser string) (*sshCmdConn, er
 	// stderr → log
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			log.Warnln("[SSH-STDERR] %s", scanner.Text())
-		}
+			text := scanner.Text()
+			log.Warnln("[SSH-STDERR] %s", text)
 	}()
 
 	intentionalClose := &atomic.Bool{}
@@ -182,9 +184,6 @@ func (s *Ssh) monitorProcess(cmd *exec.Cmd, actualUser string, intentionalClose 
 
 // resolveUserHome 获取用户的主目录
 func (s *Ssh) resolveUserHome(actualUser string) string {
-	if s.option.SshUserHome != "" {
-		return s.option.SshUserHome
-	}
 	if actualUser != "" {
 		if u, err := user.Lookup(actualUser); err == nil {
 			return u.HomeDir

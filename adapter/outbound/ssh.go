@@ -43,7 +43,6 @@ type SshOption struct {
 	HostKeyAlgorithms    []string `proxy:"host-key-algorithms,omitempty"`
 	UseSshConfigAlias    bool     `proxy:"use-ssh-config-alias,omitempty"`
 	SshUser              string   `proxy:"ssh-user,omitempty"`
-	SshUserHome          string   `proxy:"ssh-user-home,omitempty"`
 	SshFlags             []string `proxy:"ssh-flags,omitempty"`
 }
 
