@@ -10,14 +10,14 @@ The following 4 architectures are targeted:
 - Windows arm64
 
 ## Automated Release (Recommended)
-The project is configured with a GitHub Action that triggers on tags matching `ssh_system_v*`.
+The project is configured with a GitHub Action that triggers on tags matching `tag_ssh_system_*`.
 
 ### Steps:
 1. Ensure your local branch is up to date.
 2. Create and push a tag:
    ```bash
-   git tag ssh_system_v1.19.21
-   git push origin refs/tags/ssh_system_v1.19.21
+   git tag tag_ssh_system_v1.19.20_10
+   git push origin refs/tags/tag_ssh_system_v1.19.20_10
    ```
    > [!NOTE]
    > Use full ref `refs/tags/...` if there is a branch with the same name as the tag.
@@ -29,7 +29,7 @@ If you need to build manually on a local machine (macOS with Go installed):
 
 ### 1. Build commands
 ```bash
-VERSION="ssh_system_v1.19.20"
+VERSION="tag_ssh_system_v1.19.20_10"
 BUILDTIME="$(date -u)"
 CGO_FLAGS="CGO_ENABLED=0"
 TAGS="-tags with_gvisor"

@@ -28,6 +28,8 @@ type Ssh struct {
 	client *ssh.Client
 	cMutex sync.Mutex
 	closed bool // 标记是否由 Close() 主动关闭，阻止自动重连
+
+	socksExt *systemSocksExt // 系统级 SOCKS5 扩展逻辑
 }
 
 type SshOption struct {
@@ -44,9 +46,14 @@ type SshOption struct {
 	UseSshConfigAlias    bool     `proxy:"use-ssh-config-alias,omitempty"`
 	SshUser              string   `proxy:"ssh-user,omitempty"`
 	SshFlags             []string `proxy:"ssh-flags,omitempty"`
+	UseSystemSocks       bool     `proxy:"use-system-socks,omitempty"`
 }
 
 func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
+	if s.socksExt != nil && s.socksExt.inUse {
+		return s.dialSystemSocks(ctx, metadata)
+	}
+
 	client, err := s.connectWithRetry(ctx, s.addr)
 	if err != nil {
 		return nil, err
@@ -131,8 +138,9 @@ func (s *Ssh) Close() error {
 	defer s.cMutex.Unlock()
 	s.closed = true
 	if s.client != nil {
-		return s.client.Close()
+		_ = s.client.Close()
 	}
+	s.cleanupSocks()
 	return nil
 }
 
@@ -222,6 +230,14 @@ func NewSsh(option SshOption) (*Ssh, error) {
 		useSystemSsh: useSystemSsh,
 		config:       &config,
 	}
+
+	if option.UseSystemSocks {
+		outbound.socksExt = &systemSocksExt{
+			inUse: true,
+			port:  option.Port,
+		}
+	}
+
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
 	return outbound, nil
 }
