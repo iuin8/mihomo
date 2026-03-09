@@ -152,8 +152,9 @@ func (s *Ssh) startSshProcess(cmd *exec.Cmd, actualUser string) (*sshCmdConn, er
 	// stderr → log
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
-			text := scanner.Text()
-			log.Warnln("[SSH-STDERR] %s", text)
+		for scanner.Scan() {
+			log.Warnln("[SSH-STDERR] %s", scanner.Text())
+		}
 	}()
 
 	intentionalClose := &atomic.Bool{}

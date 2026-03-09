@@ -27,13 +27,15 @@ type systemSocksExt struct {
 
 func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 	s.cMutex.Lock()
-	defer s.cMutex.Unlock()
+	// 注意：此处不再使用 defer s.cMutex.Unlock()，因为我们在进程启动后需要提前释放锁以防止死锁
 
 	if s.socksExt == nil || !s.socksExt.inUse {
+		s.cMutex.Unlock()
 		return nil
 	}
 
 	if s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil {
+		s.cMutex.Unlock()
 		return nil // 已经启动
 	}
 
@@ -43,6 +45,7 @@ func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 	if s.socksExt.port == 0 {
 		p, err := LookForFreePort()
 		if err != nil {
+			s.cMutex.Unlock()
 			return fmt.Errorf("find free port: %w", err)
 		}
 		s.socksExt.port = p
@@ -81,21 +84,24 @@ func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
+		s.socksExt.cmd = nil
+		s.cMutex.Unlock()
 		return fmt.Errorf("start ssh -D: %w", err)
 	}
 
-	// 关闭不需要的管道端，防止泄漏
+	// 关闭不需要的管道端
 	_ = stdinW.Close()
-	// 注意：保持 stdoutR 开启，防止子进程因为无法写 stdout 而阻塞，或者直接丢弃输出
 	go func() {
 		_, _ = io.Copy(io.Discard, stdoutR)
 		_ = stdoutR.Close()
 	}()
 
 	s.socksExt.cmd = cmd
+	s.cMutex.Unlock() // <<< 关键：在等待端口就绪前释放锁，防止递归拨号导致死锁
+
 	log.Infoln("[SSH] System SOCKS5 tunnel started on localhost:%d (PID: %d)", s.socksExt.port, cmd.Process.Pid)
 
-	// 监控进程退出
+	// 监控进程退出 (不需要锁，或者在内部加锁)
 	go func() {
 		err := cmd.Wait()
 		s.cMutex.Lock()
@@ -103,14 +109,14 @@ func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 		if s.socksExt != nil && s.socksExt.cmd == cmd {
 			s.socksExt.cmd = nil
 			if !s.closed {
-				log.Errorln("[SSH] System SOCKS5 tunnel process (PID: %d) exited: %v. (Check for Fake-IP loop and use PROCESS-NAME,ssh,DIRECT)", cmd.Process.Pid, err)
+				log.Errorln("[SSH] System SOCKS5 tunnel process (PID: %d) exited: %v", cmd.Process.Pid, err)
 			}
 		}
 	}()
 
-	// 等待一小会儿确保端口已经监听
-	for i := 0; i < 10; i++ {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", s.socksExt.port), 500*time.Millisecond)
+	// 等待端口就绪 (不持锁)
+	for i := 0; i < 15; i++ {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", s.socksExt.port), 500*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
 			return nil
@@ -151,7 +157,9 @@ func buildSshDCommand(ctx context.Context, actualUser, hostAlias string, localPo
 
 // LookForFreePort 寻找一个可用的本地 TCP 端口
 func LookForFreePort() (int, error) {
-	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	// 注意：此处必须使用 127.0.0.1 而不是 localhost，
+	// 因为 Mihomo 会 hook 默认 resolver 并 panic 掉任何主机名解析（包括 localhost）
+	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
 	}

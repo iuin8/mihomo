@@ -56,3 +56,29 @@ rules:
 
 ### Process Exited (255)
 This usually means another SSH session is sharing a socket via `ControlMaster`. The current implementation explicitly disables `ControlMaster` for isolation, but if issues persist, check your `~/.ssh/config` for global overrides.
+
+## UDP Handling & Fallback
+
+SSH (including `-D` mode) natively supports **TCP only**. It does not support `UDP ASSOCIATE`.
+
+### Recommended Fallback Configuration
+To ensure a smooth experience when apps try to use UDP (like QUIC), configure Mihomo's **DNS Fake-IP** and **Sniffing**. This forces apps to fall back to TCP automatically when UDP times out.
+
+```yaml
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  # nameservers...
+
+sniffer:
+  enable: true
+  sniff:
+    TLS:
+      ports: [443, 8443]
+    HTTP:
+      ports: [80, 8080-8880]
+    QUIC:
+      ports: [443, 8443]
+```
+
+With this setup, browser traffic (Chrome/Edge) will seamlessly switch from QUIC (UDP) to HTTP/2 (TCP) and utilize the SSH acceleration.
