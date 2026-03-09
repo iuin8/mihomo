@@ -20,59 +20,81 @@ import (
 )
 
 type systemSocksExt struct {
-	port  int
-	cmd   *exec.Cmd
-	inUse bool
+	port      int
+	cmd       *exec.Cmd
+	inUse     bool
+	waitReady chan struct{} // 当 SOCKS5 隧道就绪时关闭此通道
+	lastErr   error
 }
 
 func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 	s.cMutex.Lock()
-	// 注意：此处不再使用 defer s.cMutex.Unlock()，因为我们在进程启动后需要提前释放锁以防止死锁
-
 	if s.socksExt == nil || !s.socksExt.inUse {
 		s.cMutex.Unlock()
 		return nil
 	}
 
-	if s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil {
+	// 1. 如果已经在运行且已就绪 (waitReady == nil 表示不在启动中且已成功过)
+	if s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil && s.socksExt.waitReady == nil {
 		s.cMutex.Unlock()
-		return nil // 已经启动
+		return nil
 	}
 
+	// 2. 如果正在启动中，等待就绪
+	if s.socksExt.waitReady != nil {
+		waitChan := s.socksExt.waitReady
+		s.cMutex.Unlock()
+		select {
+		case <-waitChan:
+			s.cMutex.Lock()
+			defer s.cMutex.Unlock()
+			if s.socksExt == nil {
+				return fmt.Errorf("ssh proxy closed during wait")
+			}
+			return s.socksExt.lastErr
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(15 * time.Second):
+			return fmt.Errorf("timeout waiting for ssh tunnel ready")
+		}
+	}
+
+	// 3. 开始启动流程
+	s.socksExt.waitReady = make(chan struct{})
+	s.socksExt.lastErr = nil
 	actualUser := s.resolveActualUser()
 
-	// 1. 确定端口
+	// 确定端口
 	if s.socksExt.port == 0 {
 		p, err := LookForFreePort()
 		if err != nil {
+			s.socksExt.lastErr = fmt.Errorf("find free port: %w", err)
+			close(s.socksExt.waitReady)
+			s.socksExt.waitReady = nil
 			s.cMutex.Unlock()
-			return fmt.Errorf("find free port: %w", err)
+			return s.socksExt.lastErr
 		}
 		s.socksExt.port = p
 	}
 
-	// 1.5 确保 SSH 配置已加载 (执行 ssh -G 预解析)
+	// 执行预解析 (ssh -G) - 释放锁以防死锁
+	s.cMutex.Unlock()
+
 	if _, err := s.prepareSshConfig(ctx); err != nil {
 		log.Warnln("[SSH] prepareSshConfig failed: %v", err)
 	}
 
-	// 2. 启动进程
-	// 使用 context.Background() 确保进程生命周期不随某次 Dial 请求而结束
+	// 重新加锁以准备启动进程
+	s.cMutex.Lock()
 	cmd := buildSshDCommand(context.Background(), actualUser, s.option.Server, s.socksExt.port, s.option.SshFlags)
 	capturedEnv, _ := fetchUserEnv(ctx, actualUser)
 	s.applyEnv(cmd, capturedEnv)
 
-	// 模仿 startSshProcess 重定向 I/O 以获得更好的隔离性
 	stdinR, stdinW, _ := os.Pipe()
 	stdoutR, stdoutW, _ := os.Pipe()
 	cmd.Stdin = stdinR
 	cmd.Stdout = stdoutW
-	defer func() {
-		_ = stdinR.Close()
-		_ = stdoutW.Close()
-	}()
-
-	// 处理 stderr 以便记录日志
+	
 	stderrPipe, _ := cmd.StderrPipe()
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
@@ -82,49 +104,73 @@ func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 	}()
 
 	if err := cmd.Start(); err != nil {
+		_ = stdinR.Close()
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
-		s.socksExt.cmd = nil
+		_ = stdoutW.Close()
+		s.socksExt.lastErr = fmt.Errorf("start ssh -D: %w", err)
+		close(s.socksExt.waitReady)
+		s.socksExt.waitReady = nil
 		s.cMutex.Unlock()
-		return fmt.Errorf("start ssh -D: %w", err)
+		return s.socksExt.lastErr
 	}
 
-	// 关闭不需要的管道端
+	_ = stdinR.Close()
 	_ = stdinW.Close()
 	go func() {
 		_, _ = io.Copy(io.Discard, stdoutR)
 		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 	}()
 
 	s.socksExt.cmd = cmd
-	s.cMutex.Unlock() // <<< 关键：在等待端口就绪前释放锁，防止递归拨号导致死锁
+	s.cMutex.Unlock() // 释放锁，允许其他并发请求进入等待逻辑
 
-	log.Infoln("[SSH] System SOCKS5 tunnel started on localhost:%d (PID: %d)", s.socksExt.port, cmd.Process.Pid)
+	log.Infoln("[SSH] System SOCKS5 tunnel starting on 127.0.0.1:%d (PID: %d)", s.socksExt.port, cmd.Process.Pid)
 
-	// 监控进程退出 (不需要锁，或者在内部加锁)
+	// 监控进程退出
 	go func() {
 		err := cmd.Wait()
 		s.cMutex.Lock()
 		defer s.cMutex.Unlock()
 		if s.socksExt != nil && s.socksExt.cmd == cmd {
 			s.socksExt.cmd = nil
+			s.socksExt.waitReady = nil // 允许下次 Dial 时重新触发启动
 			if !s.closed {
 				log.Errorln("[SSH] System SOCKS5 tunnel process (PID: %d) exited: %v", cmd.Process.Pid, err)
 			}
 		}
 	}()
 
-	// 等待端口就绪 (不持锁)
-	for i := 0; i < 15; i++ {
+	// 轮询等待端口就绪
+	var portErr error
+	for i := 0; i < 20; i++ {
+		// 增加重试次数到 20 次 (总计约 5-7 秒)，确保慢速 SSH 也能对齐
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", s.socksExt.port), 500*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
-			return nil
+			portErr = nil
+			break
 		}
-		time.Sleep(200 * time.Millisecond)
+		portErr = err
+		time.Sleep(250 * time.Millisecond)
 	}
 
-	return fmt.Errorf("ssh -D port %d failed to listen in time", s.socksExt.port)
+	s.cMutex.Lock()
+	defer s.cMutex.Unlock()
+	
+	if portErr != nil {
+		s.socksExt.lastErr = fmt.Errorf("ssh -D port %d failed: %v", s.socksExt.port, portErr)
+		if s.socksExt.cmd == cmd {
+			_ = cmd.Process.Kill()
+			s.socksExt.cmd = nil
+		}
+	}
+
+	// 关闭等待信号并清理状态
+	close(s.socksExt.waitReady)
+	s.socksExt.waitReady = nil
+	return s.socksExt.lastErr
 }
 
 // buildSshDCommand 构建 ssh -N -D 命令（动态端口转发）

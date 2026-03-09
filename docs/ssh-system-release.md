@@ -16,8 +16,7 @@ The project is configured with a GitHub Action that triggers on tags matching `t
 1. Ensure your local branch is up to date.
 2. Create and push a tag:
    ```bash
-   git tag tag_ssh_system_v1.19.20_10
-   git push origin refs/tags/tag_ssh_system_v1.19.20_10
+   git tag tag_ssh_system_v1.19.20_11 && git push origin tag_ssh_system_v1.19.20_11
    ```
    > [!NOTE]
    > Use full ref `refs/tags/...` if there is a branch with the same name as the tag.
@@ -29,7 +28,7 @@ If you need to build manually on a local machine (macOS with Go installed):
 
 ### 1. Build commands
 ```bash
-VERSION="tag_ssh_system_v1.19.20_10"
+VERSION="tag_ssh_system_v1.19.20_11"
 BUILDTIME="$(date -u)"
 CGO_FLAGS="CGO_ENABLED=0"
 TAGS="-tags with_gvisor"
