@@ -54,7 +54,7 @@ func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, 
 		return s.dialSystemSocks(ctx, metadata)
 	}
 
-	client, err := s.connectWithRetry(ctx, s.addr)
+	client, err := s.connect(ctx, s.addr)
 	if err != nil {
 		return nil, err
 	}

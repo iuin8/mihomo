@@ -82,3 +82,13 @@ sniffer:
 ```
 
 With this setup, browser traffic (Chrome/Edge) will seamlessly switch from QUIC (UDP) to HTTP/2 (TCP) and utilize the SSH acceleration.
+
+## Future Considerations
+
+### Connection Pool Pre-warming (Subprocess Pooling)
+If extreme speed test performance or near-zero latency for the first request is required, the following architectural improvements can be considered:
+1. **Pre-warming**: Launch the `ssh -D` subprocess immediately upon configuration load or profile switch, rather than waiting for the first dial.
+2. **Auto-Respawn**: Implement an automated monitoring loop to restart the SSH subprocess immediately if it exits unexpectedly, ensuring the tunnel is always "hot".
+3. **Wait Queue Optimization**: Refine the `waitReady` mechanism to handle extreme thundering herd scenarios (e.g., >1000 concurrent requests) with a managed backpressure queue.
+
+Current implementation (v1.19.20_12) balances resources and complexity by using **On-Demand Startup with Concurrency Synchronization**.

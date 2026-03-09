@@ -55,6 +55,8 @@ func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(15 * time.Second):
+			// 注意：超时后不要在这里清理全局 s.socksExt.waitReady，
+			// 因为主启动协程可能还在工作，不应打断其逻辑。
 			return fmt.Errorf("timeout waiting for ssh tunnel ready")
 		}
 	}
@@ -167,9 +169,11 @@ func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 		}
 	}
 
-	// 关闭等待信号并清理状态
-	close(s.socksExt.waitReady)
-	s.socksExt.waitReady = nil
+	// 最终清理：关闭信号通道并清空 waitReady，标志启动流程结束（无论成功失败）
+	if s.socksExt != nil && s.socksExt.waitReady != nil {
+		close(s.socksExt.waitReady)
+		s.socksExt.waitReady = nil
+	}
 	return s.socksExt.lastErr
 }
 
