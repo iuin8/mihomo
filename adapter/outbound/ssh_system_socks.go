@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/metacubex/mihomo/log"
@@ -179,19 +180,41 @@ func (s *Ssh) setupSystemSocks(ctx context.Context) error {
 
 // buildSshDCommand 构建 ssh -N -D 命令（动态端口转发）
 func buildSshDCommand(ctx context.Context, actualUser, hostAlias string, localPort int, extraFlags []string) *exec.Cmd {
-	// -T: 禁用 TTY，避免交互挂起
-	// -o Tunnel=no: 防止 SSH 尝试创建系统 utun 接口冲突
-	// -o ServerAlive*: 保持底层 TCP 活跃
+	// 基础参数（最小化硬编码）
 	sshArgs := []string{
-		"-T", "-N", "-D", strconv.Itoa(localPort),
-		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=no",
-		"-o", "Tunnel=no",
-		"-o", "ServerAliveInterval=15",
-		"-o", "ServerAliveCountMax=3",
-		"-o", "ControlMaster=no",
-		"-o", "ControlPath=none",
+		"-T",                          // 禁用 TTY
+		"-N",                          // 不执行远程命令
+		"-D", strconv.Itoa(localPort), // 动态端口转发
 	}
+
+	// 默认选项（用户可通过 ssh-flags 覆盖）
+	defaultOpts := map[string]string{
+		"BatchMode":           "yes", // 非交互模式（必需）
+		"StrictHostKeyChecking": "no",  // 自动接受 host key（便利性）
+		"Tunnel":              "no",  // 禁用 TUN（避免冲突）
+	}
+
+	// 检查用户是否已配置这些选项
+	userConfigured := make(map[string]bool)
+	for i := 0; i < len(extraFlags)-1; i++ {
+		if extraFlags[i] == "-o" {
+			// 解析选项名（如 "ControlMaster=auto" -> "ControlMaster"）
+			opt := extraFlags[i+1]
+			if idx := strings.Index(opt, "="); idx > 0 {
+				optName := opt[:idx]
+				userConfigured[optName] = true
+			}
+		}
+	}
+
+	// 仅添加用户未配置的默认选项
+	for key, value := range defaultOpts {
+		if !userConfigured[key] {
+			sshArgs = append(sshArgs, "-o", key+"="+value)
+		}
+	}
+
+	// 用户自定义选项（优先级最高）
 	sshArgs = append(sshArgs, extraFlags...)
 	sshArgs = append(sshArgs, hostAlias)
 
