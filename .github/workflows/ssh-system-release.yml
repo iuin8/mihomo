@@ -57,7 +57,7 @@ jobs:
             BIN_NAME="bin/mihomo"
           fi
           
-          GOARCH=${{ matrix.arch }} GOOS=${{ matrix.os }} GOAMD64=${{ matrix.amd64 }} go build -tags with_gvisor -trimpath -ldflags "-X 'github.com/metacubex/mihomo/constant.Version=${{ env.VERSION }}' -X 'github.com/metacubex/mihomo/constant.BuildTime=${{ env.BUILDTIME }}' -w -s -buildid=" -o $BIN_NAME
+          GOARCH=${{ matrix.arch }} GOOS=${{ matrix.os }} GOAMD64=${{ matrix.amd64 }} go build -tags with_gvisor -trimpath -ldflags "-X 'github.com/iuin8/mihomo/constant.Version=${{ env.VERSION }}' -X 'github.com/iuin8/mihomo/constant.BuildTime=${{ env.BUILDTIME }}' -w -s -buildid=" -o $BIN_NAME
           
           if [ "${{ matrix.compress }}" = "zip" ]; then
             zip -j bin/${{ matrix.name }}-${{ env.VERSION }}.zip $BIN_NAME
