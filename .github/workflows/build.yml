@@ -285,6 +285,7 @@ jobs:
           VERSION=${{ github.event.inputs.version }}
           PackageVersion="${VERSION#v}"
         fi
+        PackageVersion="${PackageVersion//_/-}"
         echo "VERSION=${VERSION}" >> $GITHUB_ENV
         echo "PackageVersion=${PackageVersion}" >> $GITHUB_ENV
       
