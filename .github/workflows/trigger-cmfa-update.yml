@@ -24,7 +24,7 @@ jobs:
       
       - name: Trigger update-dependencies
         run: |
-          curl -X POST https://api.github.com/repos/MetaCubeX/ClashMetaForAndroid/dispatches \
+          curl -X POST https://api.github.com/repos/iuin8/clash-verge-rev/dispatches \
             -H "Accept: application/vnd.github.everest-preview+json" \
             -H "Authorization: token ${{ steps.generate-token.outputs.token }}" \
             -d '{"event_type": "core-updated"}'
