@@ -589,10 +589,8 @@ jobs:
           file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           platforms: |
-            linux/386
             linux/amd64
             linux/arm64
-            linux/arm/v7
           tags: ${{ steps.meta_alpha.outputs.tags }}
           labels: ${{ steps.meta_alpha.outputs.labels }}
       
@@ -604,9 +602,7 @@ jobs:
           file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           platforms: |
-            linux/386
             linux/amd64
             linux/arm64
-            linux/arm/v7
           tags: ${{ steps.meta_release.outputs.tags }}
           labels: ${{ steps.meta_release.outputs.labels }}
