@@ -3,7 +3,7 @@ name: SSH System Release
 on:
   push:
     tags:
-      - 'tag/fa/ssh_system/v*'
+      - 'tag-fa-ssh_system-v*'
 
 env:
   VERSION: ${{ github.ref_name }}
