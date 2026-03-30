@@ -278,17 +278,20 @@ jobs:
 
     - name: Set variables
       run: |
-        VERSION="${GITHUB_REF_NAME,,}-$(git rev-parse --short HEAD)"
-        VERSION="${VERSION//\//-}"
-        PackageVersion="$(curl -s "https://api.github.com/repos/iuin8/mihomo/releases/latest" | jq -r '.tag_name' | sed 's/v//g' | awk -F '.' '{$NF = $NF + 1; print}' OFS='.').${VERSION/-/.}"
-        if [ -n "${{ github.event.inputs.version }}" ]; then
-          VERSION=${{ github.event.inputs.version }}
-          PackageVersion="${VERSION#v}"
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          VERSION="${GITHUB_REF_NAME}"
+        elif [ -n "${{ github.event.inputs.version }}" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION="${GITHUB_REF_NAME,,}-$(git rev-parse --short HEAD)"
+          VERSION="${VERSION//\//-}"
         fi
+        PackageVersion="${VERSION#v}"
         PackageVersion="${PackageVersion//_/-}"
+        RpmVersion="${PackageVersion/-/~}"
         echo "VERSION=${VERSION}" >> $GITHUB_ENV
         echo "PackageVersion=${PackageVersion}" >> $GITHUB_ENV
-      
+        echo "RpmVersion=${RpmVersion}" >> $GITHUB_ENV
         echo "BUILDTIME=$(date)" >> $GITHUB_ENV
         echo "CGO_ENABLED=0" >> $GITHUB_ENV
         echo "BUILDTAG=-extldflags --static" >> $GITHUB_ENV
@@ -362,7 +365,7 @@ jobs:
         cp .github/release/.fpm_systemd .fpm
 
         fpm -t rpm \
-          -v "${PackageVersion}" \
+          -v "${RpmVersion}" \
           -p "mihomo-${{matrix.jobs.goos}}-${{matrix.jobs.output}}-${VERSION}.rpm" \
           --architecture ${{ matrix.jobs.rpm }} \
           mihomo=/usr/bin/mihomo
