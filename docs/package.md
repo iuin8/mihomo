@@ -1,5 +1,11 @@
 # 打包
 
+## 会话记录
+
+```bash
+claude --resume 0e21b145-621d-4262-9de7-d559ece2c8d3 --dangerously-skip-permissions
+```
+
 ## macOS
 
 ```bash
