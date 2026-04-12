@@ -142,11 +142,13 @@ adapter/outbound/ssh_resilience.go
 | `adapter/outbound/ssh.go` | 扩展 `Ssh` struct 和 `SshOption`，加了系统代理分支 | **Claude 智能合并** |
 | `component/updater/update_core.go` | 替换下载 URL 指向 fork 仓库 | `--ours`（脚本自动） |
 
-**Fork 维护的文件**（固定取 HEAD）：
+**Fork 维护的文件**（固定取 HEAD，但需要后验证）：
 ```
 .github/workflows/build.yml
 .github/workflows/test.yml
 ```
+
+> ⚠️ `test.yml` 取 HEAD 后需检查：`grep "patch/" .github/workflows/test.yml` — 确认引用的 patch 文件都存在于 `.github/patch/`。上游升级时可能删除旧 patch（如 `issue77975.patch`），fork 的 test.yml 如果还保留对应步骤就会报错。
 
 ---
 

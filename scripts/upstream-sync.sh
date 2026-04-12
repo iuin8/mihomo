@@ -115,6 +115,21 @@ auto_resolve_ours ".github/workflows/test.yml"        "fork 精简 CI"
 auto_resolve_ours "component/updater/update_core.go"  "仅含仓库 URL 替换"
 auto_resolve_rm   ".github/workflows/trigger-cmfa-update.yml"
 
+# test.yml 取 ours 后，检查引用的 patch 文件是否都存在
+# 上游升级时可能删除旧 patch（如 issue77975.patch），fork test.yml 若还保留对应步骤会报错
+if [[ -f .github/workflows/test.yml ]]; then
+  PATCH_WARNING=false
+  while IFS= read -r patch_ref; do
+    if [[ ! -f "$patch_ref" ]]; then
+      echo "    ⚠️  test.yml 引用了不存在的 patch: $patch_ref"
+      PATCH_WARNING=true
+    fi
+  done < <(grep -oP '\.github/patch/\S+\.patch' .github/workflows/test.yml 2>/dev/null || true)
+  if $PATCH_WARNING; then
+    echo "    → 上游已删除该 patch 文件，需从 test.yml 中移除对应步骤后再提交"
+  fi
+fi
+
 # ── 输出剩余冲突（供 AI 智能合并）──────────────────────────────────────────
 REMAINING="$(git diff --name-only --diff-filter=U 2>/dev/null || true)"
 if [[ -n "$REMAINING" ]]; then
