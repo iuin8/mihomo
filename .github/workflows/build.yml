@@ -186,13 +186,6 @@ jobs:
         cd $(go env GOROOT)
         patch --verbose -p 1 < $GITHUB_WORKSPACE/.github/patch/issue77731.patch
 
-      # TODO: remove after issue77975 fixed, see: https://github.com/golang/go/issues/77975
-    - name: Fix issue77975 for Golang1.26
-      if: ${{ matrix.jobs.goversion == '' }}
-      run: |
-        cd $(go env GOROOT)
-        patch --verbose -p 1 < $GITHUB_WORKSPACE/.github/patch/issue77975.patch
-
       # this patch file only works on golang1.26.x
       # that means after golang1.27 release it must be changed
       # see: https://github.com/MetaCubeX/go/commits/release-branch.go1.26/
