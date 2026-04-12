@@ -18,5 +18,5 @@ CGO_ENABLED=0 GOARCH=amd64 GOOS=windows go build -tags with_gvisor -trimpath -ld
 
 ```bash
 # 触发 GitHub action 自动发布新包
-TAG=v1.19.21-fa.1014 && git tag $TAG && git push origin $TAG
+TAG=v1.19.23-fa.1015 && git tag $TAG && git push origin $TAG
 ```
