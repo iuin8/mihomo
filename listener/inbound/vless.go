@@ -14,6 +14,7 @@ type VlessOption struct {
 	Users           []VlessUser   `inbound:"users"`
 	Decryption      string        `inbound:"decryption,omitempty"`
 	WsPath          string        `inbound:"ws-path,omitempty"`
+	XHTTPConfig     XHTTPConfig   `inbound:"xhttp-config,omitempty"`
 	GrpcServiceName string        `inbound:"grpc-service-name,omitempty"`
 	Certificate     string        `inbound:"certificate,omitempty"`
 	PrivateKey      string        `inbound:"private-key,omitempty"`
@@ -28,6 +29,26 @@ type VlessUser struct {
 	Username string `inbound:"username,omitempty"`
 	UUID     string `inbound:"uuid"`
 	Flow     string `inbound:"flow,omitempty"`
+}
+
+type XHTTPConfig struct {
+	Path                 string `inbound:"path,omitempty"`
+	Host                 string `inbound:"host,omitempty"`
+	Mode                 string `inbound:"mode,omitempty"`
+	NoSSEHeader          bool   `inbound:"no-sse-header,omitempty"`
+	ScStreamUpServerSecs string `inbound:"sc-stream-up-server-secs,omitempty"`
+	ScMaxEachPostBytes   int    `inbound:"sc-max-each-post-bytes,omitempty"`
+}
+
+func (o XHTTPConfig) Build() LC.XHTTPConfig {
+	return LC.XHTTPConfig{
+		Path:                 o.Path,
+		Host:                 o.Host,
+		Mode:                 o.Mode,
+		NoSSEHeader:          o.NoSSEHeader,
+		ScStreamUpServerSecs: o.ScStreamUpServerSecs,
+		ScMaxEachPostBytes:   o.ScMaxEachPostBytes,
+	}
 }
 
 func (o VlessOption) Equal(config C.InboundConfig) bool {
@@ -63,6 +84,7 @@ func NewVless(options *VlessOption) (*Vless, error) {
 			Users:           users,
 			Decryption:      options.Decryption,
 			WsPath:          options.WsPath,
+			XHTTPConfig:     options.XHTTPConfig.Build(),
 			GrpcServiceName: options.GrpcServiceName,
 			Certificate:     options.Certificate,
 			PrivateKey:      options.PrivateKey,
