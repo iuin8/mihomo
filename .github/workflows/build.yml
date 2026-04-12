@@ -374,7 +374,7 @@ jobs:
 
   Upload-Prerelease:
     permissions: write-all
-    if: ${{ github.event_name == 'push' && github.ref_type != 'tag' }}
+    if: ${{ (github.event_name == 'push' && github.ref_type != 'tag') || github.event_name == 'workflow_dispatch' }}
     needs: [build]
     runs-on: ubuntu-latest
     steps:
