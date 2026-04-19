@@ -199,3 +199,26 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Skill routing
+
+When the user's request matches a project skill, ALWAYS invoke it using the Skill tool first.
+Do not answer release / sync workflow questions ad-hoc when a repo skill already covers the path.
+
+Key routing rules for this repo:
+- 普通发布、新版本、release、推 `v*` tag、版本号发布 → invoke `release`
+- `Prerelease-Alpha`、刷新预发布、刷新 Alpha 预览版 → invoke `prerelease`
+- 同步上游、合并上游、upstream sync、升级到上游新 tag → invoke `upstream-sync`
+
+Routing priority:
+- 只要明确命中 `Prerelease-Alpha` / 刷新预发布，优先走 `prerelease`
+- `release` 仅用于新建 `v*` tag 的普通 release
+
+If the user is specifically asking about blast radius, execution flow, or safe refactoring, prefer the matching GitNexus skill from the table above.
+
+If the user asks for `Prerelease-Alpha`, do not create a new `v*` tag unless they explicitly also want a normal release.
+If the user asks for a normal release, do not use `Prerelease-Alpha` as the release vehicle.
+If the user asks for some other custom prerelease shape that is not `Prerelease-Alpha`, do not assume `prerelease` skill applies; clarify or handle manually.
+
+Only fall back to manual tool orchestration when no project skill matches the request.
+

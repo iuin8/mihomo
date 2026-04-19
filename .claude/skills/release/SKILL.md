@@ -1,13 +1,20 @@
 ---
 name: release
 description: >-
-  Use when 用户要发布 mihomo fork 新版本、创建或推送版本 tag、监控 build.yml 发布构建，
-  或需要在上游已发布更新时判断是否应该先做 upstream sync。
+  Use when 用户要发布 mihomo fork 普通新版本、创建或推送 `v*` 版本 tag、监控 build.yml 的
+  Upload-Release 构建，或需要在上游已发布更新时判断是否应该先做 upstream sync。
+  不用于刷新 `Prerelease-Alpha`。
 ---
 
 # Release — 发布新版本
 
 自动化 mihomo fork 的发布流程：先确认版本基线，再推 tag，最后验收 GitHub Release。
+
+> **边界说明：** 这个 skill 只负责普通 release。
+> 如果用户要的是 **预览版 / pre-release / Prerelease-Alpha**，不要新建 `v*` tag，改走项目级 `prerelease` skill。
+> 普通 release = `v*` tag → `Upload-Release`。
+> `Prerelease-Alpha` 会在 `Alpha` 分支非 tag push 且未命中 `paths-ignore` 时自动刷新，也可以通过 `workflow_dispatch(version=Prerelease-Alpha)` 手动定向刷新。
+> 但只要目标是“发布一个新的版本号 release”，就仍然使用本 skill。
 
 ## 整体流程
 
@@ -124,20 +131,30 @@ TAG=v1.19.23-fa.1016 && git tag $TAG && git push origin $TAG
 
 ### 5. 监控构建（每30秒轮询，超时5分钟）
 
-推送成功后只监控本次 tag 触发的 `build.yml`：
+推送成功后只监控**这次 tag 对应**的 `build.yml`，不要直接取最近一个 `push` run，因为 `Alpha` 分支 push 也会触发同一个 workflow。
 
 ```bash
-# 获取本次 tag 对应的 workflow run
+TAG=v1.19.23-fa.1016
+
+# 先拿到 tag 对应提交
+TAG_SHA=$(git rev-list -n 1 "$TAG")
+
+# 只选 headBranch = tag 且 headSha = tag 对应提交 的 run
 RUN_ID=$(gh run list \
+  -R iuin8/mihomo \
   --workflow=build.yml \
-  --limit=10 \
-  --json databaseId,headBranch,event,displayTitle \
-  --jq 'map(select(.event == "push")) | .[0].databaseId')
+  --limit=20 \
+  --json databaseId,headBranch,headSha,event,displayTitle \
+  --jq 'map(select(.event == "push" and .headBranch == '"\"$TAG\""' and .headSha == '"\"$TAG_SHA\""')) | .[0].databaseId')
 
 # 查看当前状态
-gh run view "$RUN_ID" --json status,conclusion,jobs \
+gh run view "$RUN_ID" \
+  -R iuin8/mihomo \
+  --json status,conclusion,jobs \
   --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
 ```
+
+如果 `RUN_ID` 为空，先重新执行一次 `gh run list` 检查最近 run，确认 tag push 已被 GitHub 接收。
 
 **状态判断：**
 
