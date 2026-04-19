@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"os/user"
 	"runtime"
 	"strings"
 	"sync"
@@ -129,16 +128,8 @@ func buildEnvCommand(ctx context.Context, actualUser string) *exec.Cmd {
 		return nil
 	}
 
-	cur, _ := user.Current()
-	// 简单检查用户名（忽略 Windows 可能的域名/机器名前缀）
-	isSameUser := false
-	if cur != nil {
-		curName := cur.Username
-		if idx := strings.LastIndex(curName, "\\"); idx != -1 {
-			curName = curName[idx+1:]
-		}
-		isSameUser = (curName == actualUser)
-	}
+	cur, _ := userCurrentFunc()
+	isSameUser := cur != nil && normalizeLocalUserName(cur.Username) == normalizeLocalUserName(actualUser)
 
 	if isSameUser {
 		shell := os.Getenv("SHELL")

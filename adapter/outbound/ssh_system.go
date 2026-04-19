@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -116,20 +117,26 @@ func (s *Ssh) applyEnv(cmd *exec.Cmd, capturedEnv []string) {
 
 // ─── Zero-Config Resolution ─────────────────────────────────────────────────
 
-// resolveActualUser 按优先级解析实际用户名（ssh-user > SUDO_USER > current）
+// resolveActualUser 按优先级解析实际用户名（ssh-user > SUDO_USER > current/active login user）
 func (s *Ssh) resolveActualUser() string {
 	if s.option.SshUser != "" {
 		return s.option.SshUser
 	}
 	if u := os.Getenv("SUDO_USER"); u != "" {
-		return u
+		return normalizeLocalUserName(u)
 	}
-	if cur, _ := user.Current(); cur != nil {
-		name := cur.Username
-		if idx := strings.LastIndex(name, "\\"); idx != -1 {
-			name = name[idx+1:]
+	if cur, _ := userCurrentFunc(); cur != nil {
+		name := normalizeLocalUserName(cur.Username)
+		if !isServiceAccount(name) {
+			return name
+		}
+		if activeUser, err := activeLoginUserFunc(); err == nil && activeUser != "" {
+			return normalizeLocalUserName(activeUser)
 		}
 		return name
+	}
+	if activeUser, err := activeLoginUserFunc(); err == nil && activeUser != "" {
+		return normalizeLocalUserName(activeUser)
 	}
 	return ""
 }
@@ -151,6 +158,214 @@ func (s *Ssh) prepareSshConfig(ctx context.Context) (string, error) {
 }
 
 // updateFromHostConfig 根据主机配置更新 SSH 选项
+var (
+	userCurrentFunc     = user.Current
+	activeLoginUserFunc = detectActiveLoginUser
+)
+
+func normalizeLocalUserName(name string) string {
+	if idx := strings.LastIndex(name, "\\"); idx != -1 {
+		name = name[idx+1:]
+	}
+	return strings.TrimSpace(name)
+}
+
+func isServiceAccount(name string) bool {
+	switch strings.ToLower(normalizeLocalUserName(name)) {
+	case "", "root", "system":
+		return true
+	default:
+		return false
+	}
+}
+
+func detectActiveLoginUser() (string, error) {
+	return detectActiveLoginUserWith(runtime.GOOS, func(name string, args ...string) ([]byte, error) {
+		return exec.Command(name, args...).Output()
+	})
+}
+
+func detectActiveLoginUserWith(goos string, run func(name string, args ...string) ([]byte, error)) (string, error) {
+	switch goos {
+	case "darwin":
+		output, err := run("scutil", "show", "State:/Users/ConsoleUser")
+		if err != nil {
+			return "", fmt.Errorf("read macos console user: %w", err)
+		}
+		return parseMacOSConsoleUser(output)
+	case "linux":
+		output, err := run("loginctl", "list-sessions")
+		if err != nil {
+			return "", fmt.Errorf("list linux sessions: %w", err)
+		}
+		return parseLinuxLoginctlOutput(output, func(sessionID string) ([]byte, error) {
+			sessionOutput, err := run("loginctl", "show-session", sessionID)
+			if err != nil {
+				return nil, fmt.Errorf("show linux session %s: %w", sessionID, err)
+			}
+			return sessionOutput, nil
+		})
+	case "windows":
+		return "", fmt.Errorf("active login user detection is not supported on windows")
+	default:
+		return "", fmt.Errorf("active login user detection is not implemented for %s", goos)
+	}
+}
+
+func parseMacOSConsoleUser(output []byte) (string, error) {
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Name") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(key) != "Name" {
+			continue
+		}
+		name := normalizeLocalUserName(value)
+		if name == "" {
+			return "", fmt.Errorf("macos console user is empty")
+		}
+		if strings.EqualFold(name, "loginwindow") || isServiceAccount(name) {
+			return "", fmt.Errorf("macos console user %q is not a real desktop user", name)
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("macos console user not found")
+}
+
+func parseLinuxLoginctlOutput(listOutput []byte, sessionLookup func(sessionID string) ([]byte, error)) (string, error) {
+	if sessionLookup == nil {
+		return "", fmt.Errorf("linux session lookup is nil")
+	}
+
+	sessionIDs := parseLinuxSessionIDs(listOutput)
+	if len(sessionIDs) == 0 {
+		return "", fmt.Errorf("no linux sessions found")
+	}
+
+	var lastErr error
+	for _, sessionID := range sessionIDs {
+		output, err := sessionLookup(sessionID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if name, ok := parseLinuxSessionProperties(output); ok {
+			return name, nil
+		}
+		lastErr = fmt.Errorf("no eligible active local linux session found")
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("no eligible active local linux session found")
+}
+
+func parseLinuxSessionIDs(output []byte) []string {
+	lines := strings.Split(string(output), "\n")
+	sessionIDs := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		sessionID := strings.TrimSpace(fields[0])
+		if sessionID == "" || strings.EqualFold(sessionID, "SESSION") {
+			continue
+		}
+		if !isLikelyLinuxSessionID(sessionID) || !isLikelyLinuxSessionUID(fields[1]) {
+			continue
+		}
+		if _, ok := seen[sessionID]; ok {
+			continue
+		}
+		seen[sessionID] = struct{}{}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	return sessionIDs
+}
+
+func isLikelyLinuxSessionID(sessionID string) bool {
+	for _, r := range sessionID {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return sessionID != ""
+}
+
+func isLikelyLinuxSessionUID(uid string) bool {
+	if uid == "" {
+		return false
+	}
+	for _, r := range uid {
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func parseLinuxSessionProperties(output []byte) (string, bool) {
+	values := make(map[string]string)
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		normalizedValue := strings.ToLower(strings.TrimSpace(value))
+		values[normalizedKey] = normalizedValue
+		if strings.EqualFold(strings.TrimSpace(key), "Name") {
+			values["name"] = normalizeLocalUserName(value)
+		}
+	}
+
+	name := values["name"]
+	if name == "" || isServiceAccount(name) || isDisplayManagerAccount(name) {
+		return "", false
+	}
+	if values["remote"] != "no" {
+		return "", false
+	}
+	if sessionClass := values["class"]; sessionClass != "" && sessionClass != "user" {
+		return "", false
+	}
+
+	active := values["active"]
+	state := values["state"]
+	if active == "yes" {
+		if state == "" || state == "active" {
+			return name, true
+		}
+		return "", false
+	}
+	if active != "" {
+		return "", false
+	}
+	if state == "active" {
+		return name, true
+	}
+	return "", false
+}
+
+func isDisplayManagerAccount(name string) bool {
+	switch strings.ToLower(normalizeLocalUserName(name)) {
+	case "gdm", "sddm", "lightdm", "greetd":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Ssh) updateFromHostConfig(cfg *HostConfig, actualUser string) {
 	if s.option.UserName == "" && cfg.User != "" {
 		s.config.User = cfg.User
@@ -169,7 +384,7 @@ func (s *Ssh) updateFromHostConfig(cfg *HostConfig, actualUser string) {
 // loadIdentityFiles 自动加载私钥文件，尝试列表直到成功
 func (s *Ssh) loadIdentityFiles(paths []string, actualUser string) {
 	home := s.resolveUserHome(actualUser)
-	
+
 	for _, path := range paths {
 		if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
 			path = filepath.Join(home, path[2:])

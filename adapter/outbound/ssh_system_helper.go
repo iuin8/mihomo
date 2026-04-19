@@ -64,8 +64,8 @@ func (c *sshCmdConn) SetWriteDeadline(t time.Time) error { return c.stdin.SetWri
 // buildSshGCommand 构建 ssh -G 命令
 func buildSshGCommand(ctx context.Context, actualUser, hostAlias string) *exec.Cmd {
 	if runtime.GOOS != "windows" {
-		cur, _ := user.Current()
-		if actualUser != "" && (cur == nil || cur.Username != actualUser) {
+		cur, _ := userCurrentFunc()
+		if actualUser != "" && (cur == nil || normalizeLocalUserName(cur.Username) != normalizeLocalUserName(actualUser)) {
 			return exec.CommandContext(ctx, "sudo", "-n", "-u", actualUser, "-H", "ssh", "-G", hostAlias)
 		}
 	}
@@ -102,8 +102,8 @@ func parseSshGOutput(output string) *HostConfig {
 // 导致整个长连接隧道崩溃。我们通过内部的 os.Pipe() 和 client.Close() 自己管理生命周期。
 func buildSshCommand(actualUser string, sshArgs []string) *exec.Cmd {
 	if runtime.GOOS != "windows" {
-		cur, _ := user.Current()
-		if actualUser != "" && (cur == nil || cur.Username != actualUser) {
+		cur, _ := userCurrentFunc()
+		if actualUser != "" && (cur == nil || normalizeLocalUserName(cur.Username) != normalizeLocalUserName(actualUser)) {
 			args := append([]string{"-n", "-u", actualUser, "-H", "ssh"}, sshArgs...)
 			log.Infoln("[SSH] Dialing as user: %s via sudo", actualUser)
 			return exec.Command("sudo", args...)
