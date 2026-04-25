@@ -3,8 +3,6 @@ package outbound
 import (
 	"context"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,10 +14,8 @@ import (
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const (
-	envCacheTTL            = 30 * time.Minute // 环境变量缓存自动过期
-	sshHealthCheckInterval = 30 * time.Second // Keepalive 探活间隔
-	sshMaxRetries          = 3                // 最大重试次数
-	sshReconnectBaseDelay  = 2 * time.Second  // 指数退避基础延迟
+	envCacheTTL            = 30 * time.Minute
+	sshHealthCheckInterval = 30 * time.Second
 )
 
 // ─── Environment Cache ───────────────────────────────────────────────────────
@@ -68,7 +64,7 @@ func fetchUserEnv(ctx context.Context, actualUser string) ([]string, error) {
 	return env, nil
 }
 
-// clearUserEnv 清除指定用户的环境 + 主机配置缓存
+// clearUserEnv 清除指定用户的环境缓存
 func clearUserEnv(actualUser string) {
 	if actualUser == "" {
 		return
@@ -77,19 +73,11 @@ func clearUserEnv(actualUser string) {
 	delete(userEnvCache, actualUser)
 	envMutex.Unlock()
 
-	clearHostConfigCache(actualUser)
-
-	log.Warnln("[SSH] Cleared all caches for user: %s", actualUser)
+	log.Warnln("[SSH] Cleared environment cache for user: %s", actualUser)
 }
 
 // ─── Connection Lifecycle ────────────────────────────────────────────────────
 
-// ─── Connection Lifecycle ────────────────────────────────────────────────────
-// 此处移除了 connectWithRetry 逻辑，遵循用户需求：发生错误时直接返回，
-// 不再尝试 background 指数退避重试，以防止并发测速时的惊群效应。
-
-// startHealthCheck 独立于上游 goroutine 运行：周期探活 + 断线后主动重连。
-// 清理逻辑（s.client = nil）由 ssh.go 中的原始 goroutine 负责。
 func (s *Ssh) startHealthCheck(client *ssh.Client) {
 	dead := make(chan struct{})
 	go func() {
@@ -118,28 +106,7 @@ func (s *Ssh) startHealthCheck(client *ssh.Client) {
 	}
 }
 
-
 // ─── Internal Helpers ────────────────────────────────────────────────────────
-
-// buildEnvCommand 构建抓取环境变量的命令（同用户用 Shell，跨用户用 sudo）
-func buildEnvCommand(ctx context.Context, actualUser string) *exec.Cmd {
-	if runtime.GOOS == "windows" {
-		// Windows 上暂不支持跨用户抓取环境（没有通用的 sudo），直接返回空让 fetchUserEnv 使用 os.Environ()
-		return nil
-	}
-
-	cur, _ := userCurrentFunc()
-	isSameUser := cur != nil && normalizeLocalUserName(cur.Username) == normalizeLocalUserName(actualUser)
-
-	if isSameUser {
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/zsh"
-		}
-		return exec.CommandContext(ctx, shell, "-ilc", "env")
-	}
-	return exec.CommandContext(ctx, "sudo", "-n", "-u", actualUser, "-H", "-i", "env")
-}
 
 // parseEnvOutput 解析 env 输出，返回环境变量列表和 SSH_AUTH_SOCK 值
 func parseEnvOutput(output string) (env []string, sockPath string) {

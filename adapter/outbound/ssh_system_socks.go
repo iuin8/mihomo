@@ -6,221 +6,266 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"os/exec"
-	"os/user"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/metacubex/mihomo/log"
-	N "github.com/metacubex/mihomo/common/net"
 	C "github.com/metacubex/mihomo/constant"
-	"github.com/metacubex/mihomo/transport/socks5"
+	"github.com/metacubex/mihomo/log"
 )
 
 type systemSocksExt struct {
-	port      int
-	cmd       *exec.Cmd
-	inUse     bool
-	waitReady chan struct{} // 当 SOCKS5 隧道就绪时关闭此通道
-	lastErr   error
+	port        int
+	cmd         *exec.Cmd
+	processDone <-chan struct{}
+	inUse       bool
+	pinned      bool
+	waitReady   chan struct{}
+	lastErr     error
+}
+
+type sshOption struct {
+	name  string
+	value string
 }
 
 func (s *Ssh) setupSystemSocks(ctx context.Context) error {
+	return s.setupSystemSocksForOS(ctx, runtime.GOOS)
+}
+
+func (s *Ssh) setupSystemSocksForOS(ctx context.Context, goos string) error {
 	s.cMutex.Lock()
 	if s.socksExt == nil || !s.socksExt.inUse {
 		s.cMutex.Unlock()
 		return nil
 	}
-
-	// 1. 如果已经在运行且已就绪 (waitReady == nil 表示不在启动中且已成功过)
 	if s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil && s.socksExt.waitReady == nil {
-		s.cMutex.Unlock()
-		return nil
-	}
-
-	// 2. 如果正在启动中，等待就绪
-	if s.socksExt.waitReady != nil {
-		waitChan := s.socksExt.waitReady
-		s.cMutex.Unlock()
 		select {
-		case <-waitChan:
-			s.cMutex.Lock()
-			defer s.cMutex.Unlock()
-			if s.socksExt == nil {
-				return fmt.Errorf("ssh proxy closed during wait")
+		case <-s.socksExt.processDone:
+			s.socksExt.cmd = nil
+			s.socksExt.processDone = nil
+			s.socks = nil
+			if !s.socksExt.pinned {
+				s.socksExt.port = 0
 			}
-			return s.socksExt.lastErr
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(15 * time.Second):
-			// 注意：超时后不要在这里清理全局 s.socksExt.waitReady，
-			// 因为主启动协程可能还在工作，不应打断其逻辑。
-			return fmt.Errorf("timeout waiting for ssh tunnel ready")
+		default:
+			s.cMutex.Unlock()
+			return nil
 		}
 	}
-
-	// 3. 开始启动流程
-	s.socksExt.waitReady = make(chan struct{})
-	s.socksExt.lastErr = nil
-	actualUser := s.resolveActualUser()
-
-	// 确定端口
-	if s.socksExt.port == 0 {
-		p, err := LookForFreePort()
-		if err != nil {
-			s.socksExt.lastErr = fmt.Errorf("find free port: %w", err)
-			close(s.socksExt.waitReady)
+	waitChan := s.socksExt.waitReady
+	if waitChan == nil {
+		waitChan = make(chan struct{})
+		s.socksExt.waitReady = waitChan
+		s.socksExt.lastErr = nil
+		actualUser := s.resolveActualUser()
+		if err := requireSystemSshUserForOS(actualUser, goos); err != nil {
+			s.socksExt.lastErr = err
+			close(waitChan)
 			s.socksExt.waitReady = nil
 			s.cMutex.Unlock()
-			return s.socksExt.lastErr
+			return err
 		}
-		s.socksExt.port = p
+		port := s.socksExt.port
+		if port == 0 {
+			p, err := LookForFreePort()
+			if err != nil {
+				s.socksExt.lastErr = fmt.Errorf("find free port: %w", err)
+				close(waitChan)
+				s.socksExt.waitReady = nil
+				s.cMutex.Unlock()
+				return s.socksExt.lastErr
+			}
+			port = p
+		}
+		go s.startSystemSocks(actualUser, port, waitChan)
 	}
-
-	// 执行预解析 (ssh -G) - 释放锁以防死锁
 	s.cMutex.Unlock()
+	return s.waitSystemSocks(ctx, waitChan)
+}
 
-	if _, err := s.prepareSshConfig(ctx); err != nil {
-		log.Warnln("[SSH] prepareSshConfig failed: %v", err)
-	}
-
-	// 重新加锁以准备启动进程
-	s.cMutex.Lock()
-	cmd := buildSshDCommand(context.Background(), actualUser, s.option.Server, s.socksExt.port, s.option.SshFlags)
-	capturedEnv, _ := fetchUserEnv(ctx, actualUser)
-	s.applyEnv(cmd, capturedEnv)
-
-	stdinR, stdinW, _ := os.Pipe()
-	stdoutR, stdoutW, _ := os.Pipe()
-	cmd.Stdin = stdinR
-	cmd.Stdout = stdoutW
-	
-	stderrPipe, _ := cmd.StderrPipe()
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			log.Warnln("[SSH-SOCKS-STDERR] %s", scanner.Text())
-		}
-	}()
-
-	if err := cmd.Start(); err != nil {
-		_ = stdinR.Close()
-		_ = stdinW.Close()
-		_ = stdoutR.Close()
-		_ = stdoutW.Close()
-		s.socksExt.lastErr = fmt.Errorf("start ssh -D: %w", err)
-		close(s.socksExt.waitReady)
-		s.socksExt.waitReady = nil
-		s.cMutex.Unlock()
-		return s.socksExt.lastErr
-	}
-
-	_ = stdinR.Close()
-	_ = stdinW.Close()
-	go func() {
-		_, _ = io.Copy(io.Discard, stdoutR)
-		_ = stdoutR.Close()
-		_ = stdoutW.Close()
-	}()
-
-	s.socksExt.cmd = cmd
-	s.cMutex.Unlock() // 释放锁，允许其他并发请求进入等待逻辑
-
-	log.Infoln("[SSH] System SOCKS5 tunnel starting on 127.0.0.1:%d (PID: %d)", s.socksExt.port, cmd.Process.Pid)
-
-	// 监控进程退出
-	go func() {
-		err := cmd.Wait()
+func (s *Ssh) waitSystemSocks(ctx context.Context, waitChan <-chan struct{}) error {
+	select {
+	case <-waitChan:
 		s.cMutex.Lock()
 		defer s.cMutex.Unlock()
-		if s.socksExt != nil && s.socksExt.cmd == cmd {
-			s.socksExt.cmd = nil
-			s.socksExt.waitReady = nil // 允许下次 Dial 时重新触发启动
-			if !s.closed {
-				log.Errorln("[SSH] System SOCKS5 tunnel process (PID: %d) exited: %v", cmd.Process.Pid, err)
-			}
+		if s.socksExt == nil {
+			return fmt.Errorf("ssh proxy closed during wait")
 		}
-	}()
-
-	// 轮询等待端口就绪
-	var portErr error
-	for i := 0; i < 20; i++ {
-		// 增加重试次数到 20 次 (总计约 5-7 秒)，确保慢速 SSH 也能对齐
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", s.socksExt.port), 500*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			portErr = nil
-			break
-		}
-		portErr = err
-		time.Sleep(250 * time.Millisecond)
+		return s.socksExt.lastErr
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(15 * time.Second):
+		return fmt.Errorf("timeout waiting for ssh tunnel ready")
 	}
+}
+
+func (s *Ssh) startSystemSocks(actualUser string, port int, waitReady chan struct{}) {
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelStartup()
+
+	s.cMutex.Lock()
+	if s.closed || s.socksExt == nil || s.socksExt.waitReady != waitReady {
+		s.finishSystemSocksStartLocked(waitReady, fmt.Errorf("ssh adapter is closed"), nil)
+		s.cMutex.Unlock()
+		return
+	}
+	cmd := buildSshDCommand(actualUser, s.option.Server, port, s.option.SshFlags)
+	capturedEnv, _ := fetchUserEnv(startupCtx, actualUser)
+	applyEnv(cmd, capturedEnv)
+
+	cmd.Stdout = io.Discard
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		s.finishSystemSocksStartLocked(waitReady, fmt.Errorf("stderr pipe: %w", err), nil)
+		s.cMutex.Unlock()
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		s.finishSystemSocksStartLocked(waitReady, fmt.Errorf("start ssh -D: %w", err), nil)
+		s.cMutex.Unlock()
+		return
+	}
+	go logSystemSocksStderr(stderrPipe)
+
+	processDone := make(chan struct{})
+	s.socksExt.cmd = cmd
+	s.socksExt.processDone = processDone
+	s.cMutex.Unlock()
+
+	log.Infoln("[SSH] System SOCKS5 tunnel starting on 127.0.0.1:%d (PID: %d)", port, cmd.Process.Pid)
+
+	go s.waitSystemSocksProcess(cmd, processDone)
+
+	probeErr := waitSystemSocksReady(startupCtx, port)
 
 	s.cMutex.Lock()
 	defer s.cMutex.Unlock()
-	
-	if portErr != nil {
-		s.socksExt.lastErr = fmt.Errorf("ssh -D port %d failed: %v", s.socksExt.port, portErr)
-		if s.socksExt.cmd == cmd {
-			_ = cmd.Process.Kill()
-			s.socksExt.cmd = nil
-		}
+	if probeErr != nil {
+		s.finishSystemSocksStartLocked(waitReady, fmt.Errorf("ssh -D socks %d failed: %w", port, probeErr), cmd)
+		return
 	}
-
-	// 最终清理：关闭信号通道并清空 waitReady，标志启动流程结束（无论成功失败）
-	if s.socksExt != nil && s.socksExt.waitReady != nil {
-		close(s.socksExt.waitReady)
+	if s.closed {
+		s.finishSystemSocksStartLocked(waitReady, fmt.Errorf("ssh adapter is closed"), cmd)
+		return
+	}
+	if s.socksExt != nil && s.socksExt.cmd == cmd && s.socksExt.waitReady == waitReady {
+		s.socksExt.lastErr = nil
+		s.socks = s.newSystemSocksAdapter(port)
+		close(waitReady)
 		s.socksExt.waitReady = nil
 	}
-	return s.socksExt.lastErr
 }
 
-// buildSshDCommand 构建 ssh -N -D 命令（动态端口转发）
-func buildSshDCommand(ctx context.Context, actualUser, hostAlias string, localPort int, extraFlags []string) *exec.Cmd {
-	// 基础参数（最小化硬编码）
+func (s *Ssh) finishSystemSocksStartLocked(waitReady chan struct{}, err error, cmd *exec.Cmd) {
+	if s.socksExt == nil || s.socksExt.waitReady != waitReady {
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return
+	}
+	s.socksExt.lastErr = err
+	if cmd != nil && s.socksExt.cmd == cmd {
+		_ = cmd.Process.Kill()
+		s.socksExt.cmd = nil
+		s.socksExt.processDone = nil
+	}
+	if !s.socksExt.pinned {
+		s.socksExt.port = 0
+	}
+	s.socks = nil
+	close(waitReady)
+	s.socksExt.waitReady = nil
+}
+
+func logSystemSocksStderr(r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		log.Warnln("[SSH-SOCKS-STDERR] %s", scanner.Text())
+	}
+}
+
+func (s *Ssh) waitSystemSocksProcess(cmd *exec.Cmd, processDone chan<- struct{}) {
+	err := cmd.Wait()
+	close(processDone)
+	s.cMutex.Lock()
+	defer s.cMutex.Unlock()
+	if s.socksExt != nil && s.socksExt.cmd == cmd {
+		if s.socksExt.waitReady != nil {
+			s.socksExt.lastErr = fmt.Errorf("ssh -D exited before ready: %w", err)
+			close(s.socksExt.waitReady)
+			s.socksExt.waitReady = nil
+		}
+		s.socksExt.cmd = nil
+		s.socksExt.processDone = nil
+		s.socks = nil
+		if !s.socksExt.pinned {
+			s.socksExt.port = 0
+		}
+		if !s.closed {
+			log.Errorln("[SSH] System SOCKS5 tunnel process (PID: %d) exited: %v", cmd.Process.Pid, err)
+		}
+	}
+}
+
+func buildSshDCommand(actualUser, hostAlias string, localPort int, extraFlags []string) *exec.Cmd {
 	sshArgs := []string{
-		"-T",                          // 禁用 TTY
-		"-N",                          // 不执行远程命令
-		"-D", strconv.Itoa(localPort), // 动态端口转发
+		"-T",
+		"-N",
+		"-D", net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort)),
 	}
 
-	// 默认选项（用户可通过 ssh-flags 覆盖）
-	defaultOpts := map[string]string{
-		"BatchMode":           "yes", // 非交互模式（必需）
-		"StrictHostKeyChecking": "no",  // 自动接受 host key（便利性）
-		"Tunnel":              "no",  // 禁用 TUN（避免冲突）
+	defaultOpts := []sshOption{
+		{name: "BatchMode", value: "yes"},
+		{name: "ConnectTimeout", value: "5"},
+		{name: "ConnectionAttempts", value: "1"},
+		{name: "ExitOnForwardFailure", value: "yes"},
+		{name: "ServerAliveCountMax", value: "2"},
+		{name: "ServerAliveInterval", value: "15"},
+		{name: "TCPKeepAlive", value: "yes"},
+		{name: "Tunnel", value: "no"},
+	}
+	managedOpts := []sshOption{
+		{name: "ControlMaster", value: "no"},
+		{name: "ControlPath", value: "none"},
+		{name: "ControlPersist", value: "no"},
+		{name: "ForkAfterAuthentication", value: "no"},
 	}
 
-	// 检查用户是否已配置这些选项
+	extraFlags = filterManagedSshFlags(extraFlags)
 	userConfigured := make(map[string]bool)
-	for i := 0; i < len(extraFlags)-1; i++ {
-		if extraFlags[i] == "-o" {
-			// 解析选项名（如 "ControlMaster=auto" -> "ControlMaster"）
-			opt := extraFlags[i+1]
-			if idx := strings.Index(opt, "="); idx > 0 {
-				optName := opt[:idx]
-				userConfigured[optName] = true
-			}
+	for i := 0; i < len(extraFlags); i++ {
+		opt := ""
+		switch {
+		case extraFlags[i] == "-o" && i+1 < len(extraFlags):
+			opt = extraFlags[i+1]
+			i++
+		case strings.HasPrefix(extraFlags[i], "-o"):
+			opt = strings.TrimPrefix(extraFlags[i], "-o")
+		}
+		if key := sshOptionName(opt); key != "" {
+			userConfigured[key] = true
 		}
 	}
 
-	// 仅添加用户未配置的默认选项
-	for key, value := range defaultOpts {
-		if !userConfigured[key] {
-			sshArgs = append(sshArgs, "-o", key+"="+value)
+	for _, opt := range defaultOpts {
+		if !userConfigured[strings.ToLower(opt.name)] {
+			sshArgs = append(sshArgs, "-o", opt.name+"="+opt.value)
 		}
 	}
+	for _, opt := range managedOpts {
+		sshArgs = append(sshArgs, "-o", opt.name+"="+opt.value)
+	}
 
-	// 用户自定义选项（优先级最高）
 	sshArgs = append(sshArgs, extraFlags...)
-	sshArgs = append(sshArgs, hostAlias)
+	sshArgs = append(sshArgs, "--", hostAlias)
 
 	if runtime.GOOS != "windows" {
-		cur, _ := user.Current()
-		if actualUser != "" && (cur == nil || cur.Username != actualUser) {
+		cur, _ := userCurrentFunc()
+		if actualUser != "" && (cur == nil || normalizeLocalUserName(cur.Username) != normalizeLocalUserName(actualUser)) {
 			args := append([]string{"-n", "-u", actualUser, "-H", "ssh"}, sshArgs...)
 			return exec.Command("sudo", args...)
 		}
@@ -244,7 +289,7 @@ func LookForFreePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// dialSystemSocks 执行单层 SOCKS5 拨号逻辑
+// dialSystemSocks delegates system SSH traffic to the ordinary SOCKS5 outbound data plane.
 func (s *Ssh) dialSystemSocks(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 	if s.socksExt == nil || !s.socksExt.inUse {
 		return nil, fmt.Errorf("socks extension not initialized")
@@ -252,37 +297,192 @@ func (s *Ssh) dialSystemSocks(ctx context.Context, metadata *C.Metadata) (C.Conn
 	if err := s.setupSystemSocks(ctx); err != nil {
 		return nil, err
 	}
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(s.socksExt.port))
-	c, err := s.dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("dial local socks: %w", err)
+
+	s.cMutex.Lock()
+	socks := s.socks
+	s.cMutex.Unlock()
+	if socks == nil {
+		return nil, fmt.Errorf("system socks adapter not initialized")
 	}
 
-	fail := true
-	defer func() {
-		if fail {
-			_ = c.Close()
-		}
-	}()
+	return socks.DialContext(ctx, metadata)
+}
 
-	if ctx.Done() != nil {
-		done := N.SetupContextForConn(ctx, c)
+func (s *Ssh) newSystemSocksAdapter(port int) *Socks5 {
+	adapter, err := NewSocks5(Socks5Option{
+		BasicOption: BasicOption{
+			ProviderName: s.option.ProviderName,
+		},
+		Name:   s.Name(),
+		Server: "127.0.0.1",
+		Port:   port,
+	})
+	if err != nil {
+		return nil
+	}
+	adapter.Base.tp = C.Ssh
+	return adapter
+}
+
+func filterManagedSshFlags(flags []string) []string {
+	filtered := make([]string, 0, len(flags))
+	for i := 0; i < len(flags); i++ {
+		flag := flags[i]
+		switch {
+		case isManagedSshShortFlag(flag):
+			if (strings.Contains(flag, "S") || strings.Contains(flag, "O")) && i+1 < len(flags) {
+				i++
+			}
+			continue
+		case flag == "-o" && i+1 < len(flags):
+			if isManagedSshOption(flags[i+1]) {
+				i++
+				continue
+			}
+			filtered = append(filtered, flag)
+		case strings.HasPrefix(flag, "-o"):
+			if isManagedSshOption(strings.TrimPrefix(flag, "-o")) {
+				continue
+			}
+			filtered = append(filtered, flag)
+		default:
+			filtered = append(filtered, flag)
+		}
+	}
+	return filtered
+}
+
+func isManagedSshOption(opt string) bool {
+	switch sshOptionName(opt) {
+	case "controlmaster", "controlpath", "controlpersist", "forkafterauthentication":
+		return true
+	default:
+		return false
+	}
+}
+
+func isManagedSshShortFlag(flag string) bool {
+	if !strings.HasPrefix(flag, "-") || strings.HasPrefix(flag, "--") || strings.HasPrefix(flag, "-o") {
+		return false
+	}
+	for _, r := range flag[1:] {
+		switch r {
+		case 'f', 'M', 'S', 'O':
+			return true
+		}
+	}
+	return false
+}
+
+func sshOptionName(opt string) string {
+	opt = strings.TrimSpace(opt)
+	if opt == "" {
+		return ""
+	}
+	if idx := strings.Index(opt, "="); idx > 0 {
+		return strings.ToLower(strings.TrimSpace(opt[:idx]))
+	}
+	fields := strings.Fields(opt)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.ToLower(fields[0])
+}
+
+func waitSystemSocksReady(ctx context.Context, port int) error {
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		if err := probeSystemSocks(ctx, port); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return lastErr
+		case <-ticker.C:
+		}
+	}
+}
+
+func probeSystemSocks(ctx context.Context, port int) (err error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(probeCtx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	if probeDeadline, ok := probeCtx.Deadline(); ok && probeDeadline.Before(deadline) {
+		deadline = probeDeadline
+	}
+	if err = conn.SetDeadline(deadline); err != nil {
+		return err
+	}
+	if probeCtx.Done() != nil {
+		done := setupContextForProbe(probeCtx, conn)
 		defer done(&err)
 	}
-
-	target := socks5.ParseAddr(metadata.RemoteAddress())
-	if _, err := socks5.ClientHandshake(c, target, socks5.CmdConnect, nil); err != nil {
-		return nil, fmt.Errorf("socks5 handshake: %w", err)
+	_, err = conn.Write([]byte{5, 1, 0})
+	if err != nil {
+		return err
 	}
+	buf := []byte{0, 0}
+	if _, err = io.ReadFull(conn, buf); err != nil {
+		return err
+	}
+	if buf[0] != 5 || buf[1] != 0 {
+		return fmt.Errorf("unexpected socks5 probe response: %v", buf)
+	}
+	return nil
+}
 
-	fail = false
-	return NewConn(c, s), nil
+func setupContextForProbe(ctx context.Context, conn net.Conn) func(*error) {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.SetDeadline(time.Now())
+		case <-done:
+		}
+	}()
+	return func(err *error) {
+		close(done)
+		if *err != nil && ctx.Err() != nil {
+			*err = ctx.Err()
+		}
+	}
 }
 
 // cleanupSocks 清理 SOCKS5 进程
 func (s *Ssh) cleanupSocks() {
-	if s.socksExt != nil && s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil {
-		log.Infoln("[SSH] Cleaning up system SOCKS5 tunnel (PID: %d)", s.socksExt.cmd.Process.Pid)
-		_ = s.socksExt.cmd.Process.Kill()
+	if s.socksExt != nil {
+		if s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil {
+			log.Infoln("[SSH] Cleaning up system SOCKS5 tunnel (PID: %d)", s.socksExt.cmd.Process.Pid)
+			_ = s.socksExt.cmd.Process.Kill()
+		}
+		s.socksExt.cmd = nil
+		s.socksExt.processDone = nil
+		if !s.socksExt.pinned {
+			s.socksExt.port = 0
+		}
+		s.socksExt.lastErr = fmt.Errorf("ssh adapter is closed")
+		if s.socksExt.waitReady != nil {
+			close(s.socksExt.waitReady)
+			s.socksExt.waitReady = nil
+		}
 	}
+	s.socks = nil
 }

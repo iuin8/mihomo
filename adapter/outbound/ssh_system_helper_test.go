@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/user"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -36,40 +37,95 @@ func TestBuildEnvCommandTreatsNormalizedCurrentUserAsSameUser(t *testing.T) {
 	}
 }
 
-func TestBuildSshGCommandTreatsNormalizedCurrentUserAsSameUser(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("windows does not use sudo for system ssh helpers")
-	}
+func TestBuildSshDCommandUsesDeterministicForwardingOptions(t *testing.T) {
+	cmd := buildSshDCommand("", "host-alias", 1080, nil)
+	args := strings.Join(cmd.Args, " ")
 
-	oldUserCurrentFunc := userCurrentFunc
-	t.Cleanup(func() {
-		userCurrentFunc = oldUserCurrentFunc
-	})
-	userCurrentFunc = func() (*user.User, error) {
-		return &user.User{Username: "DOMAIN\\local-match-user"}, nil
-	}
-
-	cmd := buildSshGCommand(context.Background(), "local-match-user", "host-alias")
-	if cmd.Args[0] != "ssh" {
-		t.Fatalf("buildSshGCommand() launcher = %q, want %q", cmd.Args[0], "ssh")
+	for _, want := range []string{
+		"-- host-alias",
+		"-D 127.0.0.1:1080",
+		"BatchMode=yes",
+		"ExitOnForwardFailure=yes",
+		"ConnectTimeout=5",
+		"ConnectionAttempts=1",
+		"ControlMaster=no",
+		"ControlPath=none",
+		"ControlPersist=no",
+		"ForkAfterAuthentication=no",
+		"ServerAliveInterval=15",
+		"ServerAliveCountMax=2",
+		"TCPKeepAlive=yes",
+		"Tunnel=no",
+	} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("buildSshDCommand args = %q, want to contain %q", args, want)
+		}
 	}
 }
 
-func TestBuildSshCommandTreatsNormalizedCurrentUserAsSameUser(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("windows does not use sudo for system ssh helpers")
-	}
+func TestBuildSshDCommandLetsUserOverrideDefaultOptions(t *testing.T) {
+	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-o", "ConnectTimeout=30"})
+	args := strings.Join(cmd.Args, " ")
 
-	oldUserCurrentFunc := userCurrentFunc
-	t.Cleanup(func() {
-		userCurrentFunc = oldUserCurrentFunc
+	if strings.Contains(args, "ConnectTimeout=5") {
+		t.Fatalf("buildSshDCommand args = %q, should not contain default ConnectTimeout", args)
+	}
+	if !strings.Contains(args, "ConnectTimeout=30") {
+		t.Fatalf("buildSshDCommand args = %q, want user ConnectTimeout", args)
+	}
+}
+
+func TestBuildSshDCommandDoesNotLetUserOverrideManagedLifecycleOptions(t *testing.T) {
+	cmd := buildSshDCommand("", "host-alias", 1080, []string{
+		"-o", "ControlMaster=auto",
+		"-o", "ControlPath=~/.ssh/control:%C",
+		"-o", "ControlPersist=10m",
+		"-o", "ForkAfterAuthentication=yes",
 	})
-	userCurrentFunc = func() (*user.User, error) {
-		return &user.User{Username: "DOMAIN\\local-match-user"}, nil
-	}
+	args := strings.Join(cmd.Args, " ")
 
-	cmd := buildSshCommand("local-match-user", []string{"-N", "host-alias"})
-	if cmd.Args[0] != "ssh" {
-		t.Fatalf("buildSshCommand() launcher = %q, want %q", cmd.Args[0], "ssh")
+	for _, want := range []string{"ControlMaster=no", "ControlPath=none", "ControlPersist=no", "ForkAfterAuthentication=no"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("buildSshDCommand args = %q, want managed option %q", args, want)
+		}
+	}
+	for _, unwanted := range []string{"ControlMaster=auto", "ControlPath=~/.ssh/control:%C", "ControlPersist=10m", "ForkAfterAuthentication=yes"} {
+		if strings.Contains(args, unwanted) {
+			t.Fatalf("buildSshDCommand args = %q, should not contain user lifecycle option %q", args, unwanted)
+		}
+	}
+}
+
+func TestBuildSshDCommandDropsManagedLifecycleFlags(t *testing.T) {
+	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-f", "-M", "-MN", "-fN", "-MS", "control-path", "-MO", "check", "-S", "control-path", "-O", "check", "-v"})
+	args := strings.Join(cmd.Args, " ")
+
+	for _, unwanted := range []string{" -f ", " -M ", " -MN ", " -fN ", " -S ", "control-path", " -O ", " check "} {
+		if strings.Contains(" "+args+" ", unwanted) {
+			t.Fatalf("buildSshDCommand args = %q, should not contain managed lifecycle flag %q", args, unwanted)
+		}
+	}
+	if !strings.Contains(args, " -v ") {
+		t.Fatalf("buildSshDCommand args = %q, want unrelated flag -v", args)
+	}
+}
+
+func TestBuildSshDCommandRecognizesOpenSSHSpaceSeparatedOptions(t *testing.T) {
+	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-o", "StrictHostKeyChecking yes", "-oConnectTimeout=30"})
+	args := strings.Join(cmd.Args, " ")
+
+	for _, unwanted := range []string{"StrictHostKeyChecking=accept-new", "ConnectTimeout=5"} {
+		if strings.Contains(args, unwanted) {
+			t.Fatalf("buildSshDCommand args = %q, should not contain default %q", args, unwanted)
+		}
+	}
+}
+
+func TestBuildSshDCommandSeparatesDestinationFromOptions(t *testing.T) {
+	cmd := buildSshDCommand("", "-looks-like-option", 1080, nil)
+	got := cmd.Args[len(cmd.Args)-2:]
+	want := []string{"--", "-looks-like-option"}
+	if got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("buildSshDCommand destination args = %v, want %v", got, want)
 	}
 }

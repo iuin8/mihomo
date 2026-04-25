@@ -21,8 +21,7 @@ import (
 type Ssh struct {
 	*Base
 
-	option       *SshOption
-	useSystemSsh bool
+	option *SshOption
 
 	config *ssh.ClientConfig
 	client *ssh.Client
@@ -30,6 +29,7 @@ type Ssh struct {
 	closed bool // 标记是否由 Close() 主动关闭，阻止自动重连
 
 	socksExt *systemSocksExt // 系统级 SOCKS5 扩展逻辑
+	socks    *Socks5
 }
 
 type SshOption struct {
@@ -43,10 +43,10 @@ type SshOption struct {
 	PrivateKeyPassphrase string   `proxy:"private-key-passphrase,omitempty"`
 	HostKey              []string `proxy:"host-key,omitempty"`
 	HostKeyAlgorithms    []string `proxy:"host-key-algorithms,omitempty"`
-	UseSshConfigAlias    bool     `proxy:"use-ssh-config-alias,omitempty"`
 	SshUser              string   `proxy:"ssh-user,omitempty"`
 	SshFlags             []string `proxy:"ssh-flags,omitempty"`
 	UseSystemSocks       bool     `proxy:"use-system-socks,omitempty"`
+	SystemSocksPort      *int     `proxy:"system-socks-port,omitempty"`
 }
 
 func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
@@ -113,14 +113,6 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 }
 
 func (s *Ssh) dial(ctx context.Context, addr string) (net.Conn, string, error) {
-	if s.useSystemSsh {
-		newAddr, err := s.prepareSshConfig(ctx)
-		if err != nil {
-			return nil, "", err
-		}
-		c, err := s.dialViaSystemSsh(ctx, s.option.Server)
-		return c, newAddr, err
-	}
 	c, err := s.dialer.DialContext(ctx, "tcp", addr)
 	return c, addr, err
 }
@@ -213,8 +205,6 @@ func NewSsh(option SshOption) (*Ssh, error) {
 	}
 	config.ClientVersion = version
 
-	useSystemSsh := option.UseSshConfigAlias
-
 	outbound := &Ssh{
 		Base: &Base{
 			name:   option.Name,
@@ -226,15 +216,21 @@ func NewSsh(option SshOption) (*Ssh, error) {
 			rmark:  option.RoutingMark,
 			prefer: option.IPVersion,
 		},
-		option:       &option,
-		useSystemSsh: useSystemSsh,
-		config:       &config,
+		option: &option,
+		config: &config,
 	}
 
 	if option.UseSystemSocks {
+		localPort := 0
+		pinnedPort := false
+		if option.SystemSocksPort != nil {
+			localPort = *option.SystemSocksPort
+			pinnedPort = true
+		}
 		outbound.socksExt = &systemSocksExt{
-			inUse: true,
-			port:  option.Port,
+			inUse:  true,
+			pinned: pinnedPort,
+			port:   localPort,
 		}
 	}
 

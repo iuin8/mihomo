@@ -1,10 +1,14 @@
 package outbound
 
 import (
+	"bufio"
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"testing"
+	"time"
 )
 
 func TestResolveActualUser(t *testing.T) {
@@ -31,6 +35,21 @@ func TestResolveActualUser(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects explicit service ssh user", func(t *testing.T) {
+		userCurrentFunc = func() (*user.User, error) {
+			return &user.User{Username: "root"}, nil
+		}
+		activeLoginUserFunc = func() (string, error) {
+			return "desktop-user", nil
+		}
+		_ = os.Setenv("SUDO_USER", "sudo-user")
+
+		s := &Ssh{option: &SshOption{SshUser: "root"}}
+		if got := s.resolveActualUser(); got != "" {
+			t.Fatalf("resolveActualUser() = %q, want empty user", got)
+		}
+	})
+
 	t.Run("prefers sudo user when explicit ssh user is empty", func(t *testing.T) {
 		userCurrentFunc = func() (*user.User, error) {
 			return &user.User{Username: "root"}, nil
@@ -43,6 +62,21 @@ func TestResolveActualUser(t *testing.T) {
 		s := &Ssh{option: &SshOption{}}
 		if got := s.resolveActualUser(); got != "sudo-user" {
 			t.Fatalf("resolveActualUser() = %q, want %q", got, "sudo-user")
+		}
+	})
+
+	t.Run("ignores service sudo user", func(t *testing.T) {
+		userCurrentFunc = func() (*user.User, error) {
+			return &user.User{Username: "root"}, nil
+		}
+		activeLoginUserFunc = func() (string, error) {
+			return "desktop-user", nil
+		}
+		_ = os.Setenv("SUDO_USER", "root")
+
+		s := &Ssh{option: &SshOption{}}
+		if got := s.resolveActualUser(); got != "desktop-user" {
+			t.Fatalf("resolveActualUser() = %q, want %q", got, "desktop-user")
 		}
 	})
 
@@ -76,7 +110,7 @@ func TestResolveActualUser(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to current user when active login user lookup fails", func(t *testing.T) {
+	t.Run("does not fall back to service account when active login user lookup fails", func(t *testing.T) {
 		_ = os.Unsetenv("SUDO_USER")
 		userCurrentFunc = func() (*user.User, error) {
 			return &user.User{Username: "root"}, nil
@@ -86,19 +120,268 @@ func TestResolveActualUser(t *testing.T) {
 		}
 
 		s := &Ssh{option: &SshOption{}}
-		if got := s.resolveActualUser(); got != "root" {
-			t.Fatalf("resolveActualUser() = %q, want %q", got, "root")
+		if got := s.resolveActualUser(); got != "" {
+			t.Fatalf("resolveActualUser() = %q, want empty user", got)
 		}
 	})
 }
 
+func TestRequireSystemSshUser(t *testing.T) {
+	oldUserCurrentFunc := userCurrentFunc
+	t.Cleanup(func() {
+		userCurrentFunc = oldUserCurrentFunc
+	})
+
+	if err := requireSystemSshUserForOS("desktop-user", "darwin"); err != nil {
+		t.Fatalf("requireSystemSshUserForOS() error = %v", err)
+	}
+	if err := requireSystemSshUserForOS("", "darwin"); err == nil {
+		t.Fatal("requireSystemSshUserForOS() error = nil, want non-nil")
+	}
+
+	userCurrentFunc = func() (*user.User, error) {
+		return &user.User{Username: "SYSTEM"}, nil
+	}
+	if err := requireSystemSshUserForOS("alice", "windows"); err == nil {
+		t.Fatal("requireSystemSshUserForOS() windows service error = nil, want non-nil")
+	}
+
+	userCurrentFunc = func() (*user.User, error) {
+		return &user.User{Username: "DESKTOP\\alice"}, nil
+	}
+	if err := requireSystemSshUserForOS("alice", "windows"); err != nil {
+		t.Fatalf("requireSystemSshUserForOS() windows same user error = %v", err)
+	}
+	if err := requireSystemSshUserForOS("OTHERDOMAIN\\alice", "windows"); err == nil {
+		t.Fatal("requireSystemSshUserForOS() windows domain mismatch error = nil, want non-nil")
+	}
+}
+
+func TestResolvedWindowsDomainMismatchIsRejected(t *testing.T) {
+	oldUserCurrentFunc := userCurrentFunc
+	t.Cleanup(func() {
+		userCurrentFunc = oldUserCurrentFunc
+	})
+
+	userCurrentFunc = func() (*user.User, error) {
+		return &user.User{Username: "DESKTOP\\alice"}, nil
+	}
+	s := &Ssh{option: &SshOption{SshUser: "OTHERDOMAIN\\alice"}}
+
+	actualUser := s.resolveActualUser()
+	if err := requireSystemSshUserForOS(actualUser, "windows"); err == nil {
+		t.Fatal("resolved windows domain mismatch error = nil, want non-nil")
+	}
+}
+
+func TestSetupSystemSocksRequiresResolvedUser(t *testing.T) {
+	oldUserCurrentFunc := userCurrentFunc
+	oldActiveLoginUserFunc := activeLoginUserFunc
+	t.Cleanup(func() {
+		userCurrentFunc = oldUserCurrentFunc
+		activeLoginUserFunc = oldActiveLoginUserFunc
+		_ = os.Unsetenv("SUDO_USER")
+	})
+
+	_ = os.Unsetenv("SUDO_USER")
+	userCurrentFunc = func() (*user.User, error) {
+		return &user.User{Username: "root"}, nil
+	}
+	activeLoginUserFunc = func() (string, error) {
+		return "", os.ErrNotExist
+	}
+
+	s := &Ssh{
+		option: &SshOption{Server: "host-alias"},
+		socksExt: &systemSocksExt{
+			inUse: true,
+		},
+	}
+	if err := s.setupSystemSocks(context.Background()); err == nil {
+		t.Fatal("setupSystemSocks() error = nil, want non-nil")
+	}
+	if s.socksExt.waitReady != nil {
+		t.Fatal("setupSystemSocks() left waitReady set")
+	}
+	if s.socksExt.cmd != nil {
+		t.Fatal("setupSystemSocks() started ssh command")
+	}
+}
+
+func TestNewSshSystemSocksPort(t *testing.T) {
+	customPort := 19080
+	withExplicitPort, err := NewSsh(SshOption{
+		Name:            "ssh-socks",
+		Server:          "host-alias",
+		Port:            22,
+		UseSystemSocks:  true,
+		SystemSocksPort: &customPort,
+	})
+	if err != nil {
+		t.Fatalf("NewSsh() error = %v", err)
+	}
+	if got := withExplicitPort.socksExt.port; got != customPort {
+		t.Fatalf("system socks port = %d, want %d", got, customPort)
+	}
+	if !withExplicitPort.socksExt.pinned {
+		t.Fatal("explicit system socks port is not pinned")
+	}
+
+	autoPort, err := NewSsh(SshOption{
+		Name:           "ssh-socks-auto",
+		Server:         "host-alias",
+		Port:           2222,
+		UseSystemSocks: true,
+	})
+	if err != nil {
+		t.Fatalf("NewSsh() auto port error = %v", err)
+	}
+	if got := autoPort.socksExt.port; got != 0 {
+		t.Fatalf("auto system socks port = %d, want 0", got)
+	}
+	if autoPort.socksExt.pinned {
+		t.Fatal("auto system socks port is pinned, want false")
+	}
+}
+
+func TestProbeSystemSocksRequiresSocksGreeting(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	acceptErr := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			acceptErr <- err
+			return
+		}
+		defer conn.Close()
+		reader := bufio.NewReader(conn)
+		buf := make([]byte, 3)
+		if _, err := reader.Read(buf); err != nil {
+			acceptErr <- err
+			return
+		}
+		_, err = conn.Write([]byte{5, 0})
+		acceptErr <- err
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := probeSystemSocks(ctx, port); err != nil {
+		t.Fatalf("probeSystemSocks() error = %v", err)
+	}
+	if err := <-acceptErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestProbeSystemSocksRejectsPlainTcpListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := probeSystemSocks(ctx, port); err == nil {
+		t.Fatal("probeSystemSocks() error = nil, want non-nil")
+	}
+}
+
+func TestCleanupSocksKeepsPinnedPort(t *testing.T) {
+	waitReady := make(chan struct{})
+	s := &Ssh{
+		socksExt: &systemSocksExt{
+			inUse:     true,
+			pinned:    true,
+			port:      19080,
+			waitReady: waitReady,
+		},
+	}
+	s.cleanupSocks()
+
+	if got := s.socksExt.port; got != 19080 {
+		t.Fatalf("cleanupSocks() pinned port = %d, want 19080", got)
+	}
+}
+
+func TestCleanupSocksClearsTunnelState(t *testing.T) {
+	waitReady := make(chan struct{})
+	s := &Ssh{
+		socksExt: &systemSocksExt{
+			inUse:     true,
+			port:      19080,
+			waitReady: waitReady,
+		},
+	}
+	s.cleanupSocks()
+
+	if s.socksExt.cmd != nil {
+		t.Fatal("cleanupSocks() left cmd set")
+	}
+	if s.socksExt.waitReady != nil {
+		t.Fatal("cleanupSocks() left waitReady set")
+	}
+	select {
+	case <-waitReady:
+	default:
+		t.Fatal("cleanupSocks() did not close waitReady")
+	}
+	if s.socksExt.lastErr == nil {
+		t.Fatal("cleanupSocks() lastErr = nil, want closed error")
+	}
+	if got := s.socksExt.port; got != 0 {
+		t.Fatalf("cleanupSocks() port = %d, want 0", got)
+	}
+}
+
 func TestDetectActiveLoginUserWith(t *testing.T) {
-	t.Run("macos returns console user", func(t *testing.T) {
+	t.Run("macos returns dev console owner", func(t *testing.T) {
 		run := func(name string, args ...string) ([]byte, error) {
-			if name != "scutil" || len(args) != 2 || args[0] != "show" || args[1] != "State:/Users/ConsoleUser" {
+			if name != "/usr/bin/stat" || len(args) != 3 || args[0] != "-f" || args[1] != "%Su" || args[2] != "/dev/console" {
 				t.Fatalf("unexpected command: %s %v", name, args)
 			}
-			return []byte("Name : alice\nUID : 501\n"), nil
+			return []byte("alice\n"), nil
+		}
+
+		got, err := detectActiveLoginUserWith("darwin", run)
+		if err != nil {
+			t.Fatalf("detectActiveLoginUserWith() error = %v", err)
+		}
+		if got != "alice" {
+			t.Fatalf("detectActiveLoginUserWith() = %q, want %q", got, "alice")
+		}
+	})
+
+	t.Run("macos falls back to scutil when dev console owner is not usable", func(t *testing.T) {
+		run := func(name string, args ...string) ([]byte, error) {
+			switch name {
+			case "/usr/bin/stat":
+				return []byte("root\n"), nil
+			case "/usr/sbin/scutil":
+				if len(args) != 2 || args[0] != "show" || args[1] != "State:/Users/ConsoleUser" {
+					t.Fatalf("unexpected scutil args: %v", args)
+				}
+				return []byte("Name : alice\nUID : 501\n"), nil
+			default:
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return nil, nil
+			}
 		}
 
 		got, err := detectActiveLoginUserWith("darwin", run)
@@ -161,6 +444,17 @@ func TestDetectActiveLoginUserWith(t *testing.T) {
 			t.Fatal("detectActiveLoginUserWith() error = nil, want non-nil")
 		}
 	})
+}
+
+func TestParseMacOSConsoleOwner(t *testing.T) {
+	if got := parseMacOSConsoleOwner([]byte("alice\n")); got != "alice" {
+		t.Fatalf("parseMacOSConsoleOwner() = %q, want alice", got)
+	}
+	for _, output := range [][]byte{[]byte("root\n"), []byte("loginwindow\n"), nil} {
+		if got := parseMacOSConsoleOwner(output); got != "" {
+			t.Fatalf("parseMacOSConsoleOwner(%q) = %q, want empty", string(output), got)
+		}
+	}
 }
 
 func TestParseMacOSConsoleUser(t *testing.T) {
