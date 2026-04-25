@@ -23,19 +23,28 @@ func applyEnv(cmd *exec.Cmd, capturedEnv []string) {
 }
 
 func (s *Ssh) resolveActualUser() string {
+	return s.resolveActualUserForOS(runtime.GOOS)
+}
+
+func (s *Ssh) resolveActualUserForOS(goos string) string {
 	if s.option.SshUser != "" {
 		return explicitSshUserName(s.option.SshUser)
 	}
-	if u := realUserName(os.Getenv("SUDO_USER")); u != "" {
+	if u := realUserName(os.Getenv("SUDO_USER")); u != "" && !isServiceAccount(u) {
 		return u
 	}
 	if cur, _ := userCurrentFunc(); cur != nil {
 		name := realUserName(cur.Username)
-		if name != "" {
+		if name != "" && !isServiceAccount(name) {
 			return name
 		}
 		if activeUser, err := activeLoginUserFunc(); err == nil && activeUser != "" {
-			return realUserName(activeUser)
+			if name := realUserName(activeUser); name != "" && !isServiceAccount(name) {
+				return name
+			}
+		}
+		if goos == "linux" {
+			return name
 		}
 		return ""
 	}
@@ -73,7 +82,7 @@ func explicitSshUserName(name string) string {
 
 func realUserName(name string) string {
 	name = normalizeLocalUserName(name)
-	if isServiceAccount(name) {
+	if strings.EqualFold(name, "system") {
 		return ""
 	}
 	return name
@@ -146,7 +155,7 @@ func detectActiveLoginUserWith(goos string, run func(name string, args ...string
 
 func parseMacOSConsoleOwner(output []byte) string {
 	name := realUserName(string(output))
-	if strings.EqualFold(name, "loginwindow") {
+	if strings.EqualFold(name, "loginwindow") || isServiceAccount(name) {
 		return ""
 	}
 	return name

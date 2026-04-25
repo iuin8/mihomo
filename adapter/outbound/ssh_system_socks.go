@@ -60,7 +60,8 @@ func (s *Ssh) setupSystemSocksForOS(ctx context.Context, goos string) error {
 		waitChan = make(chan struct{})
 		s.socksExt.waitReady = waitChan
 		s.socksExt.lastErr = nil
-		actualUser := s.resolveActualUser()
+		actualUser := s.resolveActualUserForOS(goos)
+		log.Infoln("[SSH] Resolved system SSH user: %s", actualUser)
 		if err := requireSystemSshUserForOS(actualUser, goos); err != nil {
 			s.socksExt.lastErr = err
 			close(waitChan)

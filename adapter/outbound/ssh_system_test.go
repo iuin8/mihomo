@@ -110,7 +110,7 @@ func TestResolveActualUser(t *testing.T) {
 		}
 	})
 
-	t.Run("does not fall back to service account when active login user lookup fails", func(t *testing.T) {
+	t.Run("falls back to root on linux when active login user lookup fails", func(t *testing.T) {
 		_ = os.Unsetenv("SUDO_USER")
 		userCurrentFunc = func() (*user.User, error) {
 			return &user.User{Username: "root"}, nil
@@ -120,8 +120,23 @@ func TestResolveActualUser(t *testing.T) {
 		}
 
 		s := &Ssh{option: &SshOption{}}
-		if got := s.resolveActualUser(); got != "" {
-			t.Fatalf("resolveActualUser() = %q, want empty user", got)
+		if got := s.resolveActualUserForOS("linux"); got != "root" {
+			t.Fatalf("resolveActualUserForOS(linux) = %q, want root", got)
+		}
+	})
+
+	t.Run("does not fall back to root on macos when active login user lookup fails", func(t *testing.T) {
+		_ = os.Unsetenv("SUDO_USER")
+		userCurrentFunc = func() (*user.User, error) {
+			return &user.User{Username: "root"}, nil
+		}
+		activeLoginUserFunc = func() (string, error) {
+			return "", os.ErrNotExist
+		}
+
+		s := &Ssh{option: &SshOption{}}
+		if got := s.resolveActualUserForOS("darwin"); got != "" {
+			t.Fatalf("resolveActualUserForOS(darwin) = %q, want empty user", got)
 		}
 	})
 }
@@ -197,8 +212,8 @@ func TestSetupSystemSocksRequiresResolvedUser(t *testing.T) {
 			inUse: true,
 		},
 	}
-	if err := s.setupSystemSocks(context.Background()); err == nil {
-		t.Fatal("setupSystemSocks() error = nil, want non-nil")
+	if err := s.setupSystemSocksForOS(context.Background(), "darwin"); err == nil {
+		t.Fatal("setupSystemSocksForOS() error = nil, want non-nil")
 	}
 	if s.socksExt.waitReady != nil {
 		t.Fatal("setupSystemSocks() left waitReady set")
