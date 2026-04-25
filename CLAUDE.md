@@ -101,7 +101,7 @@ Config is parsed in `config/config.go`; runtime state lives in `hub/executor/`. 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **mihomo** (12626 symbols, 43590 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **mihomo** (13520 symbols, 44615 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -221,4 +221,3 @@ If the user asks for a normal release, do not use `Prerelease-Alpha` as the rele
 If the user asks for some other custom prerelease shape that is not `Prerelease-Alpha`, do not assume `prerelease` skill applies; clarify or handle manually.
 
 Only fall back to manual tool orchestration when no project skill matches the request.
-
