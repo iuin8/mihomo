@@ -1,6 +1,6 @@
 ---
 name: upstream-sync
-description: "同步上游 MetaCubeX/mihomo 最新 release tag 到新的 fa/<tag>-fa.0 分支。触发词：上游同步、sync upstream、合并上游、升级版本。"
+description: "Use when 用户要求同步上游 MetaCubeX/mihomo、合并 upstream/Alpha、merge upstream、sync upstream、升级 fork 到新 release tag (v*.*.*) / fa/<tag>-fa.0 分支；或处理 ours/theirs 冲突决策、合并 conflict resolution、release tag bump 期间的脚本退出码 2 / 3。"
 ---
 
 # Upstream Sync — mihomo fork 升级流程
@@ -85,9 +85,7 @@ done
 
 ### 2-D. 同时复审"git 自动合并成功"的文件
 
-> 这是上次同步暴露的盲点。git 三向合并成功 ≠ 语义正确。
-> 当上游对一个 fork 也修改过的文件做了"非冲突但有连带影响"的变更（例如换包路径、改函数签名），
-> git 不会报冲突，但 fork 自有文件（如 `ssh_resilience.go`）会在编译时炸。
+> git 三向合并成功 ≠ 语义正确。下方 "Fork 改动范围" 表里有具体的 v1.19.25 案例。
 
 ```bash
 # 列出本次合并中由 git 自动消解的"双方都改过的文件"
@@ -206,41 +204,17 @@ git log --oneline -5
 git push -u origin fa/<TAG>-fa.0
 ```
 
-### 5-C. 汇报模板（给用户）
+### 5-C. 汇报骨架（给用户，写在主对话**最后一条消息**，不落盘）
 
-```markdown
-## 上游同步报告：v<TAG>（基线 v<PREV_TAG>）
+按这 6 个 bullet 组织，每条一句话；脚本输出的 `AI_HINTS` 块（`PREV_TAG` /
+`SCRIPT_AUTO_RESOLVED` / `GIT_OVERLAP_FILES` / `RESURRECTED_BY_UPSTREAM`）就是 1-3 的输入。
 
-### 1. 脚本自动 --ours 文件复审
-| 文件 | 上游本次 delta | 决策 | 理由 |
-|------|---------------|------|------|
-| .github/workflows/build.yml | <一句话摘要> | 维持 ours / 部分吸收 / NEEDS_REVIEW | <理由> |
-| .github/workflows/test.yml | ... | ... | ... |
-| component/updater/update_core.go | ... | ... | ... |
-
-### 2. 智能合并文件
-| 文件 | 上游意图 | fork 意图 | 融合策略 |
-|------|---------|----------|---------|
-| adapter/outbound/ssh.go | <摘要> | <摘要> | <摘要> |
-
-### 3. 自动合并成功但触发连带修复的文件
-| fork 文件 | 上游连带影响 | 修复 |
-|----------|-------------|------|
-| adapter/outbound/ssh_resilience.go | 上游 ssh.go 切包 golang.org/x/crypto/ssh → github.com/metacubex/ssh | 同步 import |
-
-### 4. 验证结果
-- 编译：✓ / ✗
-- 测试：N 个 passed / 失败列表
-- 推送：origin/fa/v<TAG>-fa.0 @ <short sha>
-
-### 5. NEEDS_USER_REVIEW（如有）
-- <文件>：<上游改动> — <为何拿不准，问用户>
-
-### 6. 异步事项（可选清理，不阻塞当前任务）
-- <死代码 / 索引过期 / 文档修订建议>
-```
-
-> 汇报必须出现在主对话最后一条消息，**不写到任何文件**。
+1. **脚本自动 --ours 文件复审**：逐个给出 上游 delta → 决策 → 理由
+2. **智能合并文件**：上游意图 / fork 意图 / 融合策略
+3. **git 自动合并成功但有连带影响的文件**：上游做了什么、fork 哪个文件被波及、怎么修
+4. **验证**：编译 / 测试 / 推送 short SHA
+5. **NEEDS_USER_REVIEW**：拿不准的项，问用户拍板
+6. **异步事项**：可选清理（死代码 / 索引 / 文档），不阻塞当前任务
 
 ---
 
@@ -292,3 +266,16 @@ adapter/outbound/ssh_resilience.go
 | Fork 新增文件（`ssh_system*.go`、`ssh_resilience.go`） | `--ours` | Step 2-D 检查上游是否新增同名文件（异常信号）|
 | 其他上游文件（fork 未改过） | `--theirs` | Step 4 编译/测试兜底 |
 | **git 自动合并成功的 fork 也改过的文件** | （无冲突标记） | **必做** Step 2-D — 上次同步在此踩过坑 |
+
+---
+
+## Red Flags — 看到这些念头立即停下重走流程
+
+| 错误念头 | 真相 |
+|---------|------|
+| "脚本退出码 0 = 干完了" | 错。Step 2-B / 2-D 复审是脚本之后才发生的事，跳过等于裸奔 |
+| "git 没报冲突 = 文件没问题" | 错。上游可能换 import 路径 / 改函数签名，fork 自有文件编译期才炸（v1.19.25 ssh_resilience.go 案例） |
+| "fork 故意改的文件就一律 --ours" | 错。上游本次 delta 若含安全补丁或 CVE 修复，必须吸收，否则 fork 持续暴露 |
+| "go build 通过 = 合并完成" | 错。还要跑 `go test ./...`；spec 契合度审查（fork 自有功能仍工作）也要做 |
+| "汇报写到 docs/sync-report.md 里" | 错。Step 5-C 汇报只进对话最后一条消息，不落盘（避免文档膨胀 + 留 git 噪声） |
+| "脚本自动 --ours 了我就不管了" | 错。自动 --ours 是省力起点不是终点，每个都要按 Step 2-C 决策矩阵复审 |
