@@ -8,7 +8,8 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/log"
-	"golang.org/x/crypto/ssh"
+
+	"github.com/metacubex/ssh"
 )
 
 // ─── Constants ───────────────────────────────────────────────────────────────
