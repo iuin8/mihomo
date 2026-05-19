@@ -98,7 +98,7 @@ echo "[4/5] 自动解决固定策略冲突..."
 auto_resolve_ours() {
   local f="$1"; local reason="$2"
   if echo "$CONFLICT_FILES" | grep -qxF "$f"; then
-    echo "    $f → --ours（$reason）"
+    echo "    $f → --ours（${reason}）"
     git checkout --ours "$f" && git add "$f"
   fi
 }
