@@ -246,9 +246,9 @@ git push -u origin fa/<TAG>-fa.0
 
 ## Fork 改动范围说明
 
-该 fork 在上游基础上做两件事：
-1. **SSH 系统级代理**（读 `~/.ssh/config`，调用系统 `ssh` 二进制）
-2. **自定义传输协议** `sudoku`、`trusttunnel`
+该 fork 在上游基础上只做一件事：**SSH 系统级代理**
+（读 `~/.ssh/config`，调用系统 `ssh` 二进制，spec 见
+`docs/ssh_single_layer_guide.md`）。
 
 **Fork 新增文件**（上游无，不会产生冲突）：
 ```
@@ -256,16 +256,16 @@ adapter/outbound/ssh_system.go
 adapter/outbound/ssh_system_helper.go
 adapter/outbound/ssh_system_socks.go
 adapter/outbound/ssh_resilience.go
-adapter/outbound/sudoku.go
-adapter/outbound/trusttunnel.go
-transport/sudoku/...
-transport/trusttunnel/...
-listener/sudoku/... listener/trusttunnel/...
-listener/inbound/sudoku.go listener/inbound/trusttunnel.go
 ```
 
+> sudoku / trusttunnel 协议虽然由 fork 最早贡献，但 add commit 已被上游吸收，
+> 现在 fork 跟上游字节级一致。这两个协议**不是** fork-only，每次同步会被上游覆盖
+> （这正是预期行为）。
+
 > ⚠️ 上述 fork 自有文件不会出现合并冲突，但**可能因上游改动间接受影响**
-> （例：基类签名变更、共享 import 路径切换）。Step 2-D 与 Step 4-A 是兜底点。
+> （例：基类签名变更、共享 import 路径切换 — v1.19.25 就因为上游把 ssh.go 从
+> `golang.org/x/crypto/ssh` 切到 `github.com/metacubex/ssh`，导致 `ssh_resilience.go`
+> 在编译期才暴露）。Step 2-D 与 Step 4-A 是兜底点。
 
 **Fork 修改的上游共享文件**（冲突高发区）：
 
@@ -289,6 +289,6 @@ listener/inbound/sudoku.go listener/inbound/trusttunnel.go
 | `.github/workflows/*.yml`（CI） | `--ours`（脚本自动） | **必做** Step 2-B |
 | `component/updater/update_core.go` | `--ours`（脚本自动） | **必做** Step 2-B |
 | `adapter/outbound/ssh.go` | Claude 智能合并 | Step 3 |
-| Fork 新增文件（`ssh_system*.go`、`sudoku*.go` 等） | `--ours` | Step 2-D 检查上游是否新增同名文件（异常信号）|
+| Fork 新增文件（`ssh_system*.go`、`ssh_resilience.go`） | `--ours` | Step 2-D 检查上游是否新增同名文件（异常信号）|
 | 其他上游文件（fork 未改过） | `--theirs` | Step 4 编译/测试兜底 |
 | **git 自动合并成功的 fork 也改过的文件** | （无冲突标记） | **必做** Step 2-D — 上次同步在此踩过坑 |

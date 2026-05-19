@@ -37,13 +37,17 @@ make windows-amd64-v3
 
 ## Fork-Specific Files
 
-These files were **added by this fork** and do not exist upstream. They are safe to modify freely.
+### Upstream-Synced Protocols (originally contributed by this fork)
 
-### Custom Protocols
+Sudoku and TrustTunnel were originally contributed by this fork; the initial add
+commits were absorbed into upstream `MetaCubeX/mihomo`, and the fork now tracks
+upstream byte-for-byte on every file below. **Treat them as upstream-maintained**
+— do not assume merge conflicts are impossible here, and do not assume upstream
+lacks these files.
 
 | Path | Description |
 |------|-------------|
-| `transport/sudoku/` | Sudoku obfuscation protocol — custom transport with AEAD crypto, HTTP-mask obfs, multiplexing, and KIP handshake |
+| `transport/sudoku/` | Sudoku obfuscation protocol — AEAD crypto, HTTP-mask obfs, multiplexing, KIP handshake |
 | `transport/trusttunnel/` | Adapted from `xchacha20-poly1305/sing-trusttunnel`; QUIC-based tunnel protocol |
 | `adapter/outbound/sudoku.go` | Outbound proxy adapter for Sudoku |
 | `adapter/outbound/trusttunnel.go` | Outbound proxy adapter for TrustTunnel |
@@ -54,14 +58,17 @@ These files were **added by this fork** and do not exist upstream. They are safe
 | `listener/config/sudoku.go` | Config types for Sudoku listener |
 | `listener/config/trusttunnel.go` | Config types for TrustTunnel listener |
 
-### SSH System Proxy (enhanced)
+### SSH System Proxy (fork-only)
+
+These files do **not** exist upstream. Safe to modify freely. See
+`docs/ssh_single_layer_guide.md` for the design spec.
 
 | Path | Description |
 |------|-------------|
-| `adapter/outbound/ssh_system.go` | SSH outbound using the system `ssh` binary (reads `~/.ssh/config`) |
-| `adapter/outbound/ssh_system_helper.go` | Parses `ssh -G` output, caches host configs |
-| `adapter/outbound/ssh_system_socks.go` | Wraps system SSH into a local SOCKS5 listener |
-| `adapter/outbound/ssh_resilience.go` | Auto-reconnect / resilience layer over SSH connections |
+| `adapter/outbound/ssh_system.go` | User resolution, sudo command construction, lifecycle entrypoints |
+| `adapter/outbound/ssh_system_helper.go` | `buildEnvCommand` shell-capture helper |
+| `adapter/outbound/ssh_system_socks.go` | Wraps system OpenSSH into a local SOCKS5 listener with managed `ssh -N -D`, SOCKS5 greeting probe, and `ssh-flags` filter |
+| `adapter/outbound/ssh_resilience.go` | `startHealthCheck` + per-user shell env cache (`fetchUserEnv` / `clearUserEnv`) |
 
 ### CI / Release
 
@@ -79,12 +86,13 @@ main.go
        └─ tunnel/tunnel.go    # Core routing loop
             ├─ rules/         # Rule matching (domain, GEOIP, IPCIDR, process…)
             ├─ adapter/outbound/   # Proxy protocol implementations
-            │    ├─ (upstream) vmess, vless, ss, trojan, tuic, hysteria2…
-            │    └─ (fork)    sudoku.go, trusttunnel.go, ssh_system.go
+            │    ├─ (upstream)        vmess, vless, ss, trojan, tuic, hysteria2,
+            │    │                    sudoku, trusttunnel …
+            │    └─ (fork ssh layer)  ssh_system*.go, ssh_resilience.go
             ├─ adapter/outboundgroup/  # Selector, fallback, load-balance, url-test
             ├─ adapter/provider/      # Remote proxy list fetching
-            └─ listener/      # Inbound listeners (HTTP, SOCKS, TUN, TPROXY, mixed)
-                 └─ (fork)    sudoku/, trusttunnel/
+            └─ listener/      # Inbound listeners (HTTP, SOCKS, TUN, TPROXY, mixed,
+                              #  sudoku, trusttunnel — all upstream)
 ```
 
 Key data flow: **inbound listener** → `tunnel/tunnel.go` applies rules → picks **outbound adapter/group** → forwards via **transport layer**.
@@ -93,15 +101,15 @@ Config is parsed in `config/config.go`; runtime state lives in `hub/executor/`. 
 
 ## Upstream Sync Notes
 
-- Pull upstream changes with `git fetch upstream && git merge upstream/Alpha` (or the relevant branch).
-- Files in the table above are fork-only — upstream merges will not touch them.
-- Files shared with upstream that this fork modifies (e.g. `adapter/outbound/base.go`, `hub/executor/executor.go`) are the most likely source of merge conflicts; review diffs carefully after each upstream sync.
+- Pull upstream changes with `git fetch upstream && git merge upstream/Alpha` (or the relevant branch). The recommended workflow lives in `.claude/skills/upstream-sync/SKILL.md`.
+- Only the **SSH System Proxy** files are fork-only; sudoku/trusttunnel are upstream-maintained even though originally contributed here.
+- Files shared with upstream that this fork modifies (e.g. `adapter/outbound/ssh.go`) are the most likely source of merge conflicts; review diffs carefully after each upstream sync, and check fork-only files for indirect compile-time fallout (package switches, signature changes).
 - The `adapters/` top-level directory (plural) is a legacy leftover from very early commits and is not used in the current build.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **mihomo** (13533 symbols, 44619 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **mihomo** (14451 symbols, 47730 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
