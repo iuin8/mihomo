@@ -2,9 +2,9 @@
 # upstream-sync.sh — 将上游最新 release tag 合并到新的 fa/<tag>-fa.0 分支
 #
 # 用法:
-#   ./scripts/upstream-sync.sh              # 自动取最新上游 release tag
-#   ./scripts/upstream-sync.sh v1.19.24     # 指定目标 tag
-#   ./scripts/upstream-sync.sh --check-only # 仅预检，不合并
+#   ./.claude/skills/upstream-sync/upstream-sync.sh              # 自动取最新上游 release tag
+#   ./.claude/skills/upstream-sync/upstream-sync.sh v1.19.24     # 指定目标 tag
+#   ./.claude/skills/upstream-sync/upstream-sync.sh --check-only # 仅预检，不合并
 #
 # 退出码:
 #   0  成功（构建通过，无未解决冲突）

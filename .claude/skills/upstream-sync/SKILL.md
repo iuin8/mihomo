@@ -24,7 +24,7 @@ description: "Use when 用户要求同步上游 MetaCubeX/mihomo、合并 upstre
 ## Step 1：运行脚本
 
 ```bash
-./scripts/upstream-sync.sh
+./.claude/skills/upstream-sync/upstream-sync.sh
 ```
 
 - **退出码 0**：脚本已自动 commit 但仍需 Step 2 复审。

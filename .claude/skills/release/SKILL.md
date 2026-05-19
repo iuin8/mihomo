@@ -81,7 +81,7 @@ A) 暂停发布，我先处理上游同步（推荐）
 B) 忽略上游更新，仍以 v{FORK_BASE}-fa.{increment} 发布当前代码
 ```
 
-- 选 **A**：停止发布流程，不做任何 tag 操作。建议转去执行 `/upstream-sync` 或 `./scripts/upstream-sync.sh`。
+- 选 **A**：停止发布流程，不做任何 tag 操作。建议转去执行 `/upstream-sync` 或 `./.claude/skills/upstream-sync/upstream-sync.sh`。
 - 选 **B**：继续发布，但后续确认文案里必须明确标注：
   `⚠️ 此版本基于 upstream {FORK_BASE}，上游 {UPSTREAM_LATEST} 尚未合并`。
 
