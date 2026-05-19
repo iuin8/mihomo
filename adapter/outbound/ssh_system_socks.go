@@ -22,6 +22,7 @@ type systemSocksExt struct {
 	processDone <-chan struct{}
 	inUse       bool
 	pinned      bool
+	ready       bool // true 表示已通过 SOCKS5 探测，可直接复用；false 表示未启动或启动中
 	waitReady   chan struct{}
 	lastErr     error
 }
@@ -41,11 +42,12 @@ func (s *Ssh) setupSystemSocksForOS(ctx context.Context, goos string) error {
 		s.cMutex.Unlock()
 		return nil
 	}
-	if s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil && s.socksExt.waitReady == nil {
+	if s.socksExt.cmd != nil && s.socksExt.cmd.Process != nil && s.socksExt.ready {
 		select {
 		case <-s.socksExt.processDone:
 			s.socksExt.cmd = nil
 			s.socksExt.processDone = nil
+			s.socksExt.ready = false
 			s.socks = nil
 			if !s.socksExt.pinned {
 				s.socksExt.port = 0
@@ -88,6 +90,8 @@ func (s *Ssh) setupSystemSocksForOS(ctx context.Context, goos string) error {
 }
 
 func (s *Ssh) waitSystemSocks(ctx context.Context, waitChan <-chan struct{}) error {
+	// 启动是一次性投资：即使本次调用方取消，启动协程也会跑完自带的 15s startupCtx，
+	// 让下一个调用方复用同一个就绪的隧道。此处只服从调用方 ctx。
 	select {
 	case <-waitChan:
 		s.cMutex.Lock()
@@ -98,8 +102,6 @@ func (s *Ssh) waitSystemSocks(ctx context.Context, waitChan <-chan struct{}) err
 		return s.socksExt.lastErr
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(15 * time.Second):
-		return fmt.Errorf("timeout waiting for ssh tunnel ready")
 	}
 }
 
@@ -155,6 +157,7 @@ func (s *Ssh) startSystemSocks(actualUser string, port int, waitReady chan struc
 	}
 	if s.socksExt != nil && s.socksExt.cmd == cmd && s.socksExt.waitReady == waitReady {
 		s.socksExt.lastErr = nil
+		s.socksExt.ready = true
 		s.socks = s.newSystemSocksAdapter(port)
 		close(waitReady)
 		s.socksExt.waitReady = nil
@@ -173,6 +176,7 @@ func (s *Ssh) finishSystemSocksStartLocked(waitReady chan struct{}, err error, c
 		_ = cmd.Process.Kill()
 		s.socksExt.cmd = nil
 		s.socksExt.processDone = nil
+		s.socksExt.ready = false
 	}
 	if !s.socksExt.pinned {
 		s.socksExt.port = 0
@@ -202,6 +206,7 @@ func (s *Ssh) waitSystemSocksProcess(cmd *exec.Cmd, processDone chan<- struct{})
 		}
 		s.socksExt.cmd = nil
 		s.socksExt.processDone = nil
+		s.socksExt.ready = false
 		s.socks = nil
 		if !s.socksExt.pinned {
 			s.socksExt.port = 0
@@ -264,9 +269,11 @@ func buildSshDCommand(actualUser, hostAlias string, localPort int, extraFlags []
 	sshArgs = append(sshArgs, extraFlags...)
 	sshArgs = append(sshArgs, "--", hostAlias)
 
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != "windows" && actualUser != "" && isPOSIXUserName(actualUser) {
+		// isPOSIXUserName 校验是 sudo flag-injection 防御纵深：调用方应当已经过
+		// requireSystemSshUserForOS，但这里再校一次确保未来新增调用路径不能绕过。
 		cur, _ := userCurrentFunc()
-		if actualUser != "" && (cur == nil || normalizeLocalUserName(cur.Username) != normalizeLocalUserName(actualUser)) {
+		if cur == nil || normalizeLocalUserName(cur.Username) != normalizeLocalUserName(actualUser) {
 			args := append([]string{"-n", "-u", actualUser, "-H", "ssh"}, sshArgs...)
 			return exec.Command("sudo", args...)
 		}
@@ -325,10 +332,28 @@ func (s *Ssh) newSystemSocksAdapter(port int) *Socks5 {
 	return adapter
 }
 
+// filterManagedSshFlags 过滤掉会破坏 mihomo 托管 ssh 进程生命周期或允许任意命令
+// 执行的标志：
+//   - 短标志 -f / -M / -S / -O（含组合形式如 -fN/-MS path 等）
+//   - -o ControlMaster / ControlPath / ControlPersist / ForkAfterAuthentication
+//     （管理生命周期）
+//   - -o ProxyCommand / LocalCommand / PermitLocalCommand（RCE 入口）
+//   - -o LocalForward / RemoteForward / DynamicForward（额外监听 / 数据通路偏离 spec）
+//   - 含控制字符（\n / \r / \0 等）的任意 token —— 防止 `-o key=val\nProxyCommand=evil`
+//     这种 ssh_config 解析侧的换行注入
+//   - 自带的 `--` token —— mihomo 在 buildSshDCommand 末尾会强制追加 `--`，用户提供的
+//     `--` 既无用，又会让"-- 之后的 token 不再被 ssh 解析为 flag"的语义提前生效，
+//     从而绕过 manage 默认值；统一丢弃避免误解
 func filterManagedSshFlags(flags []string) []string {
 	filtered := make([]string, 0, len(flags))
 	for i := 0; i < len(flags); i++ {
 		flag := flags[i]
+		if containsControlChars(flag) {
+			continue
+		}
+		if flag == "--" {
+			continue
+		}
 		switch {
 		case isManagedSshShortFlag(flag):
 			if (strings.Contains(flag, "S") || strings.Contains(flag, "O")) && i+1 < len(flags) {
@@ -336,11 +361,13 @@ func filterManagedSshFlags(flags []string) []string {
 			}
 			continue
 		case flag == "-o" && i+1 < len(flags):
-			if isManagedSshOption(flags[i+1]) {
+			next := flags[i+1]
+			if containsControlChars(next) || isManagedSshOption(next) {
 				i++
 				continue
 			}
-			filtered = append(filtered, flag)
+			filtered = append(filtered, flag, next)
+			i++
 		case strings.HasPrefix(flag, "-o"):
 			if isManagedSshOption(strings.TrimPrefix(flag, "-o")) {
 				continue
@@ -355,11 +382,27 @@ func filterManagedSshFlags(flags []string) []string {
 
 func isManagedSshOption(opt string) bool {
 	switch sshOptionName(opt) {
-	case "controlmaster", "controlpath", "controlpersist", "forkafterauthentication":
+	case "controlmaster", "controlpath", "controlpersist", "forkafterauthentication",
+		"proxycommand", "localcommand", "permitlocalcommand",
+		"localforward", "remoteforward", "dynamicforward":
 		return true
 	default:
 		return false
 	}
+}
+
+// containsControlChars 判定 token 中是否含 \n / \r / \0 等控制字符；
+// SSH 配置选项不允许这些字符，出现即视作注入意图。
+func containsControlChars(s string) bool {
+	for _, r := range s {
+		if r < 0x20 && r != '\t' {
+			return true
+		}
+		if r == 0x7f { // DEL
+			return true
+		}
+	}
+	return false
 }
 
 func isManagedSshShortFlag(flag string) bool {
@@ -476,6 +519,7 @@ func (s *Ssh) cleanupSocks() {
 		}
 		s.socksExt.cmd = nil
 		s.socksExt.processDone = nil
+		s.socksExt.ready = false
 		if !s.socksExt.pinned {
 			s.socksExt.port = 0
 		}

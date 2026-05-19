@@ -28,19 +28,21 @@ type envCacheEntry struct {
 
 var (
 	userEnvCache = make(map[string]*envCacheEntry)
-	envMutex     sync.RWMutex
+	envMutex     sync.Mutex // 全程持有：避免两个 goroutine 同时通过 stale check 后重复跑 shell capture
 )
 
 // fetchUserEnv 抓取指定用户的最新登录环境变量（带 TTL 缓存）。
 // Long-Running 进程 of os.Environ() 可能包含过期的 SSH_AUTH_SOCK，因此始终通过 Shell 重新抓取。
+// 持锁跨 shell capture：env capture 不频繁（默认 30 分钟一次），同时锁住不同用户的 capture
+// 比单飞依赖更简单且对实际并发量足够。
 func fetchUserEnv(ctx context.Context, actualUser string) ([]string, error) {
-	envMutex.RLock()
+	envMutex.Lock()
+	defer envMutex.Unlock()
+
 	if e, ok := userEnvCache[actualUser]; ok && time.Since(e.capturedAt) < envCacheTTL {
-		envMutex.RUnlock()
 		log.Debugln("[SSH] Env cache hit for %s (age: %v)", actualUser, time.Since(e.capturedAt).Round(time.Second))
 		return e.env, nil
 	}
-	envMutex.RUnlock()
 
 	log.Infoln("[SSH] Capturing fresh environment for user: %s", actualUser)
 	cmd := buildEnvCommand(ctx, actualUser)
@@ -58,10 +60,7 @@ func fetchUserEnv(ctx context.Context, actualUser string) ([]string, error) {
 	env, sockPath := parseEnvOutput(string(output))
 	logEnvDiff(actualUser, sockPath)
 
-	envMutex.Lock()
 	userEnvCache[actualUser] = &envCacheEntry{env: env, capturedAt: time.Now()}
-	envMutex.Unlock()
-
 	return env, nil
 }
 
@@ -79,6 +78,8 @@ func clearUserEnv(actualUser string) {
 
 // ─── Connection Lifecycle ────────────────────────────────────────────────────
 
+// startHealthCheck 周期检查 Go SSH client 是否存活，并在 Close() 触发的 s.closed 上自动退出。
+// 仅用于内置 Go SSH 客户端路径；系统 SOCKS 模式不会进入这里（DialContext 提前分流）。
 func (s *Ssh) startHealthCheck(client *ssh.Client) {
 	dead := make(chan struct{})
 	go func() {
@@ -89,22 +90,44 @@ func (s *Ssh) startHealthCheck(client *ssh.Client) {
 	ticker := time.NewTicker(sshHealthCheckInterval)
 	defer ticker.Stop()
 
+	// waitDead 等 client.Wait() 返回，但带超时兜底——极端情况下 mux 可能挂死，
+	// 不让 health-check goroutine 永远卡在 <-dead
+	waitDead := func() {
+		select {
+		case <-dead:
+		case <-time.After(5 * time.Second):
+			log.Warnln("[SSH] Health check abandoned %s: client.Wait did not unblock within 5s", s.option.Name)
+		}
+	}
+
 	for {
 		select {
 		case <-ticker.C:
+			if s.isClosed() {
+				_ = client.Close()
+				waitDead()
+				return
+			}
 			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
 				log.Warnln("[SSH] Health check failed for %s: %v", s.option.Name, err)
-				_ = client.Close() // 触发上游 goroutine 清理
-				<-dead
-			} else {
-				log.Debugln("[SSH] Health check OK for %s", s.option.Name)
+				_ = client.Close()
+				waitDead()
+				return
 			}
+			log.Debugln("[SSH] Health check OK for %s", s.option.Name)
 
 		case <-dead:
-			log.Warnln("[SSH] Connection closed for %s.", s.option.Name)
+			log.Warnln("[SSH] Connection closed for %s", s.option.Name)
 			return
 		}
 	}
+}
+
+// isClosed 在持锁状态下读取 s.closed，供 startHealthCheck 等后台 goroutine 提前退出。
+func (s *Ssh) isClosed() bool {
+	s.cMutex.Lock()
+	defer s.cMutex.Unlock()
+	return s.closed
 }
 
 // ─── Internal Helpers ────────────────────────────────────────────────────────
@@ -124,11 +147,12 @@ func parseEnvOutput(output string) (env []string, sockPath string) {
 	return
 }
 
-// logEnvDiff 对比进程内和新抓取的 SSH_AUTH_SOCK
+// logEnvDiff 对比进程内和新抓取的 SSH_AUTH_SOCK。
+// 仅在 Debug 级输出 socket 路径，避免 Info 日志被 SIEM/聚合后泄漏 agent socket 位置。
 func logEnvDiff(actualUser, newSock string) {
 	oldSock := os.Getenv("SSH_AUTH_SOCK")
 	if newSock != oldSock {
-		log.Infoln("[SSH] SSH_AUTH_SOCK changed for %s: %s -> %s", actualUser, oldSock, newSock)
+		log.Debugln("[SSH] SSH_AUTH_SOCK changed for %s: %s -> %s", actualUser, oldSock, newSock)
 	} else {
 		log.Debugln("[SSH] SSH_AUTH_SOCK unchanged for %s: %s", actualUser, newSock)
 	}

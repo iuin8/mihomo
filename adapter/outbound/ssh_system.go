@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -13,6 +14,17 @@ var (
 	userCurrentFunc     = user.Current
 	activeLoginUserFunc = detectActiveLoginUser
 )
+
+// posixUserNameRe 限制用户名以字母或下划线起首、仅含 [a-z0-9_-]，并且最长 32 字符。
+// 起首不允许 '-' 是防止用户名被 sudo / ssh 当作 flag（例如 "--" 或 "-Eroot"）。
+// 长度上限对齐 POSIX/Linux LOGIN_NAME_MAX 常见值。
+var posixUserNameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+
+// isPOSIXUserName 校验用户名是否安全可作为 sudo/ssh 的 `-u <user>` 实参。
+// Windows 不调用此函数，因为 Windows 不走 sudo 切换用户。
+func isPOSIXUserName(name string) bool {
+	return posixUserNameRe.MatchString(name)
+}
 
 func applyEnv(cmd *exec.Cmd, capturedEnv []string) {
 	if capturedEnv != nil {
@@ -49,7 +61,9 @@ func (s *Ssh) resolveActualUserForOS(goos string) string {
 		return ""
 	}
 	if activeUser, err := activeLoginUserFunc(); err == nil && activeUser != "" {
-		return realUserName(activeUser)
+		if name := realUserName(activeUser); name != "" && !isServiceAccount(name) {
+			return name
+		}
 	}
 	return ""
 }
@@ -62,19 +76,28 @@ func requireSystemSshUserForOS(actualUser, goos string) error {
 	if actualUser == "" {
 		return fmt.Errorf("system ssh requires ssh-user when the process user is a service account and no active login user can be detected")
 	}
-	if goos != "windows" {
-		return nil
+	if goos == "windows" {
+		cur, _ := userCurrentFunc()
+		if cur != nil && sameWindowsUser(cur.Username, actualUser) {
+			return nil
+		}
+		return fmt.Errorf("system ssh cannot switch users on windows; run mihomo as %s so OpenSSH reads that user's config", actualUser)
 	}
-	cur, _ := userCurrentFunc()
-	if cur != nil && sameWindowsUser(cur.Username, actualUser) {
-		return nil
+	// 非 Windows 必须满足 POSIX 安全用户名，防止被 sudo / ssh 当作 flag 注入
+	if !isPOSIXUserName(actualUser) {
+		return fmt.Errorf("system ssh refused unsafe user name %q (must match %s)", actualUser, posixUserNameRe.String())
 	}
-	return fmt.Errorf("system ssh cannot switch users on windows; run mihomo as %s so OpenSSH reads that user's config", actualUser)
+	return nil
 }
 
 func explicitSshUserName(name string) string {
 	name = strings.TrimSpace(name)
 	if isServiceAccount(name) {
+		return ""
+	}
+	// 非 Windows 平台需立即过滤掉不可作 sudo/ssh `-u` 实参的用户名，避免后续路径以为已验证。
+	// Windows 用户名允许大小写与 '\'，不在此检查范围内；其单独依赖 sameWindowsUser 判定。
+	if runtime.GOOS != "windows" && !isPOSIXUserName(name) {
 		return ""
 	}
 	return name
