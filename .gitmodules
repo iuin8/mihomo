@@ -1,0 +1,3 @@
+[submodule "reference/sshuttle"]
+	path = reference/sshuttle
+	url = https://github.com/sshuttle/sshuttle.git
