@@ -28,6 +28,8 @@ const (
 	ReservedName = "default"
 )
 
+var collectOutdatedProxies = runtime.GC
+
 type ProxySchema struct {
 	Proxies []map[string]any `yaml:"proxies"`
 }
@@ -102,10 +104,15 @@ func (bp *baseProvider) RegisterHealthCheckTask(url string, expectedStatus utils
 
 func (bp *baseProvider) setProxies(proxies []C.Proxy) {
 	bp.mutex.Lock()
-	defer bp.mutex.Unlock()
+	hadProxies := len(bp.proxies) > 0
 	bp.proxies = proxies
 	bp.version += 1
 	bp.healthCheck.setProxies(proxies)
+	bp.mutex.Unlock()
+
+	if hadProxies {
+		collectOutdatedProxies()
+	}
 	if bp.healthCheck.auto() {
 		go bp.healthCheck.check()
 	}
