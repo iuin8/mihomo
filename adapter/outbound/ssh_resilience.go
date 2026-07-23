@@ -81,45 +81,20 @@ func clearUserEnv(actualUser string) {
 // startHealthCheck 周期检查 Go SSH client 是否存活，并在 Close() 触发的 s.closed 上自动退出。
 // 仅用于内置 Go SSH 客户端路径；系统 SOCKS 模式不会进入这里（DialContext 提前分流）。
 func (s *Ssh) startHealthCheck(client *ssh.Client) {
-	dead := make(chan struct{})
-	go func() {
-		_ = client.Wait()
-		close(dead)
-	}()
-
 	ticker := time.NewTicker(sshHealthCheckInterval)
 	defer ticker.Stop()
 
-	// waitDead 等 client.Wait() 返回，但带超时兜底——极端情况下 mux 可能挂死，
-	// 不让 health-check goroutine 永远卡在 <-dead
-	waitDead := func() {
-		select {
-		case <-dead:
-		case <-time.After(5 * time.Second):
-			log.Warnln("[SSH] Health check abandoned %s: client.Wait did not unblock within 5s", s.option.Name)
-		}
-	}
-
-	for {
-		select {
-		case <-ticker.C:
-			if s.isClosed() {
-				_ = client.Close()
-				waitDead()
-				return
-			}
-			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
-				log.Warnln("[SSH] Health check failed for %s: %v", s.option.Name, err)
-				_ = client.Close()
-				waitDead()
-				return
-			}
-			log.Debugln("[SSH] Health check OK for %s", s.option.Name)
-
-		case <-dead:
-			log.Warnln("[SSH] Connection closed for %s", s.option.Name)
+	for range ticker.C {
+		if s.isClosed() {
+			_ = client.Close()
 			return
 		}
+		if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+			log.Warnln("[SSH] Health check failed for %s: %v", s.option.Name, err)
+			_ = client.Close()
+			return
+		}
+		log.Debugln("[SSH] Health check OK for %s", s.option.Name)
 	}
 }
 
