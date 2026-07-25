@@ -1,281 +1,121 @@
 ---
 name: upstream-sync
-description: "Use when 用户要求同步上游 MetaCubeX/mihomo、合并 upstream/Alpha、merge upstream、sync upstream、升级 fork 到新 release tag (v*.*.*) / fa/<tag>-fa.0 分支；或处理 ours/theirs 冲突决策、合并 conflict resolution、release tag bump 期间的脚本退出码 2 / 3。"
+description: >-
+  Use when 用户要求同步上游 MetaCubeX/mihomo、合并 upstream/Alpha、升级到上游
+  v* tag、创建 fa/<tag>-fa.0 分支，或处理 sync 脚本退出码 2 / 3、ours/theirs、
+  SSH system proxy 冲突。不用于普通 release 或 Prerelease-Alpha。
 ---
 
-# Upstream Sync — mihomo fork 升级流程
+# Upstream Sync — mihomo
 
-## 核心原则
+## 边界
 
-> **冲突文件不能无脑取 ours，也不能无脑取 theirs。**
-> 每个有冲突或被脚本自动策略接管的文件，都必须经过"上游 delta 复审 → 决策 → 应用 → 汇报"四步。
-> 哪怕最终决定仍然 `--ours`，理由必须出现在最后的汇报中，给用户留下复盘依据。
+- 上游：`MetaCubeX/mihomo`；fork：`iuin8/mihomo`。
+- 目标分支命名：`fa/<TARGET_TAG>-fa.0`。
+- 核心策略：脚本自动 `--ours` 是起点，不是终点；每个自动处理文件都要复审上游 delta。
+- fork-only 主要是 **SSH system proxy**；sudoku / trusttunnel 已 upstream-maintained，不按 fork-only 处理。
 
-## 执行流程
+## 流程
 
+```mermaid
+flowchart TD
+  A[运行 upstream-sync.sh] --> B{退出码}
+  B -->|0| C[复审 auto-ours + auto-merged overlap]
+  B -->|2| D[按策略表解决冲突]
+  B -->|3| E[修复 build/test 失败]
+  B -->|1| F[处理环境错误或已是最新]
+  C --> G[检查 fork-only SSH 连带影响]
+  D --> G
+  E --> G
+  G --> H[go build with_gvisor]
+  H --> I[go test adapter/outbound + ./...]
+  I --> J{验证通过?}
+  J -->|否| E
+  J -->|是| K[提交/推送 + 固定汇报]
 ```
-脚本（机械操作）─→ 退出码 0：进入 Step 2 复审
-                  退出码 2：→ 进入 Step 2 复审 + Step 3 智能合并
-                  退出码 3：构建失败 → 进入 Step 4 验证修复
-```
 
----
+## 必跑步骤
 
-## Step 1：运行脚本
+### 1. 运行脚本
 
 ```bash
 ./.claude/skills/upstream-sync/upstream-sync.sh
 ```
 
-- **退出码 0**：脚本已自动 commit 但仍需 Step 2 复审。
-- **退出码 2**：脚本输出 `SMART_MERGE_REQUIRED` 标记 + 冲突文件列表，进入 Step 2 + Step 3。
-- **退出码 3**：构建失败，进入 Step 4。
+退出码含义：
 
-> ⚠️ 脚本会对一组"已知策略"文件自动 `--ours`（见下方表格）。**这是省力起点，不是终点** —
-> Step 2 必须复审这些文件，确认上游本次的改动不需要吸收。
+- `0`：脚本已自动 commit；仍要复审自动处理文件和 overlap。
+- `2`：有 `SMART_MERGE_REQUIRED`；按策略表解决冲突。
+- `3`：构建失败；修复后重新验证。
+- `1`：环境错误 / 已最新；读 stderr 后处理。
 
----
+### 2. 复审 delta
 
-## Step 2：复审脚本自动处理的文件（每次必做）
-
-脚本默认对 fork 维护的 CI、更新器等文件取 `--ours`。但上游可能在这些文件里加入了
-fork 也需要的修复（Go 版本升级、依赖安装、安全补丁、构建参数等），因此必须复审。
-
-### 2-A. 确定上次同步基线
+以脚本 `AI_HINTS` 的 `PREV_TAG` / `TARGET_TAG` 为准；缺失时再查上次 `merge upstream` commit。
 
 ```bash
-# 优先从上一次 "merge upstream" commit 的 message 中提取 tag
-PREV_TAG=$(git log --merges --first-parent --grep="merge upstream" -1 --format=%s \
-  | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-
-# 兜底：用上次 merge commit 的第二 parent 反查 tag
-[[ -z "$PREV_TAG" ]] && PREV_TAG=$(git describe --exact-match --tags \
-  $(git log --merges --first-parent -1 --pretty=format:%P \
-    | awk '{print $2}') 2>/dev/null)
-
-echo "上次基线: $PREV_TAG → 本次目标: $TARGET_TAG"
-```
-
-### 2-B. 对每个脚本自动 --ours 的文件，看上游 delta
-
-```bash
-for f in .github/workflows/build.yml .github/workflows/test.yml \
-         component/updater/update_core.go; do
+for f in .github/workflows/build.yml .github/workflows/test.yml component/updater/update_core.go <conflict/overlap files>; do
   echo "=== $f ==="
-  # 上游本次 tag 区间的提交摘要
   git log --oneline "$PREV_TAG".."$TARGET_TAG" -- "$f"
-  # 上游侧的具体改动
   git diff "$PREV_TAG".."$TARGET_TAG" -- "$f"
 done
 ```
 
-### 2-C. 应用决策矩阵
+### 3. 文件策略
 
-| 上游 delta 类型 | 决策 | 操作 |
-|----------------|------|------|
-| 仅排版/注释/无关步骤 | 维持 `--ours` | 在汇报中标"无需吸收" |
-| 安全补丁、CVE 修复、bug fix | **必须吸收** | 把上游 hunk 应用到 fork 版本 |
-| Go 版本/依赖升级 | **多数要吸收**（除非 fork 故意锁定）| 同上 |
-| 上游新功能 step | 视 fork 需求 | 若 fork 用得到，吸收 |
-| fork 故意删除的功能 | 维持 `--ours` | 在汇报中说明为何不要 |
-| 模糊地带 | 标记 `NEEDS_USER_REVIEW` | 暂保留 `--ours`，汇报中列出供用户拍板 |
+| 文件 / 类别 | 默认 | 必查点 |
+| --- | --- | --- |
+| `.github/workflows/build.yml` / `test.yml` | 保留 fork 精简 CI | 吸收上游 Go 版本、权限、patch 引用、构建参数修复；确认 `.github/patch/` 静态引用存在 |
+| `component/updater/update_core.go` | 保留 fork 下载 URL | 吸收上游 updater bug fix / 安全修复 |
+| `adapter/outbound/ssh.go` | 智能合并 | 保留 `socksExt`、`systemSocks`、`useSystemSsh`、`closed`、`UseSshConfigAlias`、`UseSystemSocks`、`SshUser`、`SshFlags` |
+| `adapter/outbound/ssh_system*.go` / `ssh_resilience.go` | fork-only | 检查上游包名、函数签名、字段变化造成的间接编译影响 |
+| sudoku / trusttunnel | upstream-maintained | 不当作 fork-only；跟随上游 |
+| 自动合并成功但双方改过 | 不可默认通过 | 查上游 delta 与 fork-only 调用方是否兼容 |
+| 其他上游文件 | 跟随上游 | build/test 兜底 |
 
-吸收时用 `git show "$TARGET_TAG":"$f"` 取上游版本，手工把需要的 hunk 合到 fork 版本，
-然后 `git add "$f"`。
-
-### 2-D. 同时复审"git 自动合并成功"的文件
-
-> git 三向合并成功 ≠ 语义正确。下方 "Fork 改动范围" 表里有具体的 v1.19.25 案例。
+冲突文件必须读三份上下文：
 
 ```bash
-# 列出本次合并中由 git 自动消解的"双方都改过的文件"
-git log -1 --merge --name-only --pretty=format: | sort -u
-# 对每个文件再跑一遍 delta 审查
-git log --oneline "$PREV_TAG".."$TARGET_TAG" -- <file>
+cat <file>
+git diff "$PREV_TAG".."$TARGET_TAG" -- <file>
+git diff upstream/Alpha...HEAD -- <file>
 ```
 
-对 fork 修改过的共享文件（特别是 `adapter/outbound/ssh.go`），逐个验证：
-- 上游有没有改 import 路径？fork 自有文件用同样的包吗？
-- 上游有没有改函数签名？fork 自有文件调用它的方式还兼容吗？
-- 上游有没有新增/删除字段？fork 自有文件读写的字段还在吗？
-
-发现连带影响时，把 fork 自有文件同步改造，作为合并完整性的一部分。
-
----
-
-## Step 3：智能合并（脚本退出码 2 时）
-
-对未被脚本自动策略覆盖、仍带冲突标记的文件（典型：`adapter/outbound/ssh.go`）。
-
-### 3-A. 读取冲突上下文
-
-```bash
-# 1. 读含冲突标记的完整文件
-cat <conflict-file>
-
-# 2. 上游在 PREV_TAG..TARGET_TAG 改了什么
-git diff "$PREV_TAG".."$TARGET_TAG" -- <conflict-file>
-
-# 3. fork 相对上游基线改了什么（理解 fork 意图）
-git diff upstream/Alpha...HEAD -- <conflict-file>
-```
-
-### 3-B. 分析逻辑（以 `adapter/outbound/ssh.go` 为例）
-
-冲突来源：
-- **上游** 修复 bug、添加新功能或重构
-- **Fork** 加了 SSH 系统代理扩展（`socksExt`、`useSystemSsh`、`closed` 字段，
-  以及 `UseSshConfigAlias`/`UseSystemSocks` 选项）
-
-识别原则：
-- `<<<<<<< HEAD` 块中哪些是 fork 扩展（保留）
-- `>>>>>>> <TAG>` 块中哪些是上游改动（吸收）
-- 两者修改同一逻辑段时（需融合）
-
-**Fork 扩展的识别标志**（必须保留）：
-- 字段/变量名含：`socksExt`、`systemSocks`、`useSystemSsh`、`closed`
-- 选项名含：`UseSshConfigAlias`、`UseSystemSocks`、`SshUser`、`SshFlags`
-- 注释含：`系统`、`system ssh`、`ssh-config`
-
-**合并原则**：
-1. 上游的结构性改动（函数签名变更、新增参数）优先吸收
-2. Fork 的扩展字段/方法不丢失
-3. 上游重构 + fork 修改同一函数 → 在上游新结构上重新植入 fork 扩展
-4. 合并结果必须可编译
-
-### 3-C. 写入合并结果
-
-用 Edit 工具去除所有 `<<<<<<<`/`=======`/`>>>>>>>` 标记。
-
-### 3-D. 标记已解决
-
-```bash
-git add <resolved-files>
-```
-
----
-
-## Step 4：验证（每次必须执行）
-
-### 4-A. 编译验证
+### 4. 验证
 
 ```bash
 go build -tags with_gvisor -trimpath -ldflags '-w -s' ./...
-```
-
-失败时常见原因（按出现频率）：
-1. **上游切换了第三方包**（如 `golang.org/x/crypto/ssh` → `github.com/metacubex/ssh`），
-   fork 自有文件未同步 → 同步 import 路径
-2. **上游改了函数签名**，fork 自有文件调用方式过时 → 改 fork 调用方
-3. **上游新增依赖**：`git diff "$TARGET_TAG" HEAD -- go.mod`，跑 `go mod tidy`
-
-### 4-B. 测试验证
-
-```bash
-# fork 核心模块
 go test ./adapter/outbound/... -timeout 60s
-
-# 全量回归
 go test ./... -timeout 180s
 ```
 
-测试失败时：判断是上游破坏性变更还是合并引入的问题，针对性修复。
+失败诊断：
 
----
+- 上游切换第三方包（如 ssh 包）→ 同步 fork-only 文件 import / 类型。
+- 上游改函数签名 / 字段 → 改 fork-only 调用方。
+- 上游新增依赖 → 检查 `go.mod` / `go.sum`，必要时 `go mod tidy`。
+- patch step 失败 → 检查 workflow 引用的 `.github/patch/*.patch` 是否存在。
 
-## Step 5：提交与汇报
-
-### 5-A. 合并 commit
-
-```bash
-git commit -m "chore: merge upstream <TAG>
-
-<summary line per file class>"
-```
-
-如果合并 commit 已由脚本自动创建，Step 2-4 的修复作为独立 follow-up commits 提交：
-- `fix(<module>): <adapt to upstream change>` — 包路径/签名同步
-- `fix(scripts): <bug>` — 脚本本身的 bug 修复
-
-### 5-B. 推送
+### 5. 提交 / 推送 / 汇报
 
 ```bash
-git log --oneline -5
-git push -u origin fa/<TAG>-fa.0
+git log --oneline -8
+git push -u origin fa/<TARGET_TAG>-fa.0
 ```
 
-### 5-C. 汇报骨架（给用户，写在主对话**最后一条消息**，不落盘）
+最终汇报只进对话，不落盘，按 6 句组织：
 
-按这 6 个 bullet 组织，每条一句话；脚本输出的 `AI_HINTS` 块（`PREV_TAG` /
-`SCRIPT_AUTO_RESOLVED` / `GIT_OVERLAP_FILES` / `RESURRECTED_BY_UPSTREAM`）就是 1-3 的输入。
+1. 自动 `--ours` 文件复审结论。
+2. 智能合并文件的上游意图、fork 意图、融合策略。
+3. 自动合并但有连带影响的文件和修复。
+4. 验证命令和结果。
+5. 推送 short SHA。
+6. `NEEDS_USER_REVIEW` 与非阻塞异步事项。
 
-1. **脚本自动 --ours 文件复审**：逐个给出 上游 delta → 决策 → 理由
-2. **智能合并文件**：上游意图 / fork 意图 / 融合策略
-3. **git 自动合并成功但有连带影响的文件**：上游做了什么、fork 哪个文件被波及、怎么修
-4. **验证**：编译 / 测试 / 推送 short SHA
-5. **NEEDS_USER_REVIEW**：拿不准的项，问用户拍板
-6. **异步事项**：可选清理（死代码 / 索引 / 文档），不阻塞当前任务
+## Red Flags
 
----
-
-## Fork 改动范围说明
-
-该 fork 在上游基础上只做一件事：**SSH 系统级代理**
-（读 `~/.ssh/config`，调用系统 `ssh` 二进制，spec 见
-`docs/ssh_single_layer_guide.md`）。
-
-**Fork 新增文件**（上游无，不会产生冲突）：
-```
-adapter/outbound/ssh_system.go
-adapter/outbound/ssh_system_helper.go
-adapter/outbound/ssh_system_socks.go
-adapter/outbound/ssh_resilience.go
-```
-
-> sudoku / trusttunnel 协议虽然由 fork 最早贡献，但 add commit 已被上游吸收，
-> 现在 fork 跟上游字节级一致。这两个协议**不是** fork-only，每次同步会被上游覆盖
-> （这正是预期行为）。
-
-> ⚠️ 上述 fork 自有文件不会出现合并冲突，但**可能因上游改动间接受影响**
-> （例：基类签名变更、共享 import 路径切换 — v1.19.25 就因为上游把 ssh.go 从
-> `golang.org/x/crypto/ssh` 切到 `github.com/metacubex/ssh`，导致 `ssh_resilience.go`
-> 在编译期才暴露）。Step 2-D 与 Step 4-A 是兜底点。
-
-**Fork 修改的上游共享文件**（冲突高发区）：
-
-| 文件 | Fork 的改动 | 默认处理 | 必做复审 |
-|------|------------|---------|---------|
-| `adapter/outbound/ssh.go` | 扩展 `Ssh`/`SshOption`，加系统代理分支 | Claude 智能合并 | 是 |
-| `component/updater/update_core.go` | 替换下载 URL 指向 fork 仓库 | `--ours` | Step 2-B 复审 |
-| `.github/workflows/build.yml` | fork 精简 CI | `--ours` | Step 2-B 复审 |
-| `.github/workflows/test.yml` | fork 精简 CI | `--ours` | Step 2-B 复审 + patch 文件引用核查 |
-
-> ⚠️ `test.yml` 取 ours 后必查 `grep -oE '\.github/patch/[A-Za-z0-9_/-]+\.patch'`，
-> 确认所有静态引用的 patch 文件都存在于 `.github/patch/`。
-> 变量插值如 `go${{matrix.go-version}}.patch` 看 matrix 是否会展开成实际文件。
-
----
-
-## 快速参考：冲突文件决策
-
-| 冲突文件 | 默认策略 | 复审强度 |
-|---------|---------|---------|
-| `.github/workflows/*.yml`（CI） | `--ours`（脚本自动） | **必做** Step 2-B |
-| `component/updater/update_core.go` | `--ours`（脚本自动） | **必做** Step 2-B |
-| `adapter/outbound/ssh.go` | Claude 智能合并 | Step 3 |
-| Fork 新增文件（`ssh_system*.go`、`ssh_resilience.go`） | `--ours` | Step 2-D 检查上游是否新增同名文件（异常信号）|
-| 其他上游文件（fork 未改过） | `--theirs` | Step 4 编译/测试兜底 |
-| **git 自动合并成功的 fork 也改过的文件** | （无冲突标记） | **必做** Step 2-D — 上次同步在此踩过坑 |
-
----
-
-## Red Flags — 看到这些念头立即停下重走流程
-
-| 错误念头 | 真相 |
-|---------|------|
-| "脚本退出码 0 = 干完了" | 错。Step 2-B / 2-D 复审是脚本之后才发生的事，跳过等于裸奔 |
-| "git 没报冲突 = 文件没问题" | 错。上游可能换 import 路径 / 改函数签名，fork 自有文件编译期才炸（v1.19.25 ssh_resilience.go 案例） |
-| "fork 故意改的文件就一律 --ours" | 错。上游本次 delta 若含安全补丁或 CVE 修复，必须吸收，否则 fork 持续暴露 |
-| "go build 通过 = 合并完成" | 错。还要跑 `go test ./...`；spec 契合度审查（fork 自有功能仍工作）也要做 |
-| "汇报写到 docs/sync-report.md 里" | 错。Step 5-C 汇报只进对话最后一条消息，不落盘（避免文档膨胀 + 留 git 噪声） |
-| "脚本自动 --ours 了我就不管了" | 错。自动 --ours 是省力起点不是终点，每个都要按 Step 2-C 决策矩阵复审 |
+- “脚本退出码 0 = 完成”——错，仍需复审和验证。
+- “git 没冲突 = 文件没问题”——错，fork-only SSH 文件可能编译期才炸。
+- “fork 文件一律 ours”——错，上游安全/bug fix 必须吸收。
+- “go build 过 = 完成”——错，还要跑目标包测试和全量测试。
+- “sudoku/trusttunnel 是 fork-only”——错，它们已 upstream-maintained。
