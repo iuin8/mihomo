@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"os"
 	"os/user"
 	"runtime"
 	"strings"
@@ -38,7 +39,7 @@ func TestBuildEnvCommandTreatsNormalizedCurrentUserAsSameUser(t *testing.T) {
 }
 
 func TestBuildSshDCommandUsesDeterministicForwardingOptions(t *testing.T) {
-	cmd := buildSshDCommand("", "host-alias", 1080, nil)
+	cmd := buildSshDCommand("", "host-alias", 1080, nil, "")
 	args := strings.Join(cmd.Args, " ")
 
 	for _, want := range []string{
@@ -64,7 +65,7 @@ func TestBuildSshDCommandUsesDeterministicForwardingOptions(t *testing.T) {
 }
 
 func TestBuildSshDCommandLetsUserOverrideDefaultOptions(t *testing.T) {
-	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-o", "ConnectTimeout=30"})
+	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-o", "ConnectTimeout=30"}, "")
 	args := strings.Join(cmd.Args, " ")
 
 	if strings.Contains(args, "ConnectTimeout=5") {
@@ -81,7 +82,7 @@ func TestBuildSshDCommandDoesNotLetUserOverrideManagedLifecycleOptions(t *testin
 		"-o", "ControlPath=~/.ssh/control:%C",
 		"-o", "ControlPersist=10m",
 		"-o", "ForkAfterAuthentication=yes",
-	})
+	}, "")
 	args := strings.Join(cmd.Args, " ")
 
 	for _, want := range []string{"ControlMaster=no", "ControlPath=none", "ControlPersist=no", "ForkAfterAuthentication=no"} {
@@ -97,7 +98,7 @@ func TestBuildSshDCommandDoesNotLetUserOverrideManagedLifecycleOptions(t *testin
 }
 
 func TestBuildSshDCommandDropsManagedLifecycleFlags(t *testing.T) {
-	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-f", "-M", "-MN", "-fN", "-MS", "control-path", "-MO", "check", "-S", "control-path", "-O", "check", "-v"})
+	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-f", "-M", "-MN", "-fN", "-MS", "control-path", "-MO", "check", "-S", "control-path", "-O", "check", "-v"}, "")
 	args := strings.Join(cmd.Args, " ")
 
 	for _, unwanted := range []string{" -f ", " -M ", " -MN ", " -fN ", " -S ", "control-path", " -O ", " check "} {
@@ -111,7 +112,7 @@ func TestBuildSshDCommandDropsManagedLifecycleFlags(t *testing.T) {
 }
 
 func TestBuildSshDCommandRecognizesOpenSSHSpaceSeparatedOptions(t *testing.T) {
-	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-o", "StrictHostKeyChecking yes", "-oConnectTimeout=30"})
+	cmd := buildSshDCommand("", "host-alias", 1080, []string{"-o", "StrictHostKeyChecking yes", "-oConnectTimeout=30"}, "")
 	args := strings.Join(cmd.Args, " ")
 
 	for _, unwanted := range []string{"StrictHostKeyChecking=accept-new", "ConnectTimeout=5"} {
@@ -122,10 +123,52 @@ func TestBuildSshDCommandRecognizesOpenSSHSpaceSeparatedOptions(t *testing.T) {
 }
 
 func TestBuildSshDCommandSeparatesDestinationFromOptions(t *testing.T) {
-	cmd := buildSshDCommand("", "-looks-like-option", 1080, nil)
+	cmd := buildSshDCommand("", "-looks-like-option", 1080, nil, "")
 	got := cmd.Args[len(cmd.Args)-2:]
 	want := []string{"--", "-looks-like-option"}
 	if got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("buildSshDCommand destination args = %v, want %v", got, want)
+	}
+}
+
+func TestBuildSshDCommandAddsFWhenSshConfigPathGiven(t *testing.T) {
+	// create a temp file so the existence check passes
+	f, err := os.CreateTemp("", "ssh_config_test_*.conf")
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	path := f.Name()
+	f.Close()
+	defer os.Remove(path)
+
+	cmd := buildSshDCommand("", "host-alias", 1080, nil, path)
+	args := strings.Join(cmd.Args, " ")
+
+	if !strings.Contains(args, "-F "+path) {
+		t.Fatalf("buildSshDCommand args = %q, want -F %s", args, path)
+	}
+	// -F must come before -D
+	fIdx := strings.Index(args, "-F")
+	dIdx := strings.Index(args, "-D")
+	if fIdx < 0 || dIdx < 0 || fIdx >= dIdx {
+		t.Fatalf("buildSshDCommand args = %q, want -F before -D", args)
+	}
+}
+
+func TestBuildSshDCommandOmitsFWhenSshConfigFileMissing(t *testing.T) {
+	cmd := buildSshDCommand("", "host-alias", 1080, nil, "/nonexistent/path/ssh.conf")
+	args := strings.Join(cmd.Args, " ")
+
+	if strings.Contains(args, "-F") {
+		t.Fatalf("buildSshDCommand args = %q, should not contain -F when file is missing", args)
+	}
+}
+
+func TestBuildSshDCommandOmitsFWhenSshConfigPathEmpty(t *testing.T) {
+	cmd := buildSshDCommand("", "host-alias", 1080, nil, "")
+	args := strings.Join(cmd.Args, " ")
+
+	if strings.Contains(args, "-F") {
+		t.Fatalf("buildSshDCommand args = %q, should not contain -F", args)
 	}
 }

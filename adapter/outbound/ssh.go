@@ -47,6 +47,7 @@ type SshOption struct {
 	SshFlags             []string `proxy:"ssh-flags,omitempty"`
 	UseSystemSocks       bool     `proxy:"use-system-socks,omitempty"`
 	SystemSocksPort      *int     `proxy:"system-socks-port,omitempty"`
+	SshConfigPath        string   `proxy:"ssh-config-path,omitempty"`
 }
 
 func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
@@ -230,9 +231,10 @@ func NewSsh(option SshOption) (*Ssh, error) {
 			pinnedPort = true
 		}
 		outbound.socksExt = &systemSocksExt{
-			inUse:  true,
-			pinned: pinnedPort,
-			port:   localPort,
+			inUse:         true,
+			pinned:        pinnedPort,
+			port:          localPort,
+			sshConfigPath: option.SshConfigPath,
 		}
 	}
 

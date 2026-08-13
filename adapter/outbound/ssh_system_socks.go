@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -17,14 +18,15 @@ import (
 )
 
 type systemSocksExt struct {
-	port        int
-	cmd         *exec.Cmd
-	processDone <-chan struct{}
-	inUse       bool
-	pinned      bool
-	ready       bool // true 表示已通过 SOCKS5 探测，可直接复用；false 表示未启动或启动中
-	waitReady   chan struct{}
-	lastErr     error
+	port          int
+	cmd           *exec.Cmd
+	processDone   <-chan struct{}
+	inUse         bool
+	pinned        bool
+	ready         bool // true 表示已通过 SOCKS5 探测，可直接复用；false 表示未启动或启动中
+	waitReady     chan struct{}
+	lastErr       error
+	sshConfigPath string
 }
 
 type sshOption struct {
@@ -115,7 +117,7 @@ func (s *Ssh) startSystemSocks(actualUser string, port int, waitReady chan struc
 		s.cMutex.Unlock()
 		return
 	}
-	cmd := buildSshDCommand(actualUser, s.option.Server, port, s.option.SshFlags)
+	cmd := buildSshDCommand(actualUser, s.option.Server, port, s.option.SshFlags, s.socksExt.sshConfigPath)
 	capturedEnv, _ := fetchUserEnv(startupCtx, actualUser)
 	applyEnv(cmd, capturedEnv)
 
@@ -217,12 +219,19 @@ func (s *Ssh) waitSystemSocksProcess(cmd *exec.Cmd, processDone chan<- struct{})
 	}
 }
 
-func buildSshDCommand(actualUser, hostAlias string, localPort int, extraFlags []string) *exec.Cmd {
+func buildSshDCommand(actualUser, hostAlias string, localPort int, extraFlags []string, sshConfigPath string) *exec.Cmd {
 	sshArgs := []string{
 		"-T",
 		"-N",
-		"-D", net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort)),
 	}
+	if sshConfigPath != "" {
+		if _, err := os.Stat(sshConfigPath); err == nil {
+			sshArgs = append(sshArgs, "-F", sshConfigPath)
+		} else {
+			log.Warnln("[SSH] Managed config not found at %s, falling back to ~/.ssh/config: %v", sshConfigPath, err)
+		}
+	}
+	sshArgs = append(sshArgs, "-D", net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort)))
 
 	defaultOpts := []sshOption{
 		{name: "BatchMode", value: "yes"},
