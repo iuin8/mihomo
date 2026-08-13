@@ -51,6 +51,8 @@ proxies:
     use-system-socks: true
     ssh-user: fa
     system-socks-port: 1080
+    # 通常由 GUI 从订阅文件 ssh-config: | 提取后自动注入，无需手写
+    ssh-config-path: /home/fa/.clash-verge-rev/ssh-configs/Rxxxx.conf
     ssh-flags:
       - "-J"
       - "jump-host"
@@ -120,6 +122,18 @@ Mihomo 会强制添加：
 - `ForkAfterAuthentication=no`
 
 这是为了避免 OpenSSH 复用已有 master 后让当前 `ssh -D` 进程成功退出，导致 Mihomo 无法准确管理 SOCKS 隧道。
+
+### `ssh-config-path`
+
+指定 OpenSSH 使用的配置文件路径。配置后，Mihomo 会在启动 `ssh` 时附加 `-F <path>`，让 OpenSSH 只读取该文件而不是 `~/.ssh/config`：
+
+```yaml
+ssh-config-path: /home/fa/.clash-verge-rev/ssh-configs/Rxxxx.conf
+```
+
+- 文件存在时，`-F <path>` 生效，`Host` 别名、跳板、密钥等全部从该文件解析。
+- 文件缺失时，Mihomo 打印 warn 并**去掉 `-F`**，回落默认 `~/.ssh/config`，隧道仍可启动。
+- 该字段通常由上层 GUI（如 clash-verge-rev）在增强管道中自动注入，从订阅文件的 `ssh-config: |` 字面量块提取后托管生成；普通用户无需手写。
 
 ### `port`、`username`、`password`、`private-key`
 
