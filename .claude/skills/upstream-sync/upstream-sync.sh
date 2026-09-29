@@ -161,9 +161,16 @@ auto_resolve_rm() {
   fi
 }
 
-auto_resolve_ours ".github/workflows/build.yml"       "fork 精简 CI"
-auto_resolve_ours ".github/workflows/test.yml"        "fork 精简 CI"
-auto_resolve_ours "component/updater/update_core.go"  "仅含仓库 URL 替换"
+# build.yml / test.yml：fork 精简矩阵是 fork 意图，冲突时保留 fork（但要按 SKILL.md
+# Step 2 人工吸收上游对 `uses:` action 版本的升级、权限与 needs 修复——上游已到
+# checkout@v6 / setup-go 固定 SHA / action-gh-release@v3，fork 仍停在 checkout@v5、
+# gh-release@v1）。
+auto_resolve_ours ".github/workflows/build.yml"       "fork 精简 CI（action 版本需人工吸收）"
+auto_resolve_ours ".github/workflows/test.yml"        "fork 精简 CI（action 版本需人工吸收）"
+# 注意：component/updater/update_core.go 曾经也在自动 --ours 之列，理由写作"仅含仓库
+# URL 替换"。该理由已不成立——上游 v1.19.31 在同一文件修了 android 的 CoreBaseName
+# 命名（arm64 提前 return + 新增 amd64 android 分支）。保留该规则会在下次冲突时静默
+# 丢掉上游修复，故移除，改由 AI 按 SKILL.md Step 2-B 逐行合并。
 auto_resolve_rm   ".github/workflows/trigger-cmfa-update.yml"
 
 # test.yml patch 文件引用检查：用 POSIX 字符类避免误匹配 GitHub Actions
