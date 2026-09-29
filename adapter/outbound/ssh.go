@@ -77,7 +77,7 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 		return s.client, nil
 	}
 
-	c, dialAddr, err := s.dial(ctx, addr)
+	c, err := s.dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 		defer done(&err)
 	}
 
-	clientConn, chans, reqs, err := ssh.NewClientConn(c, dialAddr, s.config)
+	clientConn, chans, reqs, err := ssh.NewClientConn(c, addr, s.config)
 	if err != nil {
 		return nil, err
 	}
@@ -111,11 +111,6 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 	go s.startHealthCheck(client)
 
 	return client, nil
-}
-
-func (s *Ssh) dial(ctx context.Context, addr string) (net.Conn, string, error) {
-	c, err := s.dialer.DialContext(ctx, "tcp", addr)
-	return c, addr, err
 }
 
 // ProxyInfo implements C.ProxyAdapter
