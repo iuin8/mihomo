@@ -1,0 +1,48 @@
+# 备选方案（不推荐用于实际负载）：家侧 mihomo 容器 + hysteria2 入站
+#
+# 为什么需要它：mihomo 内嵌 ET（WASI）之间 TCP 通路建立不起来，而 UDP 可靠。
+# 于是把 TCP 封装进 QUIC/UDP：客户端 hysteria2 出站的 QUIC 包经 overlay 的 UDP 路径送达本入站。
+#
+# 实测边界（务必先读）：
+#   * 小请求可用：/version 级 200，12–14ms（直连 peer 或经共享节点会合都一样）
+#   * 64KB 起失败（502）；1MB 下载卡在 ~122KB / 40s；限速 2Mbps 无改善
+#   * 压测后隧道整体失效且不自愈，需重启内核（见 upstream issue #3214 同类现象）
+#   => 仅用于连通性验证，不要用于 SSH/传输类实际工作。
+#
+# 另一个坑：certificate / private-key 必须在 mihomo home dir 内（SAFE_PATHS 限制），
+# 否则入站启动即失败：`path is not subpath of home directory or SAFE_PATHS`。
+
+mixed-port: 7890
+allow-lan: true
+bind-address: 0.0.0.0
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 0.0.0.0:9090
+
+listeners:
+  - name: hy2-in
+    type: hysteria2
+    port: 18443
+    listen: 0.0.0.0
+    users:
+      <密码>: <密码>
+    # 自签证书示例：openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 30 -nodes -subj "/CN=lab"
+    certificate: /root/.config/mihomo/certs/cert.pem
+    private-key: /root/.config/mihomo/certs/key.pem
+
+proxies:
+  - name: home-overlay
+    type: easytier
+    network-name: home
+    network-secret: "<与客户端一致>"
+    hostname: hy-home
+    instance-name: hy-home
+    ipv4: 10.144.0.2/24
+    state-dir: /root/.config/mihomo/easytier
+    listeners: ["tcp://0.0.0.0:11010"]      # 供客户端作 underlay 直连（或改用共享节点 peers）
+    proxy-networks: ["192.168.1.0/24"]      # 家侧内网网段
+    udp: true
+
+rules:
+  - MATCH,DIRECT

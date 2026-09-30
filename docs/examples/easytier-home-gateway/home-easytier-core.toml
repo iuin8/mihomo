@@ -1,0 +1,34 @@
+# 家侧 native EasyTier 节点（零特权，推荐方案）
+#
+# 键名依据：EasyTier 官方示例 easytier-contrib/easytier-magisk/config/config.toml
+# CLI 依据：easytier/src/core.rs（-c/--config-file、-n/--proxy-networks）
+#
+# 实测（2026-09-30）：本配置 + 本机 Clash 客户端 → TCP 20MB @ 8.4 MB/s（校验一致）、UDP 0% 丢包。
+instance_name = "home-gw"
+hostname = "home-gw"
+
+dhcp = false
+ipv4 = "10.144.0.2/24"
+
+listeners = [
+    "tcp://0.0.0.0:11010",
+    "udp://0.0.0.0:11010",
+]
+
+[network_identity]
+network_name = "home"
+network_secret = "<替换为强密钥，客户端填同一组>"
+
+# 会合点：三选一
+#   ① 自建共享节点（推荐）：任何有公网 IP 的机器上**不带参数**启动 easytier-core 即为共享节点
+#   ② 家侧公网 IPv6：直接写家侧监听地址
+#   ③ 社区节点：官方未公布真实地址（public.easytier.* 均为 NXDOMAIN），不要照抄网传地址
+[[peer]]
+uri = "tcp://<自建共享节点IP>:11010"
+
+[flags]
+no_tun = true               # 零特权：无需 TUN / root；实测四条路径全通
+enable_encryption = true
+mtu = 1380
+latency_first = true
+# 需要 ICMP（ping 内网机器）或让家侧主动访问其他 overlay 节点时才改 false 并给 TUN 设备。

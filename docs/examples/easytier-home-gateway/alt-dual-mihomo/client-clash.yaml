@@ -1,0 +1,40 @@
+# 备选方案（不推荐用于实际负载）：本机 Clash 侧
+#
+# 关键点：hysteria2 出站的 server 写**家侧内网 IP**（属于已发布的代理子网），
+# 并给它加 dialer-proxy 指向 easytier 出站 —— 这样 QUIC 的 UDP 包才走 overlay
+# 的 UDP 通路（这是双 mihomo 之间唯一可靠的路径）。
+#
+# 实测边界见 alt-dual-mihomo/home-mihomo.yaml 顶部说明：小请求可用，64KB 起失败。
+mixed-port: 7891
+bind-address: 127.0.0.1
+mode: rule
+log-level: info
+ipv6: false
+
+proxies:
+  - name: home-overlay
+    type: easytier
+    network-name: home
+    network-secret: "<与家侧一致>"
+    hostname: mbp-clash
+    instance-name: mbp-clash
+    ipv4: 10.144.0.3/24
+    # state-dir 默认 easytier/<代理名>，位于 mihomo home dir 内即合法
+    no-listener: true
+    peers: ["tcp://<家侧可直达地址或共享节点>:11010"]
+    udp: true
+
+  - name: home-hy2
+    type: hysteria2
+    server: 192.168.1.10          # 家侧内网 IP（在已发布的代理子网内）
+    port: 18443
+    password: "<与家侧 users 一致>"
+    skip-cert-verify: true
+    up: "2 Mbps"                  # 实测限速不改变结果，保留只为减少突发
+    down: "2 Mbps"
+    dialer-proxy: home-overlay    # ← 关键：QUIC/UDP 走 overlay
+
+rules:
+  - IP-CIDR,10.144.0.0/24,home-overlay
+  - IP-CIDR,192.168.1.0/24,home-hy2
+  - MATCH,DIRECT

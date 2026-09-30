@@ -1,0 +1,29 @@
+# 本机 Clash 侧片段（推荐方案）——可并入 CVR 的 merge profile
+#
+# 实测（2026-09-30）：与本目录家侧 native 容器配对，TCP 20MB @ 8.4 MB/s（校验一致）、UDP 0% 丢包。
+proxies:
+  - name: home-overlay
+    type: easytier
+    network-name: home
+    network-secret: "<与家侧一致>"
+    hostname: mbp-clash
+    instance-name: mbp-clash
+    ipv4: 10.144.0.3/24
+    # state-dir 默认 easytier/<代理名>，位于 mihomo home dir 内即合法（SAFE_PATHS 限制）；
+    # 自定义时请写 home dir 内的路径，例如 /root/.config/mihomo/easytier
+    no-listener: true
+    peers: ["tcp://<自建共享节点IP或家侧公网地址>:11010"]
+    udp: true
+    # interface-name: en0            # 本机 Clash 跑 TUN 且规则会把该网段送进其它代理时，绑物理网卡
+                                      # 可避免 overlay 的 underlay 连接被自己的 TUN 抓走
+
+rules:
+  # ⚠️ overlay 网段本身也要走隧道，否则会落到 MATCH 直连（表现为 502，极易误判为“虚拟 IP 不可达”）
+  - IP-CIDR,10.144.0.0/24,home-overlay
+  # 家里内网网段：**只能精确写**。本机与家里同在 10/8 时用大段规则会劫持本机局域网。
+  - IP-CIDR,192.168.1.0/24,home-overlay
+  # 人在家里时直连，避免绕隧道一圈
+  - SRC-IP-CIDR,192.168.1.0/24,DIRECT
+  - DOMAIN-SUFFIX,home.lan,home-overlay   # 域名寻址：再遇到网段冲突时最稳的退路
+  - PROCESS-NAME,ssh,DIRECT               # 防递归（见 docs/ssh_single_layer_guide.md）
+  - MATCH,DIRECT
