@@ -329,3 +329,28 @@ CVR 内核（服务模式 + TUN）  --socks5-->  用户态网关（launchd 常�
 **因此**：要在一个内核里同时拥有 TUN 与 easytier，需要在 CVR/服务侧定位那条"下令 SIGKILL"的路径（可能需要给 App/服务加日志重编，或 macOS 级追踪），
 或者向 mihomo/CVR 上游提 issue（本节的表格就是最小复现集）。**在此之前，推荐 §6.1 的解耦架构**（用户态网关 + socks5 出站）——它已经在生产状态跑通，
 代价只是多一个 launchd 常驻进程。
+
+### 6.5 定案（第二轮）：App 是观察者，服务是执行者
+
+打开 App 的调试日志后（**`app_log_level: debug`**：GUI「设置 → 高级 → 应用日志等级」，
+或退出 CVR 后改 `verge.yaml` —— **注意运行中的 CVR 会在退出时重写该文件**，所以必须先退出再改 ✓），
+复现一次真实连接，被杀瞬间的完整日志是：
+
+```
+DEBUG client connection error: hyper::Error(Shutdown, Os { code: 57, kind: NotConnected, "Socket is not connected" })
+DEBUG Connecting to IPC at /var/run/clash-verge-service/service.sock
+DEBUG GET /status -> 200 OK 372
+WARN  [Service] service restarted the core (40 restarts so far); last exit: Killed by OOM killer or admin (SIGKILL) (code: None)
+```
+
+**App 侧没有任何"决定重启内核"的日志**（没有 `service owner status was unreadable`，没有 `service core stopped`）
+—— 它只是发现**与服务的 IPC 连接断了**，然后从服务读到内核的死亡信息。而服务进程本身 **3 小时未重启**（不是它崩了）：
+
+* **执行者 = 特权服务**（root、长寿命，唯一同时持有子进程与上报 `SIGKILL` 的组件）；
+* 它的自身日志**编译期关闭**（`ENABLE_LOGGING = false`），IPC 又要求**签名请求**
+  （普通用户连得上 socket，但会得到 `service protocol version does not match`）→ 其决策路径**不可外部观测**；
+* **触发器 = 第一条真正穿过 overlay 的连接**（流量路径与 API 测速路径等价）；
+* **范围 = 服务模式（root + TUN + auto-route）**；同一内核在用户态（含 root、含 TUN 设备但 `auto-route: false`）完全正常。
+
+结论与完整证据表已整理成可提交的上游 issue 草稿：`docs/easytier_service_mode_kill_issue.md`。
+在产品上，**§6.1 的解耦架构**仍是推荐形态（已连续稳定运行、TCP/UDP 均通、无需改动服务或系统）。
