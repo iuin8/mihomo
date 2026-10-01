@@ -261,3 +261,23 @@ sudo cp verge-mihomo-alpha-nojit "<上一步找到的路径>"
 > 实测（解释器版、用户态、TUN 关）：`10.0.1.181:8080/login` → **200（0.58s，含实例懒启动）**、`10.0.0.1/` → **200（88ms）**、内核存活。
 > 长期做法：把该内核作为 fork 的 sidecar（`pnpm prebuild --force` 或替换 `src-tauri/sidecar/verge-mihomo-alpha-aarch64-apple-darwin` 后重新打包），
 > 这样服务将来重新 stage 时拿到的也是它。
+
+### 6.1 解耦架构：用户态 overlay 网关 + SOCKS5（macOS 客户端实测定案）
+
+第 6 节那张表说明：服务模式（root + TUN）下 easytier 的 WASI 实例启动**必然挂住**（随后被服务看门狗 SIGKILL），
+而同一二进制、同一配置在**用户态**完全正常。于是把 overlay 拆出去：
+
+```
+CVR 内核（服务模式 + TUN）  --socks5-->  用户态网关（launchd 常驻）  --easytier/WASI-->  会合点 --> 家侧
+   rules: 10.x → 🏠 家里                     mixed-port 127.0.0.1:17899
+```
+
+* 网关：`mac-gateway/`（`config.yaml` + `com.fa.home-overlay.plist`，内核用解释器版）
+* CVR 侧：把 `easytier` 出站换成 `type: socks5, server: 127.0.0.1, port: 17899, udp: true`，规则与分组不变
+* 特权只在 CVR 的服务模式下用（TUN 合法通道），WASI 只在用户态跑 → 两边各自都在"自然模式"里
+
+实测（2026-10-02）：网关 `socks5 → 10.0.1.181:8080/login` → 200（首次 2.9s 含实例懒启动，之后 0.12s）；
+`10.0.0.1/` → 200。服务模式内核在换成 socks5 出站后不再启动 WASI，也就不会再被秒杀。
+
+> 为什么不用 SSH/`ssh_system` 出站替代：OpenSSH 的 `-D` 不支持 UDP ASSOCIATE，UDP/ICMP 会丢；
+> 本方案里 SOCKS5 两端都是 mihomo，UDP 原样透传。
