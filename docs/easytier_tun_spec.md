@@ -135,3 +135,23 @@ dns:
 | AC7 | `ping` 内网机器通 | ✅ 3/3 通（0.9–6.8 ms）；**对照组**：家侧 `FORWARD DROP` → 100% 丢包，恢复 `ACCEPT` → 2/2 通，证明流量穿家侧 TUN 而非绕行 |
 
 对比：同一拓扑走 hysteria2 绕行时 1MB 下载卡在 ~122KB；TUN 模式下 20MB 仅 0.61s。
+
+**复现**（工具随仓库提供，仅标准库，无凭据）：
+
+```bash
+# 目标侧（内网另一台机器上跑）：
+python3 docs/examples/easytier-home-gateway/tools/udp-echo-server.py --bind 0.0.0.0 --port 18001
+
+# 本机侧：TCP + UDP 一次跑完（UDP 走 SOCKS5 UDP ASSOCIATE；Docker/端口映射场景要带 --relay）
+bash docs/examples/easytier-home-gateway/tools/probe.sh 127.0.0.1:7891 172.32.0.2 18000 18001 /big.bin
+python3 docs/examples/easytier-home-gateway/tools/socks5-udp-probe.py \
+    --socks 127.0.0.1:7891 --relay 127.0.0.1:7891 --target 172.32.0.2 --port 18001 --payload tun-e2e
+```
+
+判据：`probe.sh` 退出码 0（TCP 与 UDP 都通）；探针打印 `PASS[udp]`。
+ICMP（AC7）需客户端侧有 TUN（例如 native 客户端），mihomo 的 SOCKS 入站不代理 ICMP。
+
+**踩过的两个测量陷阱**（会让 UDP 结论假失败，务必先排除）：
+
+1. Docker 只发布 TCP 端口（`-p x:y/tcp`）时 UDP 根本进不去 → 必须 `-p x:y/udp`；
+2. SOCKS5 的 UDP 中继地址可能是容器内网 IP → 用 `--relay <可路由地址>` 覆盖。
