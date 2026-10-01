@@ -272,7 +272,10 @@ CVR 内核（服务模式 + TUN）  --socks5-->  用户态网关（launchd 常�
    rules: 10.x → 🏠 家里                     mixed-port 127.0.0.1:17899
 ```
 
-* 网关：`mac-gateway/`（`config.yaml` + `com.fa.home-overlay.plist`，内核用解释器版）
+* 网关：`mac-gateway/`（`config.yaml` + `com.fa.home-overlay.plist`）
+  * 内核**用官方版即可**（实测：用户态下官方 JIT 内核跑 easytier 完全正常，内存 ~209MB；
+    解释器版同场景 ~435MB）。解释器版仅在"服务模式里跑 WASI"时才需要，而本架构已不需要那种组合
+  * 首次启动实例约 20 秒（懒启动），第 2 次起 ~0.1s；换内核/重启网关后第一请求请耐心等实例就绪
 * CVR 侧：把 `easytier` 出站换成 `type: socks5, server: 127.0.0.1, port: 17899, udp: true`，规则与分组不变
 * 特权只在 CVR 的服务模式下用（TUN 合法通道），WASI 只在用户态跑 → 两边各自都在"自然模式"里
 
