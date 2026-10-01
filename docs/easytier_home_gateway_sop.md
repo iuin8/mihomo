@@ -284,3 +284,16 @@ CVR 内核（服务模式 + TUN）  --socks5-->  用户态网关（launchd 常�
 
 > 为什么不用 SSH/`ssh_system` 出站替代：OpenSSH 的 `-D` 不支持 UDP ASSOCIATE，UDP/ICMP 会丢；
 > 本方案里 SOCKS5 两端都是 mihomo，UDP 原样透传。
+
+### 6.2 踩坑记录：`auto_check_update` 会把你换上的内核悄悄换掉
+
+排查「服务模式一碰 easytier 就死」时，连续多轮验证都复现失败——原因不是修复无效，而是**服务实际运行的内核被 CVR 的自动更新换成了官方 alpha**：
+
+* `verge.yaml` 的 `auto_check_update: true`（默认开启）→ CVR 会重新下载官方 alpha 到自己的缓存，**staging 时用的是它自己的那份**，不是 App 里你放的那颗；
+* 判据（实测）：崩溃报告为 `SIGKILL (Code Signature Invalid)` + `termination: CODESIGNING / Invalid Page`，
+  `path` 指向 `…/clash-verge-service/*/verge-mihomo-alpha`，且报告里的 `size` 等于**官方构建的 `__TEXT` 段大小**
+  （官方 alpha = `0x25f0000` = 39780352；fork 自建的 fix1 = `0x25f4000`）。`size` 与 `__TEXT` 对不上，就说明跑的不是你那份。
+
+**结论**：在 macOS 服务模式下做内核级验证前，先关掉 `auto_check_update`（改 `verge.yaml` 时先退出 CVR），
+否则一直在测官方内核。判断「当前跑的是哪一份」的最快方法：用 easytier 激发出站 ——
+出现新的 `CODESIGNING` 崩溃报告 = 官方 JIT 内核；没有任何崩溃报告 = 我们的解释器内核。
