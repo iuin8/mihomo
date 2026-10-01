@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/metacubex/mihomo/component/easytier"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -40,7 +41,11 @@ type EasyTier struct {
 	zone       string
 	ctx        context.Context
 	cancel     context.CancelFunc
-	startOnce  sync.Once
+	// FORK(easytier-resilience): 原为 startOnce sync.Once —— 一旦启动失败就永久毒化，
+	// 之后所有拨号都只返回旧错误（上游同类问题 #3214）。改为「成功才置位、失败按退避重试」。
+	startMu    sync.Mutex
+	started    bool
+	lastStart  time.Time
 	startErr   error
 	mu         sync.Mutex
 	host       *corehost.Host
@@ -82,12 +87,12 @@ type EasyTierOption struct {
 	DisableQUICInput    *bool    `proxy:"disable-quic-input,omitempty"`
 	MTU                 int      `proxy:"mtu,omitempty"`
 	// FORK(easytier-tun): 宿主 TUN 模式；tun-routes 为 pin 进该设备的前缀列表。
-	Tun                 bool     `proxy:"tun,omitempty"`
-	TunRoutes           []string `proxy:"tun-routes,omitempty"`
-	TLDDNSZone          string   `proxy:"tld-dns-zone,omitempty"`
-	SecureMode          *bool    `proxy:"secure-mode,omitempty"`
-	LocalPrivateKey     string   `proxy:"local-private-key,omitempty"`
-	LocalPublicKey      string   `proxy:"local-public-key,omitempty"`
+	Tun             bool     `proxy:"tun,omitempty"`
+	TunRoutes       []string `proxy:"tun-routes,omitempty"`
+	TLDDNSZone      string   `proxy:"tld-dns-zone,omitempty"`
+	SecureMode      *bool    `proxy:"secure-mode,omitempty"`
+	LocalPrivateKey string   `proxy:"local-private-key,omitempty"`
+	LocalPublicKey  string   `proxy:"local-public-key,omitempty"`
 }
 
 func (o EasyTierOption) structuredConfig() easytier.Config {
@@ -184,22 +189,49 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
 	outbound.unregister = dns.RegisterEasyTierDnsClient(option.Name, easyTierDNSTransport{easytier: outbound})
+	// FORK(easytier-resilience): 构造即预热。首次实例启动要几秒到几十秒；压在用户请求或
+	// 测速（/proxies/{name}/delay → URLTest）路径上时，宿主/上层很容易在这段时间里把它当成异常。
+	go func() {
+		if err := outbound.start(); err != nil {
+			log.Warnln("[EasyTier](%s) prewarm failed: %v", option.Name, err)
+		}
+	}()
 	return outbound, nil
 }
 
+// FORK(easytier-resilience): 启动失败后的重试退避，避免每次拨号都重跑一次昂贵的 WASI 初始化
+const easyTierStartRetryBackoff = 10 * time.Second
+
 func (e *EasyTier) start() error {
-	e.startOnce.Do(func() {
-		if err := e.init(); err != nil {
-			e.startErr = err
-			_ = e.shutdown()
-		}
-	})
-	return e.startErr
+	e.startMu.Lock()
+	defer e.startMu.Unlock()
+	if e.started {
+		return e.startErr
+	}
+	if e.startErr != nil && time.Since(e.lastStart) < easyTierStartRetryBackoff {
+		return e.startErr
+	}
+	e.lastStart = time.Now()
+	if err := e.init(); err != nil {
+		e.startErr = err
+		_ = e.shutdown()
+		return err
+	}
+	e.startErr = nil
+	e.started = true
+	return nil
 }
 
 func (e *EasyTier) ensureStarted(ctx context.Context) error {
 	done := make(chan error, 1)
 	go func() {
+		// FORK(easytier-resilience): 兜底。启动路径里任何 panic 都不允许带走整个内核进程。
+		defer func() {
+			if r := recover(); r != nil {
+				log.Errorln("[EasyTier](%s) instance start panicked: %v", e.Name(), r)
+				done <- fmt.Errorf("easytier: instance start panicked: %v", r)
+			}
+		}()
 		done <- e.start()
 	}()
 	select {
@@ -416,9 +448,11 @@ func (e *EasyTier) Close() error {
 	if e.unregister != nil {
 		e.unregister()
 	}
-	e.startOnce.Do(func() {
-		e.startErr = errEasyTierClosed
-	})
+	e.startMu.Lock()
+	// FORK(easytier-resilience): 关闭后不再允许启动（等价于原来用 startOnce 占位）
+	e.started = true
+	e.startErr = errEasyTierClosed
+	e.startMu.Unlock()
 	return e.shutdown()
 }
 
