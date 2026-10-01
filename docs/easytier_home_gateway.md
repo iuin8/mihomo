@@ -149,24 +149,12 @@ rules:
   `tools/socks5-udp-probe.py --relay <host:port>`）；且**务必发布 UDP 端口**（`-p x:y/udp`），
   只发 TCP 会让一切 UDP 测试假失败。
 
-## 五、历史方案：hysteria2 绕行（勿用于生产）
+## 五、历史方案（已废弃）
 
-同目录 `alt-dual-mihomo/` 给出可用但不推荐的做法：**把 TCP 封装进 QUIC/UDP**，
-绕开 WASI↔WASI 的 TCP 缺陷——因为 UDP 是两端唯一可靠的通路。
+双 mihomo + hysteria2 绕行（把 TCP 封装进 QUIC/UDP）实测只能跑通极小请求、64KB 起失败、
+负载后不自愈，已在 TUN 模式落地后废弃；配置文件已从仓库删除。
 
-原理：家侧 mihomo 起一个 `hysteria2` **入站**（QUIC over UDP）；
-客户端 mihomo 用 `hysteria2` **出站**，并给它加 `dialer-proxy: <easytier 出站>`，
-让 QUIC 的 UDP 包经 overlay 送到家侧（家侧 LAN IP，属于已发布的代理子网）。
-
-实测结果（诚实版）：
-
-- 小请求可用：`/version` 级请求 `200`，12–14ms；经**共享节点**会合也一样通。
-- **64KB 起失败**（`502`），1MB 下载卡在 ~122KB / 40s；给 hysteria2 设 2Mbps 限速无改善。
-- 压测后隧道**整体失效且不自愈**，必须重启内核（与上游 issue #MetaCubeX/mihomo#3214 的现象一致）。
-- 原始 overlay UDP 证据：小样本（40 包）0% 丢包，限速 200 包时客户端侧只记录到 **2** 条命中
-  → 瓶颈在 WASI 的 UDP 数据面（持续/突发负载下崩塌），不在 MTU、不在拥塞控制。
-
-⇒ 该方案只适合"能连通性验证"，**不要用于实际工作负载**。
+原因、实测数据与取回用的提交引用都在 [history/easytier_dual_mihomo_detour.md](history/easytier_dual_mihomo_detour.md)。
 
 ## 六、回退与清理
 
