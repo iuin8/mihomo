@@ -18,18 +18,18 @@
 
 ### Step 1：家侧起 mihomo（TUN 模式，推荐）
 
-用 `examples/easytier-home-gateway/docker-compose.tun.yml` + `home-mihomo-tun.yaml`，改两处：
-
-- `home-mihomo-tun.yaml`：`network-secret`、`proxy-networks: ["<家里网段>"]`、会合点（`peers` 或 `listeners`）
-- `docker-compose.tun.yml`：把 NAT 那行的 `eth0` 换成**连内网的那张网卡**
+**一键版见 [easytier_home_gateway_sop.md](easytier_home_gateway_sop.md)**。仓库已把三件硬性要求与内核编译
+都封装进 `examples/easytier-home-gateway/docker-compose.yml`（`entrypoint.sh` 自动配 NAT、`Dockerfile` 自动编本 fork 内核）：
 
 ```bash
-docker compose -f docker-compose.tun.yml up -d
-docker exec mihomo-home sh -c 'apk add --no-cache iptables && iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE && iptables -P FORWARD ACCEPT'
-docker compose -f docker-compose.tun.yml logs -f --tail=50
+cd docs/examples/easytier-home-gateway
+# 改 home-mihomo-tun.yaml 里标了「改这里」的三处：network-secret / peers / proxy-networks
+docker compose up -d
+docker compose logs -f mihomo     # 期望：tun mode enabled on 10.144.0.2/24
 ```
 
-**三个硬性要求（缺一不可，实测踩过）**：
+会合点（家侧无公网时必需）：`rendezvous/docker-compose.yml` 放到**有公网 IP 的机器**上 `docker compose up -d`，
+两端 `peers` 都填它。三件硬性要求为什么缺一不可：
 
 | 要求 | 为什么 |
 | --- | --- |
@@ -165,15 +165,15 @@ dns:
 
 ## 四、方案 B 详解（家侧零特权 native 容器）
 
-适用：家侧不便给容器 `NET_ADMIN`/`/dev/net/tun`，或不想让家侧进程碰内核转发。文件：
-`home-easytier-core.toml`（native 节点，`no_tun = true`，发布家里网段）、`docker-compose.yml`
-（**无 cap_add、无 /dev/net/tun、无 host 网络、无 iptables**）、`client-clash.yaml`。
+适用：家侧不便给容器 `NET_ADMIN`/`/dev/net/tun`，或不想让家侧进程碰内核转发。文件在
+`examples/easytier-home-gateway/alt-native/`：`home-easytier-core.toml`（native 节点，`no_tun = true`，
+发布家里网段）、`docker-compose.yml`（**无 cap_add、无 /dev/net/tun、无 host 网络、无 iptables**）。
 
 ```bash
-cd <家侧目录>
+cd docs/examples/easytier-home-gateway/alt-native
 # 1) 填 home-easytier-core.toml 的 network_secret  2) 改 compose 的 -n <家里网段>
-docker compose -f docker-compose.yml up -d
-docker compose -f docker-compose.yml logs -f --tail=50   # 期望 new listener added / new peer added
+docker compose up -d
+docker compose logs -f --tail=50   # 期望 new listener added / new peer added
 ```
 
 实测（2026-09-30）：64KB/1MB/20MB 下载均 `200`（20MB @ 8.4 MB/s，SHA-256 一致）、UDP 40 包 0% 丢包、
@@ -198,7 +198,7 @@ docker compose -f docker-compose.yml logs -f --tail=50   # 期望 new listener a
 - 回退：
 
 ```bash
-docker compose -f docker-compose.tun.yml down     # 方案 A 家侧
-docker compose -f docker-compose.yml down         # 方案 B 家侧
+docker compose down                       # 方案 A 家侧（在 examples/easytier-home-gateway/）
+cd alt-native && docker compose down      # 方案 B 家侧
 # 本机：移除 merge profile 里的 easytier 出站与那两条 IP-CIDR 规则
 ```

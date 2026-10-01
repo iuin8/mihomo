@@ -1,0 +1,27 @@
+# 会合点（共享节点）—— 放在任意一台有公网 IP 的机器上，一键启动
+#
+#   cd rendezvous && docker compose up -d
+#
+# 然后两端（家侧 home-mihomo-tun.yaml、本机 client-clash.yaml）都填：
+#   peers: ["tcp://<这台机器的公网IP>:11010"]
+#
+# 说明：
+#   * `easytier-core` **不带任何参数**即为官方共享节点模式（无需 root、无需配置文件）；
+#   * 它只做"牵线"与必要时的中继，资源占用极小（1 核 512MB 的机器足够）；
+#   * 家侧没有公网 IP / 不能做端口映射时，**这一台公网机器是两端能相遇的唯一前提**。
+#
+# 只暴露 11010 一个端口（tcp + udp 都要，P2P 探测与中继会用到 udp）。
+
+services:
+  easytier-shared:
+    image: easytier/easytier:latest
+    container_name: easytier-shared
+    restart: unless-stopped
+    ports:
+      - "11010:11010/tcp"
+      - "11010:11010/udp"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,40 @@
+# 家侧 overlay 节点（native EasyTier，零特权容器）——推荐方案
+#
+#   docker compose -f docker-compose.yml up -d
+#
+# 为什么这样配（实测结论）：
+#   1) 家侧必须 native core：mihomo 内嵌核当家侧时，客户端经代理子网访问内网 TCP 不通（UDP 通）。
+#   2) 不需要 TUN / root / cap_add / devices —— no_tun 下实测四条路径全通，20MB 传输 8.4 MB/s。
+#   3) 不需要 iptables/MASQUERADE，也不需要打开 ip_forward（EasyTier 自行转发并做 SNAT）。
+#   4) 默认 bridge 网络 + 端口映射即可，无需 host 网络。
+#
+# 若将来需要 ICMP 或家侧主动访问其他 overlay 节点：
+#   改为 host 网络 + cap_add: [NET_ADMIN] + devices: ["/dev/net/tun:/dev/net/tun"]，
+#   并把 home-easytier-core.toml 的 no_tun 改成 false。
+
+services:
+  easytier:
+    image: easytier/easytier:latest
+    container_name: easytier
+    restart: unless-stopped
+
+    ports:
+      - "11010:11010/tcp"
+      - "11010:11010/udp"
+
+    volumes:
+      - ./home-easytier-core.toml:/app/config.toml:ro
+
+    # 镜像 entrypoint 为 `/sbin/tini -- easytier-core`，最终等价于：
+    #   easytier-core -c /app/config.toml -n 192.168.1.0/24
+    command:
+      - "-c"
+      - "/app/config.toml"
+      - "-n"
+      - "192.168.1.0/24"        # 改成你家里的内网网段（多个用逗号分隔）
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

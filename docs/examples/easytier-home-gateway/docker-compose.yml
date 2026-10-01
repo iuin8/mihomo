@@ -1,37 +1,44 @@
-# 家侧 overlay 节点（native EasyTier，零特权容器）——推荐方案
+# 家侧网关（方案 A：mihomo TUN 模式）——— 一键启动
 #
-#   docker compose -f docker-compose.yml up -d
+#   cd mihomo/docs/examples/easytier-home-gateway     # 需要本 fork 的完整仓库（要编译内核）
+#   1) 编辑 home-mihomo-tun.yaml：network-secret / proxy-networks（家里网段）/ peers（会合点）
+#   2) 多网卡时改下面的 NAT_INTERFACE（单网卡保持 eth0）
+#   3) docker compose up -d                            # 首次会自动编译内核，之后秒起
 #
-# 为什么这样配（实测结论）：
-#   1) 家侧必须 native core：mihomo 内嵌核当家侧时，客户端经代理子网访问内网 TCP 不通（UDP 通）。
-#   2) 不需要 TUN / root / cap_add / devices —— no_tun 下实测四条路径全通，20MB 传输 8.4 MB/s。
-#   3) 不需要 iptables/MASQUERADE，也不需要打开 ip_forward（EasyTier 自行转发并做 SNAT）。
-#   4) 默认 bridge 网络 + 端口映射即可，无需 host 网络。
+# 需要家侧机器能出网拉取基础镜像；构建一次后镜像缓存在本机，重启用 restart: unless-stopped 自动拉起。
 #
-# 若将来需要 ICMP 或家侧主动访问其他 overlay 节点：
-#   改为 host 网络 + cap_add: [NET_ADMIN] + devices: ["/dev/net/tun:/dev/net/tun"]，
-#   并把 home-easytier-core.toml 的 no_tun 改成 false。
+# 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
+# ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
+
+name: easytier-home-gateway
 
 services:
-  easytier:
-    image: easytier/easytier:latest
-    container_name: easytier
+  mihomo:
+    build:
+      context: ../../..                                  # mihomo 仓库根目录
+      dockerfile: docs/examples/easytier-home-gateway/Dockerfile
+    image: easytier-home-gateway:local
+    container_name: mihomo-home
     restart: unless-stopped
 
-    ports:
-      - "11010:11010/tcp"
-      - "11010:11010/udp"
+    # 三件硬性要求之一：建 TUN 需要 NET_ADMIN + /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    # 三件硬性要求之二：容器内 /proc/sys 只读，转发开关只能在这里注入
+    sysctls:
+      net.ipv4.ip_forward: 1
+
+    environment:
+      # 三件硬性要求之三：MASQUERADE 由 entrypoint.sh 自动加在这张网卡上
+      # 多网卡（docker network connect 了内网）时，用 `ip -o -4 addr show` 确认后改成 eth1 等
+      NAT_INTERFACE: eth0
 
     volumes:
-      - ./home-easytier-core.toml:/app/config.toml:ro
-
-    # 镜像 entrypoint 为 `/sbin/tini -- easytier-core`，最终等价于：
-    #   easytier-core -c /app/config.toml -n 192.168.1.0/24
-    command:
-      - "-c"
-      - "/app/config.toml"
-      - "-n"
-      - "192.168.1.0/24"        # 改成你家里的内网网段（多个用逗号分隔）
+      - ./home-mihomo-tun.yaml:/root/.config/mihomo/config.yaml:ro
+      - ./state:/root/.config/mihomo/easytier          # overlay 节点身份持久化，别删
 
     logging:
       driver: json-file
