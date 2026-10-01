@@ -98,7 +98,8 @@ docker compose exec mihomo iptables -t nat -S POSTROUTING | tail -1
 | 你的用法 | 用什么段名 | 说明 |
 | --- | --- | --- |
 | 当成一个**订阅 / 本地配置**，与机场订阅一起「**多订阅合并**」（本 fork 的 multi_merge） | **原生段名** `proxies:` / `proxy-groups:` / `rules:` | 合并流水线是 `MERGE_STEPS: proxies → proxy-providers → rule-providers → proxy-groups → rules`，只认这些；`rules` 会被**前置插入**（优先于订阅的 MATCH 兜底） |
-| 上游 CVR 的 **Merge 类型 profile** | `prepend-proxies:` / `prepend-rules:` | 那是 `enhance/merge.rs::use_merge` 的语义；**本 fork 的多订阅合并路径不认这些键**（别混用） |
+| CVR 的**带类型扩展条目**（`type: proxies` / `groups` / `rules`） | 条目文件里写 `prepend:` / `append:` / `delete:` | 这是 CVR 真正实现的 prepend 机制：`enhance/seq.rs::use_seq` + `enhance/mod.rs:349-357` 分别作用于 rules / proxies / proxy-groups |
+| 老式 Merge profile 里写 `prepend-proxies:` / `prepend-rules:` | **不要用** | 「键名自带类型前缀」的写法在上游 2.4.7 里只剩 `enhance/merge.rs` 的测试 fixture，没有实现；本 fork 的多订阅合并路径也不认 |
 
 用原生段名的完整片段见 `examples/easytier-home-gateway/client-clash.yaml`（含代理页分组）：
 
@@ -163,6 +164,14 @@ ping -c 3 <内网IP>
 > 非本机来源的连接会被直接关掉（表现为"连上但不回包"）；而且用 HTTP 代理时加 `-H 'Host: …'` 会让
 > mihomo **按 Host 头拨号**，可能打到本机同端口的别的服务（实测踩到：本机 Proxyman 监听 `*:9090`）。
 > 测 LAN 上的普通服务（路由器 / NAS / SSH 端口）才是可靠判据。
+
+> ⚠️ **测延迟要用 LAN 地址，公网地址必然报 error**：overlay 只承载家侧 `proxy-networks` 里发布的网段，
+> 家侧**不是**互联网出口。所以拿 `gstatic.com`/`1.1.1.1` 这类公网 URL 测这一条会失败——那是预期行为，
+> 不代表链路坏了。实测：LAN 目标 `10.0.0.1` 延迟 91ms、`10.0.1.181:8080` 延迟 79ms 都正常。
+> 我们的分组是 `select`（手动），本来也不需要自动测速；要让按钮有意义就把 CVR 的延迟测试 URL 换成内网地址。
+
+> 💡 **服务返回 403 / 自动跳转不等于不通**：很多自建服务（面板、媒体库）访问 `/` 会 403 + JS 跳 `/login`。
+> 先看响应头与 `/login` 是否 200，再下结论（实测 `10.0.1.181:8080/` → 403 且跳 `/login`，而 `/login` → 200）。
 
 ## 4. 排错速查
 
