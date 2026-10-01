@@ -56,12 +56,31 @@ def parse_atyp(sock: socket.socket) -> tuple[str, int]:
     return host, port
 
 
+def build_dns_query(name: str, qid: int = 0x1234) -> bytes:
+    """构造一个最小 DNS A 查询，用于"没有回声目标"时验证 UDP 数据面。"""
+    header = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0)
+    qname = b"".join(bytes([len(label)]) + label.encode() for label in name.split(".")) + b"\x00"
+    return header + qname + struct.pack("!HH", 1, 1)  # QTYPE=A, QCLASS=IN
+
+
+def is_dns_response(data: bytes) -> bool:
+    """DNS 响应第 3 字节最高位（QR）为 1。"""
+    return len(data) >= 12 and (data[2] & 0x80) != 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socks", required=True, help="SOCKS5 服务地址 host:port")
     parser.add_argument("--target", required=True, help="UDP 目标 IPv4")
     parser.add_argument("--port", type=int, required=True, help="UDP 目标端口")
     parser.add_argument("--payload", default="udp-probe")
+    parser.add_argument(
+        "--dns-query",
+        default="",
+        metavar="NAME",
+        help="改发一个 DNS 查询（例如 --dns-query example.com），"
+        "只要收到合法 DNS 响应即判 PASS——用于对端没有 UDP 回声服务时验证 UDP 数据面",
+    )
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--relay", default="", help="覆盖 UDP 中继地址，host:port（端口映射/Docker 场景）")
     args = parser.parse_args()
@@ -100,7 +119,7 @@ def main() -> int:
     udp.settimeout(args.timeout)
 
     header = bytes([0x00, 0x00, 0x00, ATYP_IPV4]) + socket.inet_aton(args.target) + struct.pack("!H", args.port)
-    payload = args.payload.encode()
+    payload = build_dns_query(args.dns_query) if args.dns_query else args.payload.encode()
     try:
         udp.sendto(header + payload, (relay_host, relay_port))
     except OSError as exc:
@@ -121,6 +140,12 @@ def main() -> int:
     offset = 4 + (4 if r_atyp == ATYP_IPV4 else 16 if r_atyp == ATYP_IPV6 else 1 + data[4])
     body = data[offset + 2 :]
     print(f"[probe] 收到来自 {args.target}:{args.port} 的回包 {len(body)}B: {body[:64]!r}")
+    if args.dns_query:
+        if is_dns_response(body):
+            print(f"PASS[udp] UDP 数据面端到端可用（收到 {args.dns_query} 的 DNS 响应）")
+            return 0
+        print("FAIL[verify] 回包不是合法 DNS 响应（QR 位未置位）")
+        return 2
     if body == b"echo:" + payload:
         print("PASS[udp] UDP 数据面端到端可用")
         return 0

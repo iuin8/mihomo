@@ -119,19 +119,28 @@ prepend-rules:
 ## 3. 验证（约 1 分钟）
 
 ```bash
-# ① TCP
-curl -sS -o /dev/null -w '%{http_code} %{size_download}B %{speed_download}B/s\n' \
-    -x http://127.0.0.1:7897 http://<内网IP>:<端口>/      # 端口改成你 CVR 的混合端口
+# ① TCP（换成一个你确定在跑的 LAN 服务，例如路由器 Web 界面 / NAS）
+curl -sS -o /dev/null -w '%{http_code} %{size_download}B\n' \
+    -x http://127.0.0.1:7897 http://<内网IP>:<端口>/
 
-# ② UDP（Docker/端口映射场景要带 --relay）
+# ② UDP：对端没有回声服务时，用真实 DNS 查询验证（收到合法 DNS 响应即 PASS）
 python3 docs/examples/easytier-home-gateway/tools/socks5-udp-probe.py \
-    --socks 127.0.0.1:7897 --target <内网IP> --port <UDP端口> --payload t
+    --socks 127.0.0.1:7897 --target <家里DNS服务器IP> --port 53 --dns-query example.com
+
+# ②' UDP：对端跑了回声服务时（tools/udp-echo-server.py）
+python3 docs/examples/easytier-home-gateway/tools/socks5-udp-probe.py \
+    --socks 127.0.0.1:7897 --target <内网IP> --port 18001 --payload t --relay 127.0.0.1:7897
 
 # ③ ICMP（需要客户端也有 TUN；mihomo 的 SOCKS 入站不代理 ICMP）
 ping -c 3 <内网IP>
 ```
 
 三条都过 = 打通完成。之后直接用家里的真实内网 IP 访问即可（与在家时完全一致）。
+
+> ⚠️ **不要拿家侧的 external-controller（9090）当测试目标**：mihomo 的 API 有 DNS-rebinding 保护，
+> 非本机来源的连接会被直接关掉（表现为"连上但不回包"）；而且用 HTTP 代理时加 `-H 'Host: …'` 会让
+> mihomo **按 Host 头拨号**，可能打到本机同端口的别的服务（实测踩到：本机 Proxyman 监听 `*:9090`）。
+> 测 LAN 上的普通服务（路由器 / NAS / SSH 端口）才是可靠判据。
 
 ## 4. 排错速查
 
@@ -145,6 +154,10 @@ ping -c 3 <内网IP>
 | 构建卡在 `proxy.golang.org … i/o timeout` | 国内访问 Go 官方代理不通（Dockerfile 已默认换 goproxy.cn，若你本地改过或用了旧版本才会遇到） | 换源重试：`GOPROXY=https://goproxy.cn,direct docker compose build`；或走上方纯打包路径 |
 | 构建报 `COPY bin/ … not found` | `dockerfile:` 写成了裸 `Dockerfile`，命中了仓库根那个打包用的 Dockerfile | 保持默认（`docs/examples/easytier-home-gateway/Dockerfile`）；覆盖时也要带目录 |
 | `apk add` 卡住/超时 | Alpine 官方源在国内慢 | 默认已用中科大源；换源：`APK_MIRROR=mirrors.aliyun.com docker compose build` |
+| `path is not subpath of home directory or SAFE_PATHS: /tmp/...` | EasyTier 的 `state-dir` 必须在**内核自己的 home dir** 内。终端跑隔离实例时是 `-d /tmp/et-client`（所以 `/tmp/et-client/state` 合法），但 **CVR 的 home dir 是 `~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev`** → 放进 CVR 的配置里写 `/tmp/...` 必然被拒 | 放进 CVR 的配置**直接删掉 `state-dir` 那一行**（默认 `easytier/<代理名>`，就在 home dir 内，合法）。另外别把隔离用的整份配置当 CVR profile 导入——会顶掉你的订阅，正确做法是 merge profile 里的 `prepend-proxies` / `prepend-rules` |
+| 测 `10.144.0.2:9090` 连上但不回包 | 家侧 API 的 DNS-rebinding 保护（非本机来源直接关闭连接） | 别拿 API 当测试目标；用 LAN 上的普通服务，或 `--dns-query` 验 UDP |
+| 用 `-x` 代理测某个 IP，结果被本机别的服务接走 | HTTP 代理场景下 `-H 'Host: …'` 会让 mihomo **按 Host 头拨号** | 用 SOCKS（`nc -X 5 -x`）并把 Host 头放进报文里；或干脆别改 Host |
+| 规则里的某个家网段与本机当前网段重叠 | 会把你**本机局域网**的流量吸进隧道 | 在新网络里删掉重叠那条；或加 `SRC-IP-CIDR,<本机网段>,DIRECT` 兜底 |
 
 ## 5. 日常运维与回退
 
