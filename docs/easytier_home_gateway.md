@@ -17,6 +17,31 @@
 家侧容器日志也**无任何活动**，而同拓扑的 UDP 可通。根因在 guest/engine 的连接携带或路由同步，
 不在 mihomo 的宿主实现（ABI 表完整，无 unsupported 占位）。
 
+### 为什么会牵扯到协议层（TCP/UDP 的差别从哪来）
+
+「打通网络」在**有 TUN** 时确实是协议无关的：overlay 就是一个 L3 接口，内核把 IP 包丢进去，
+TCP / UDP / ICMP 一视同仁。差别出现在**没有 TUN** 的时候：
+
+| 模式 | 数据面 | 谁负责把包送进屋 | 协议相关性 |
+| --- | --- | --- | --- |
+| 有 TUN（native core） | 内核 L3 转发 | 内核路由表 | 无（TCP/UDP/ICMP 一样） |
+| 无 TUN（native `--no-tun`） | 用户态逐流中继 | EasyTier 在进程内自己实现 | 有：TCP 要拨号/接流，UDP 要绑套接字 |
+| 无 TUN（mihomo 内嵌 WASI 核） | 同上，但经宿主 ABI 代办 | 宿主 mihomo 提供 `ConnectTCP`/`BindUDP`/`ListenTCP` | 有：**每条协议路径都要宿主实现一次** |
+
+也就是说，no-TUN 把「IP 层隧道」降级成了「**逐流的用户态代理**」：此时 TCP 与 UDP 走的是
+**两套完全不同的代码路径**，任一条缺失或未实现，就表现为"某种协议不通"。本仓库实测正是如此：
+
+| 家侧实现 | TUN | 代理子网 TCP | 代理子网 UDP | 依据 |
+| --- | --- | --- | --- | --- |
+| native | ✅ | ✅ 8.4 MB/s | ✅ 0% 丢包 | 阶段 1 lab |
+| native | ❌（`--no-tun`） | ✅ 8.4 MB/s | ✅ 0% 丢包 | 阶段 1 lab（B'） |
+| mihomo 内嵌 WASI | ❌（强制） | ❌ 只有 UDP 通 | ⚠️ 小样本可用 | 阶段 0 / 变体 D / 插桩 |
+
+结论：==这不是"隧道天然限制协议"，而是"没有 TUN 时宿主必须逐协议实现转发，而 mihomo 的
+WASI 宿主在这条路径上没实现完整"==——native 在同样 `--no-tun` 下 TCP 正常，正好反证这一点。
+另一层必然的协议耦合：overlay 自己的**承载层**要么 UDP 要么 TCP（`udp://` / `tcp://` peer），
+属于"隧道套隧道"，会带来 TCP-over-TCP、MTU 分片、拥塞控制嵌套等物理问题——这部分任何实现都躲不掉。
+
 ## 二、推荐方案：家侧一个零特权 native 容器
 
 家在 `docs/examples/easytier-home-gateway/` 下给出三个文件：
