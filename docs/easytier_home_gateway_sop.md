@@ -93,11 +93,17 @@ docker compose exec mihomo iptables -t nat -S POSTROUTING | tail -1
 
 ## 2. 本机 CVR 配置（约 5 分钟）
 
-在 Clash Verge Rev 的 **merge profile** 里加下面内容（`prepend-*` 会插到订阅规则前面，
-键名与 `clash-verge-rev/src-tauri/src/enhance/merge.rs` 一致），只改三处：密钥、会合点、家里网段。
+**先搞清用哪种并入方式——段名不一样：**
+
+| 你的用法 | 用什么段名 | 说明 |
+| --- | --- | --- |
+| 当成一个**订阅 / 本地配置**，与机场订阅一起「**多订阅合并**」（本 fork 的 multi_merge） | **原生段名** `proxies:` / `proxy-groups:` / `rules:` | 合并流水线是 `MERGE_STEPS: proxies → proxy-providers → rule-providers → proxy-groups → rules`，只认这些；`rules` 会被**前置插入**（优先于订阅的 MATCH 兜底） |
+| 上游 CVR 的 **Merge 类型 profile** | `prepend-proxies:` / `prepend-rules:` | 那是 `enhance/merge.rs::use_merge` 的语义；**本 fork 的多订阅合并路径不认这些键**（别混用） |
+
+用原生段名的完整片段见 `examples/easytier-home-gateway/client-clash.yaml`（含代理页分组）：
 
 ```yaml
-prepend-proxies:
+proxies:
   - name: home-overlay
     type: easytier
     network-name: home
@@ -108,10 +114,26 @@ prepend-proxies:
     no-listener: true
     peers: ["tcp://<会合点公网IP>:11010"]
     udp: true
+    interface-name: en0           # 本机跑 TUN 时建议
+    # 不要写 state-dir：CVR 的 home dir 是 ~/Library/Application Support/…clash-verge-rev
 
-prepend-rules:
-  - IP-CIDR,10.144.0.0/24,home-overlay   # overlay 网段本身也要走隧道
-  - IP-CIDR,<家里网段>,home-overlay       # 精确写！本机是 10.0.4.0/22，绝不要写 10.0.0.0/8
+proxy-groups:                     # 代理页的卡片来自分组；不加分组你以为没生效
+  - name: 🏠 家里
+    type: select
+    proxies: [home-overlay, DIRECT]
+
+rules:
+  - IP-CIDR,10.144.0.0/24,🏠 家里   # overlay 网段本身也要走隧道
+  - IP-CIDR,<家里网段>,🏠 家里      # 精确写！与本机所在网段重叠的那条不要写
+  - SRC-IP-CIDR,<本机网段>,DIRECT   # 在家/在同网段时直连，避免绕隧道
+```
+
+**应用后怎么确认真的生效**（比在 GUI 里翻页面快）：
+
+```bash
+CFG=~/Library/Application\ Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml
+grep -c "home-overlay" "$CFG"     # 期望 ≥3：代理 1 + 分组 1 + 规则 2 以上
+grep -A3 "🏠 家里" "$CFG" | head  # 期望看到 type: select 与 home-overlay
 ```
 
 > 客户端**不需要换内核**：`easytier` 出站是 upstream 就有的，你现在的 alpha 内核即可。

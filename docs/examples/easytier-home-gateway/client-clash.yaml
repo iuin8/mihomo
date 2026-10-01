@@ -1,6 +1,14 @@
-# 本机 Clash 侧片段（推荐方案）——可并入 CVR 的 merge profile
+# 本机 Clash 侧片段（推荐方案）
 #
-# 实测（2026-09-30）：与本目录家侧 native 容器配对，TCP 20MB @ 8.4 MB/s（校验一致）、UDP 0% 丢包。
+# 用于两种并入方式，**段名不一样，别混**：
+#   A) 当成一个「订阅 / 本地配置」，与你的机场订阅一起「多订阅合并」（本 fork 的 multi_merge）：
+#      用下面的**原生段名** proxies / proxy-groups / rules。
+#      —— 本 fork 的合并流水线只认这些原生段（MERGE_STEPS: proxies → proxy-providers →
+#         rule-providers → proxy-groups → rules），`prepend-proxies` 这类键**不会被识别**。
+#   B) 上游 CVR 的 **Merge 类型 profile**：用 `prepend-proxies:` / `prepend-rules:` 形式
+#      （那是 `enhance/merge.rs::use_merge` 的语义，本 fork 的多订阅合并路径不走它）。
+#
+# 实测：与家侧 TUN 网关配对，TCP 20MB 校验一致（34.5–42.5 MB/s）、UDP 40 包 0 丢包。
 proxies:
   - name: home-overlay
     type: easytier
@@ -9,21 +17,28 @@ proxies:
     hostname: mbp-clash
     instance-name: mbp-clash
     ipv4: 10.144.0.3/24
-    # state-dir 默认 easytier/<代理名>，位于 mihomo home dir 内即合法（SAFE_PATHS 限制）；
-    # 自定义时请写 home dir 内的路径，例如 /root/.config/mihomo/easytier
+    # 注意：**不要写 state-dir**。CVR 的 home dir 是
+    # ~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev，
+    # 默认的 easytier/<代理名> 已在其中（SAFE_PATHS 限制）；写别处会被内核拒绝。
     no-listener: true
-    peers: ["tcp://<自建共享节点IP或家侧公网地址>:11010"]
+    peers: ["tcp://<会合点公网IP>:11010"]
     udp: true
-    # interface-name: en0            # 本机 Clash 跑 TUN 且规则会把该网段送进其它代理时，绑物理网卡
-                                      # 可避免 overlay 的 underlay 连接被自己的 TUN 抓走
+    interface-name: en0        # 本机 Clash 跑 TUN 时建议：underlay 走物理网卡，避开自己的 TUN
+
+# 代理页的卡片来自「分组」，不是出站本身——不加分组你会以为配置没生效。
+proxy-groups:
+  - name: 🏠 家里
+    type: select
+    proxies: [home-overlay, DIRECT]      # 手动切换；不需要健康检查（避免被判死）
 
 rules:
+  # 规则合并时，本片段的 rules 会被**前置插入**（multi_merge::merge_rules 用 insert(0, …)），
+  # 所以这几条一定优先于订阅里的 MATCH / GEOIP 兜底规则。
   # ⚠️ overlay 网段本身也要走隧道，否则会落到 MATCH 直连（表现为 502，极易误判为“虚拟 IP 不可达”）
-  - IP-CIDR,10.144.0.0/24,home-overlay
-  # 家里内网网段：**只能精确写**。本机与家里同在 10/8 时用大段规则会劫持本机局域网。
-  - IP-CIDR,192.168.1.0/24,home-overlay
+  - IP-CIDR,10.144.0.0/24,🏠 家里
+  # 家里内网网段：**只能精确写**。与本机所在网段重叠的那条不要写（会让本机局域网流量被吸进隧道）。
+  - IP-CIDR,192.168.1.0/24,🏠 家里
   # 人在家里时直连，避免绕隧道一圈
   - SRC-IP-CIDR,192.168.1.0/24,DIRECT
-  - DOMAIN-SUFFIX,home.lan,home-overlay   # 域名寻址：再遇到网段冲突时最稳的退路
-  - PROCESS-NAME,ssh,DIRECT               # 防递归（见 docs/ssh_single_layer_guide.md）
-  - MATCH,DIRECT
+  - DOMAIN-SUFFIX,home.lan,🏠 家里    # 域名寻址：再遇到网段冲突时最稳的退路
+  - PROCESS-NAME,ssh,DIRECT           # 防递归（见 docs/ssh_single_layer_guide.md）
