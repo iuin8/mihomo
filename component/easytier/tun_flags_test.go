@@ -58,13 +58,14 @@ func TestApplyTunFlagsDoesNotDuplicateBindDevice(t *testing.T) {
 }
 
 // TUN 设备地址必须是合法 IPv4 CIDR；v1 不支持 IPv6。
+// 设备地址保留主机位（10.144.0.2/24）——掩码成网络地址会装错接口地址（E2E 实测踩到）。
 func TestTunPrefixRequiresIPv4CIDR(t *testing.T) {
 	prefix, err := TunPrefix("10.144.0.2/24")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if prefix.String() != "10.144.0.0/24" {
-		t.Fatalf("expected masked prefix, got %s", prefix)
+	if prefix.String() != "10.144.0.2/24" {
+		t.Fatalf("device address must keep its host bits, got %s", prefix)
 	}
 
 	for _, bad := range []string{"", "10.144.0.2", "fd00::1/64", "not-an-ip"} {

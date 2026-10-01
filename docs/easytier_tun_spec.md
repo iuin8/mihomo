@@ -55,7 +55,7 @@ mihomo 内嵌的 EasyTier 核（WASI）**永远强制 `no_tun = true`**（`compo
 | 参数 | 值 | 依据 |
 | --- | --- | --- |
 | `Name` | `sing-tun` 自动命名（前缀 `easytier`），避免与 mihomo 自己的 TUN 撞名 | `listener/sing_tun/tun_name_*.go` 同类做法 |
-| `Inet4Address` | `[ipv4]` | 官方范例 `examples/tun` |
+| `Inet4Address` | `[ipv4]`，**保留主机位**（`10.144.0.2/24`） | 官方范例 `examples/tun`；掩码成网络地址会装错接口地址（E2E 实测踩到并修正） |
 | `MTU` | `mtu`（默认 1380） | 官方范例 `tunMTU = 1380` |
 | `AutoRoute` | `false` | 官方范例；绝不抢默认路由 |
 | `StrictRoute` | `false` | 同上 |
@@ -115,8 +115,23 @@ dns:
 
 | 项 | 说明 | 处置 |
 | --- | --- | --- |
-| **未验证** | spike 中 packet 面只出现控制面包，代理子网业务包未见。可能 guest 需要宿主环境快照 | 建完桥接立即用 AC5 判定；若不通则补 `platform.Services.Snapshot`（新文件 ~60 行）后复测 |
+| ~~未验证~~ **已封口** | spike 里 packet 面只出现控制面包，曾怀疑 guest 需要宿主环境快照 `platform.Services.Snapshot` | E2E 实测：接上真 TUN 设备后**业务包确实走 packet 面**（AC5/AC6/AC7 全过），**不需要 Snapshot**。原因：没有设备时 guest 无处投递，有设备后按包面转发 |
 | 权限 | TUN 需 root/CAP_NET_ADMIN | 文档说明；家侧容器需 `NET_ADMIN` + `/dev/net/tun` |
+| 转发与 NAT | TUN 模式让家侧成为真路由器：内网主机看到的是 overlay 源地址，回包必须能被 NAT 回 | 家侧需 `net.ipv4.ip_forward=1`（容器用 `--sysctl` 注入，`/proc/sys` 在容器内只读）+ `MASQUERADE` |
 | 平台 | macOS utun / Linux tun | sing-tun 已覆盖；本机 macOS + 容器 Linux 双端实测 |
 | 与 mihomo TUN 共存 | 两块 TUN | 见 `docs/easytier_home_gateway.md`：建时确定 + 最长前缀匹配，不抢默认路由 |
-| 上游冲突 | `toml.go` / `easytier.go` 是共享文件 | 改动小块 + `// FORK:`；新增代码集中在 `component/easytier/tun.go` |
+| 上游冲突 | `toml.go` 未改；`easytier.go` +46 行、stub +3 行，均带 `// FORK:` | 新增代码集中在 `component/easytier/tun_*.go` |
+
+## 8. E2E 实测结果（2026-10-01，Docker 实验室）
+
+拓扑：`本机 Clash 客户端（easytier 出站，无 TUN）` → overlay → `家侧 mihomo（tun: true，发布 172.32.0.0/24）` → 内网目标 `172.32.0.2`。
+家侧容器：`--cap-add NET_ADMIN --cap-add NET_RAW --device /dev/net/tun --sysctl net.ipv4.ip_forward=1`，
+启动后设备为 `easytier0 10.144.0.2/24`，日志 `[EasyTier](et-home) tun mode enabled on 10.144.0.2/24`。
+
+| 编号 | 判据 | 实测 |
+| --- | --- | --- |
+| AC5 | TCP 20MB SHA-256 一致 | ✅ `200`，`20971520` 字节，**34.5 MB/s**，两侧 SHA-256 相同（`3df6dca6…`） |
+| AC6 | UDP 40 包 0 丢包 | ✅ `PASS[udp]`，收到回包 `echo:tun-e2e` |
+| AC7 | `ping` 内网机器通 | ✅ 3/3 通（0.9–6.8 ms）；**对照组**：家侧 `FORWARD DROP` → 100% 丢包，恢复 `ACCEPT` → 2/2 通，证明流量穿家侧 TUN 而非绕行 |
+
+对比：同一拓扑走 hysteria2 绕行时 1MB 下载卡在 ~122KB；TUN 模式下 20MB 仅 0.61s。

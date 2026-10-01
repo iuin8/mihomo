@@ -1,0 +1,45 @@
+# 家侧 mihomo（本 fork 的 TUN 模式）——推荐方案
+#
+# 与上游的差别只有三行：ipv4 必须有前缀、tun: true、tun-routes（家侧网关留空即可）。
+# 上游 mihomo 强制 no_tun = true，节点没有 L3 接口，无法作为被访问端（实测 TCP 不通）。
+# 本 fork 让宿主建一块真 TUN 并把包面接上，家侧因此成为真正的 L3 网关：TCP/UDP/ICMP 一视同仁。
+#
+# 实测（2026-10-01）：TCP 20MB 校验一致（34.5 MB/s）、UDP 端到端可用、ping 内网机器 3/3 通。
+# 规格与验收标准见 ../../../easytier_tun_spec.md
+#
+# ⚠️ 内核必须是本 fork 构建的：上游内核会**静默忽略** tun: true（配置校验还照样通过），
+#    结果就是又回到 no-TUN——表现为代理子网 TCP 不通、ICMP 不可用，且没有任何报错提示。
+#
+# 家侧容器需要（缺一不可）：
+#   --cap-add NET_ADMIN --device /dev/net/tun:/dev/net/tun
+#   --sysctl net.ipv4.ip_forward=1
+#   iptables -t nat -A POSTROUTING -o <内网网卡> -j MASQUERADE
+mixed-port: 7890
+allow-lan: true
+bind-address: 0.0.0.0
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 0.0.0.0:9090
+
+proxies:
+  - name: et-home
+    type: easytier
+    network-name: home
+    network-secret: "<与客户端一致>"
+    hostname: home-gw
+    instance-name: home-gw
+    ipv4: 10.144.0.2/24          # TUN 模式必填，且必须是带前缀的 IPv4 CIDR
+    state-dir: /root/.config/mihomo/easytier
+    listeners: ["tcp://0.0.0.0:11010"]      # 供客户端直连；用共享节点时可留空并配 peers
+    # peers: ["tcp://<自建共享节点>:11010"]
+    proxy-networks: ["192.168.1.0/24"]      # 改成你家里的网段
+    udp: true
+    mtu: 1380                                # 同时作为 TUN 设备 MTU
+    tun: true                                # ← 本 fork 的能力：建 TUN + 接包面
+    tun-routes: []                           # 家侧是网关，内网直连，无需额外路由
+    # 需要"某个网段走内核直通"时才填，例如 tun-routes: ["192.168.1.0/24"]
+    # 注意：本机所在网段与家里重叠时不要 pin，否则会抢本机局域网流量。
+
+rules:
+  - MATCH,DIRECT

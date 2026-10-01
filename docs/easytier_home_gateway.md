@@ -5,17 +5,21 @@
 
 ## 一、结论（选型先看这张表）
 
-| 家侧形态 | 代理子网 TCP | 代理子网 UDP | 家侧虚拟 IP | 吞吐 | 结论 |
+| 家侧形态 | 代理子网 TCP | 代理子网 UDP | ICMP | 吞吐 | 结论 |
 | --- | --- | --- | --- | --- | --- |
-| **native `easytier-core`（`--no-tun`，零特权容器）** | ✅ 200 | ✅ 0% 丢包 | ✅ 200 | **20MB @ 8.4 MB/s，校验一致** | **推荐** |
-| mihomo 容器（内嵌 ET） | ❌ `i/o timeout` | ✅（小样本）/ 负载下崩塌 | ❌（native 客户端也拨不通） | 极小请求可用 | 不推荐 |
-| mihomo 容器 + hysteria2 绕行（见第三方案） | ⚠️ 仅 <64KB | ⚠️ | — | 1MB 卡在 ~122KB | 仅验证用 |
+| **mihomo + 本 fork 的 TUN 模式**（`tun: true`，见§二） | ✅ 200 | ✅ 0% 丢包 | ✅ ping 通 | **20MB @ 34.5 MB/s，校验一致** | **推荐（家侧只跑 mihomo）** |
+| native `easytier-core`（`--no-tun`，零特权容器） | ✅ 200 | ✅ 0% 丢包 | ❌ | 20MB @ 8.4 MB/s，校验一致 | 备选（家侧进程最小、无需特权） |
+| mihomo 容器（上游强制 no-TUN，无 TUN 模式时） | ❌ `i/o timeout` | ✅（小样本）/ 负载下崩塌 | ❌ | 极小请求可用 | 已被 TUN 模式取代 |
+| mihomo 容器 + hysteria2 绕行（见§五） | ⚠️ 仅 <64KB | ⚠️ | ❌ | 1MB 卡在 ~122KB | 历史方案，仅验证用 |
 
-**为什么家侧不能用 mihomo 内嵌 ET 当被访问端**：本仓库实测（含插桩到宿主 socket 工厂）表明，
-`mihomo 内嵌核（WASI）作为客户端` 与 `native 作为服务端` 的组合可用，但 **WASI↔WASI 的 TCP 通路建立不起来**：
-失败时家侧宿主**没有任何中继调用**（`ConnectTCP Purpose=DataPlane/PortForward` 各 0 次），
-家侧容器日志也**无任何活动**，而同拓扑的 UDP 可通。根因在 guest/engine 的连接携带或路由同步，
-不在 mihomo 的宿主实现（ABI 表完整，无 unsupported 占位）。
+**为什么上游的 mihomo 不能当家侧**：上游 `ApplyRequiredFlags` 强制 `no_tun = true`，节点没有 L3 接口，
+只能把每条流交给宿主逐协议转发；实测 WASI↔WASI 的 TCP 通路建立不起来——失败时家侧宿主
+**没有任何中继调用**（`ConnectTCP Purpose=DataPlane/PortForward` 各 0 次），家侧容器日志也无任何活动，
+而同拓扑的 UDP 可通。根因在 guest/engine 的连接携带或路由同步，不在 mihomo 的宿主实现。
+
+**本 fork 的 TUN 模式解决的正是这件事**：宿主用 sing-tun 建一块真 TUN 设备，再用
+`SendPacket`/`ReceivePacket` 搬运裸 IP 包（规格与验收见 `easytier_tun_spec.md`）。TUN 模式下
+家侧变成真正的 L3 节点，三条验收（TCP 20MB 校验、UDP 零丢包、ping 通）全部实测通过。
 
 ### 为什么会牵扯到协议层（TCP/UDP 的差别从哪来）
 
@@ -25,6 +29,7 @@ TCP / UDP / ICMP 一视同仁。差别出现在**没有 TUN** 的时候：
 | 模式 | 数据面 | 谁负责把包送进屋 | 协议相关性 |
 | --- | --- | --- | --- |
 | 有 TUN（native core） | 内核 L3 转发 | 内核路由表 | 无（TCP/UDP/ICMP 一样） |
+| 有 TUN（mihomo + 本 fork TUN 模式） | 宿主搬包，内核 L3 转发 | 内核路由表 | 无（TCP/UDP/ICMP 一样） |
 | 无 TUN（native `--no-tun`） | 用户态逐流中继 | EasyTier 在进程内自己实现 | 有：TCP 要拨号/接流，UDP 要绑套接字 |
 | 无 TUN（mihomo 内嵌 WASI 核） | 同上，但经宿主 ABI 代办 | 宿主 mihomo 提供 `ConnectTCP`/`BindUDP`/`ListenTCP` | 有：**每条协议路径都要宿主实现一次** |
 
@@ -42,7 +47,49 @@ WASI 宿主在这条路径上没实现完整"==——native 在同样 `--no-tun`
 另一层必然的协议耦合：overlay 自己的**承载层**要么 UDP 要么 TCP（`udp://` / `tcp://` peer），
 属于"隧道套隧道"，会带来 TCP-over-TCP、MTU 分片、拥塞控制嵌套等物理问题——这部分任何实现都躲不掉。
 
-## 二、推荐方案：家侧一个零特权 native 容器
+## 二、推荐方案 A：家侧也用 mihomo（本 fork TUN 模式）
+
+示例：`docs/examples/easytier-home-gateway/home-mihomo-tun.yaml` + `docker-compose.tun.yml`。
+
+```yaml
+# 家侧 mihomo 片段（关键就三行）
+proxies:
+  - name: et-home
+    type: easytier
+    ipv4: 10.144.0.2/24          # TUN 模式必填，且必须带前缀
+    tun: true                    # ← 建宿主 TUN + 接包面（上游没有的能力）
+    tun-routes: []               # 家侧网关不需要额外路由（内网直连）
+    proxy-networks: ["192.168.1.0/24"]   # 改成你家里的网段
+```
+
+**家侧的三个硬性要求**（缺一不可，实测踩过）：
+
+1. **权限**：`--cap-add NET_ADMIN --device /dev/net/tun:/dev/net/tun`
+   （容器内 `/proc/sys` 只读，转发开关必须用创建参数注入）；
+2. **转发**：`--sysctl net.ipv4.ip_forward=1`；
+3. **NAT**：`iptables -t nat -A POSTROUTING -o <内网网卡> -j MASQUERADE`
+   —— 内网主机看到的是 overlay 源地址，回包必须 NAT 回来。
+
+启动成功的标志（日志 + 接口）：
+
+```text
+[EasyTier](et-home) tun mode enabled on 10.144.0.2/24
+$ ip -4 -o addr show | grep easytier0
+easytier0    inet 10.144.0.2/24 ...
+```
+
+**实测（2026-10-01，Docker 实验室）**：
+
+| 项目 | 结果 |
+| --- | --- |
+| TCP 20MB 下载 | `200`，0.61s，**34.5 MB/s**，两侧 SHA-256 相同 |
+| UDP 回环 | 收到 `echo:tun-e2e`，端到端可用 |
+| `ping` 内网机器 | 3/3 通（0.9–6.8 ms）；对照组（家侧 `FORWARD DROP`）→ 100% 丢包，证明流量穿家侧 TUN |
+
+客户端侧**不需要改动**：仍是"应用 → mihomo 代理 TUN → 规则 → `easytier` 出站 → overlay"，
+所以域名/进程级分流照旧可用（见§五的取舍说明）。
+
+## 三、备选方案 B：家侧一个零特权 native 容器
 
 家在 `docs/examples/easytier-home-gateway/` 下给出三个文件：
 
@@ -82,7 +129,7 @@ rules:
 > 本机所在网段若与家里同属 `10/8`（本项目就是这样：本机 `10.0.4.0/22`、家里 `10.0.0.0/24`），
 > **只能精确写家里网段，绝不能用 `IP-CIDR,10.0.0.0/8`**，否则会把本机局域网一起劫持。
 
-## 三、实测数据（可在本机复现）
+## 四、备选方案 B 的实测数据（native 家侧，可在本机复现）
 
 家侧 = `easytier/easytier:latest` 容器，`--no-tun`、零特权、bridge 网络 + 端口映射；
 客户端 = 本仓库 sidecar（mihomo）独立实例，规则强制走 overlay（命中即无直连回退）。
@@ -102,7 +149,7 @@ rules:
   `tools/socks5-udp-probe.py --relay <host:port>`）；且**务必发布 UDP 端口**（`-p x:y/udp`），
   只发 TCP 会让一切 UDP 测试假失败。
 
-## 四、备选方案：家侧坚持用 mihomo 容器时
+## 五、历史方案：hysteria2 绕行（勿用于生产）
 
 同目录 `alt-dual-mihomo/` 给出可用但不推荐的做法：**把 TCP 封装进 QUIC/UDP**，
 绕开 WASI↔WASI 的 TCP 缺陷——因为 UDP 是两端唯一可靠的通路。
@@ -121,7 +168,7 @@ rules:
 
 ⇒ 该方案只适合"能连通性验证"，**不要用于实际工作负载**。
 
-## 五、回退与清理
+## 六、回退与清理
 
 ```bash
 docker compose -f docker-compose.yml down        # 家侧

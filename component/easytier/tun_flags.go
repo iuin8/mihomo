@@ -22,6 +22,7 @@ func ApplyTunFlags(configTOML string) string {
 }
 
 // TunPrefix 解析 TUN 模式下的设备地址，必须是 IPv4 CIDR（例如 10.144.0.2/24）。
+// 注意：设备地址要保留主机位（10.144.0.2/24），掩码成网络地址会装错接口地址。
 func TunPrefix(ipv4 string) (netip.Prefix, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(ipv4))
 	if err != nil {
@@ -30,7 +31,7 @@ func TunPrefix(ipv4 string) (netip.Prefix, error) {
 	if !prefix.Addr().Is4() {
 		return netip.Prefix{}, fmt.Errorf("easytier: tun mode supports IPv4 only, got %q", ipv4)
 	}
-	return prefix.Masked(), nil
+	return prefix, nil
 }
 
 // TunRoutes 解析 tun-routes：pin 进这块 TUN 的前缀列表（空列表合法，家侧网关无需路由）。
