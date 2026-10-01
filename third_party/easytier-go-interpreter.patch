@@ -1,0 +1,12 @@
+--- a/internal/engine/host.go	2026-09-28 17:47:55
++++ b/internal/engine/host.go	2026-10-02 00:08:36
+@@ -65,7 +65,8 @@
+ 	}
+ 
+ 	lifetime, cancel := context.WithCancel(contextutil.WithoutCancel(ctx))
+-	runtime := wazero.NewRuntime(lifetime)
++	// FORK: 解释器运行时——避免 wazero JIT 生成的可执行页被 macOS 代码签名策略判非法
++	runtime := wazero.NewRuntimeWithConfig(lifetime, wazero.NewRuntimeConfigInterpreter())
+ 	var module api.Module
+ 	var hostReactor *reactor.Reactor
+ 	defer func() {

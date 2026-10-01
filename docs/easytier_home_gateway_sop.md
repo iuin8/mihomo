@@ -220,3 +220,44 @@ docker compose down                 # 家侧（state/ 目录保留，证书身�
 
 > `./state` 目录保存 overlay 节点身份，**不要删**；删了会在 overlay 里变成新节点。
 > 家侧不便提权时改用 `examples/easytier-home-gateway/alt-native/`（零特权 native 容器，无 ICMP、吞吐低一档）。
+
+## 6. macOS 定案：不依赖 JIT 的内核（路线 B）
+
+上面排错表里的"内核被反复重启"在 macOS 上有**两条独立的处决路径**，实测数据如下：
+
+| 运行方式 | TUN | 是否碰 easytier | 结果 |
+| --- | --- | --- | --- |
+| 服务模式 | 开 | 碰 | **崩**：`.ips` = `EXC_BAD_ACCESS` + `SIGKILL (Code Signature Invalid)` + `CODESIGNING / Invalid Page` |
+| 服务模式 | 开 | 没碰 | 稳定数分钟 |
+| GUI 侧车（app 以 root 跑） | 开 | 没碰 | **~11 秒被杀**（无 `.ips`，`ReportCrash` 处理了尸体但不落盘） |
+| 手动 `sudo` 起内核 | 开 | 没碰 | **~5–10 秒被杀**（`zsh: killed`，无 `.ips`） |
+| 用户态实例 | 关 | 碰 | 稳定，家里服务 200 |
+
+→ **① 非服务路径创建 utun 会被系统杀**（所以"sudo 跑 app"这条路走不通）；**② 服务路径下 easytier 的 JIT 会被签名处决**（`App` 本身是 `adhoc,runtime` 签名，服务 stage/重签名内核时同样带 hardened runtime 而没有 `allow-jit`）。两者交集只有：**服务模式 + 不依赖 JIT 的内核**。
+
+**本 fork 的解法**：把 `easytier-go` 里创建 wazero runtime 的那行改为解释器运行时
+（`wazero.NewRuntimeConfigInterpreter()`，见 `third_party/README.md` 与 `third_party/setup-easytier-interpreter.sh`），
+这样 WASI 不再生成机器码，签名策略无从判非法。
+
+构建与安装：
+
+```bash
+cd mihomo
+third_party/setup-easytier-interpreter.sh            # 生成补丁版依赖（首次/升级依赖后）
+go build -tags with_gvisor -trimpath -ldflags '-w -s \
+  -X "github.com/metacubex/mihomo/constant.Version=Prerelease-Alpha"' \
+  -o verge-mihomo-alpha-nojit .
+
+# 装回服务（GUI：设置 → 代理控制 → 安装服务），让 CVR 正常 stage 一次内核，然后替换 staged 副本：
+sudo find "/Library/Application Support/clash-verge-service" -name "verge-mihomo-alpha" -type f
+sudo cp verge-mihomo-alpha-nojit "<上一步找到的路径>"
+# GUI 里「重启 Clash 内核」
+```
+
+验收：`route -n get 10.0.1.181 | grep interface` → `utun1024`；
+`curl -s -o /dev/null -w '%{http_code}\n' http://10.0.1.181:8080/login` → `200`；
+`ls /Library/Logs/DiagnosticReports/verge-mihomo-alpha-*.ips | wc -l` → **不再增长**。
+
+> 实测（解释器版、用户态、TUN 关）：`10.0.1.181:8080/login` → **200（0.58s，含实例懒启动）**、`10.0.0.1/` → **200（88ms）**、内核存活。
+> 长期做法：把该内核作为 fork 的 sidecar（`pnpm prebuild --force` 或替换 `src-tauri/sidecar/verge-mihomo-alpha-aarch64-apple-darwin` 后重新打包），
+> 这样服务将来重新 stage 时拿到的也是它。
