@@ -16,7 +16,20 @@ services:
   mihomo:
     build:
       context: ../../..                                  # mihomo 仓库根目录
-      dockerfile: docs/examples/easytier-home-gateway/Dockerfile
+      # 默认在容器里编译内核；不想编译（或 Go 代理不可达）时改用纯打包路径：
+      #   GOOS=linux GOARCH=<uname -m 对应> CGO_ENABLED=0 go build -tags with_gvisor \
+      #       -trimpath -ldflags '-w -s' -o docs/examples/easytier-home-gateway/mihomo-linux .
+      #   HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt docker compose up -d --build
+      #
+      # 注意：dockerfile 路径是相对 **context（仓库根）** 解析的，必须带目录——
+      # 写成裸 `Dockerfile` 会命中仓库根那个打包用的 Dockerfile（典型报错：COPY bin/ failed）。
+      dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier-home-gateway/Dockerfile}
+      args:
+        # 国内默认走 goproxy.cn（官方代理 proxy.golang.org 会 i/o timeout）
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
+        # Alpine 镜像源（置空 APK_MIRROR= 则用官方源）
+        APK_MIRROR: ${APK_MIRROR:-mirrors.ustc.edu.cn}
     image: easytier-home-gateway:local
     container_name: mihomo-home
     restart: unless-stopped

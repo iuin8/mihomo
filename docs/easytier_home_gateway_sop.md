@@ -50,9 +50,22 @@ git clone <本 fork 仓库> && cd mihomo/docs/examples/easytier-home-gateway
 #   peers           ["tcp://<会合点公网IP>:11010"]
 #   proxy-networks  ["<家里网段>"]
 
-docker compose up -d          # 首次自动编译本 fork 内核（实测约 1m45s），之后秒起
+docker compose up -d          # 首次自动编译本 fork 内核（实测约 1m40s），之后秒起
 docker compose logs -f mihomo # 期望依次看到下面三行
 ```
+
+> **国内网络**：Dockerfile 已默认走 `goproxy.cn`（官方代理 `proxy.golang.org` 在国内会 i/o timeout）
+> 与中科大 Alpine 源。要换源：`GOPROXY=https://mirrors.aliyun.com/goproxy/,direct docker compose build`。
+> 完全不想在容器里编译（也不依赖 Go 代理）→ 用纯打包路径，构建只要几秒：
+>
+> ```bash
+> # 在能出网的机器上（例如你的 Mac）：交叉编译出内核
+> GOOS=linux GOARCH=<uname -m 对应：x86_64→amd64, aarch64→arm64> CGO_ENABLED=0 \
+>     go build -tags with_gvisor -trimpath -ldflags '-w -s' \
+>     -o docs/examples/easytier-home-gateway/mihomo-linux .
+> # 把 mihomo-linux 放到同一目录后：
+> HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt docker compose up -d --build
+> ```
 
 ```text
 [entrypoint] added MASQUERADE on eth0                                        # NAT 自动配好
@@ -129,6 +142,9 @@ ping -c 3 <内网IP>
 | 客户端日志出现 `match MATCH using DIRECT` | 规则没生效或网段写错 | 检查 `prepend-rules` 与网段是否精确 |
 | 小请求通、大流量卡住 | 走的是旧的历史方案或 no-TUN 路径 | 确认家侧 `tun: true` 生效 |
 | 两端一直不相遇 | 会合点不可达/端口没放开 | 家侧 `docker compose exec mihomo wget -qO- http://<会合点>:11010` 探活；确认 11010 tcp+udp 都放行 |
+| 构建卡在 `proxy.golang.org … i/o timeout` | 国内访问 Go 官方代理不通（Dockerfile 已默认换 goproxy.cn，若你本地改过或用了旧版本才会遇到） | 换源重试：`GOPROXY=https://goproxy.cn,direct docker compose build`；或走上方纯打包路径 |
+| 构建报 `COPY bin/ … not found` | `dockerfile:` 写成了裸 `Dockerfile`，命中了仓库根那个打包用的 Dockerfile | 保持默认（`docs/examples/easytier-home-gateway/Dockerfile`）；覆盖时也要带目录 |
+| `apk add` 卡住/超时 | Alpine 官方源在国内慢 | 默认已用中科大源；换源：`APK_MIRROR=mirrors.aliyun.com docker compose build` |
 
 ## 5. 日常运维与回退
 

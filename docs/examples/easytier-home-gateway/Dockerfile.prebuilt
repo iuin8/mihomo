@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# 纯打包镜像：用你在别处交叉编译好的内核，不在容器里编译
+# —— 不依赖任何 Go 代理，构建只要几秒（只需要能拉 Alpine 基础镜像）。
+#
+# 用法（在家侧服务器上）：
+#   1) 在**能出网且已有 Go 模块缓存**的机器上交叉编译（例如你的 Mac，在内网服务器上也可以）：
+#        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags with_gvisor -trimpath -ldflags '-w -s' \
+#            -o docs/examples/easytier-home-gateway/mihomo-linux .
+#      （家侧是 arm64 就把 GOARCH 换成 arm64；用 `uname -m` 确认，x86_64→amd64、aarch64→arm64）
+#   2) 把 `mihomo-linux` 放到 docs/examples/easytier-home-gateway/ 下（scp 过去即可）
+#   3) 指定用这个 Dockerfile 构建（路径必须相对仓库根，因为 compose 的 context 是仓库根）：
+#        HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt docker compose up -d --build
+#
+# 与 Dockerfile 的差别只有：没有 golang 构建阶段，直接 COPY 现成二进制。
+FROM alpine:3.20
+
+ARG APK_MIRROR=mirrors.ustc.edu.cn
+RUN if [ -n "$APK_MIRROR" ]; then sed -i "s#dl-cdn.alpinelinux.org#$APK_MIRROR#g" /etc/apk/repositories; fi \
+ && apk add --no-cache iptables iproute2
+
+COPY docs/examples/easytier-home-gateway/mihomo-linux /usr/local/bin/mihomo
+COPY docs/examples/easytier-home-gateway/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/mihomo
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
