@@ -1,25 +1,52 @@
-# 会合点（共享节点）—— 放在任意一台有公网 IP 的机器上，一键启动
+# 会合点 / 中继 —— 放到任意一台有公网 IP 的机器（云服务器）上，一条命令启动
 #
-#   cd rendezvous && docker compose up -d
+#   scp docker-compose.yml root@<你的云服务器>:/root/easytier-rendezvous/
+#   ssh root@<你的云服务器> 'cd /root/easytier-rendezvous && docker compose up -d'
 #
-# 然后两端（家侧 home-mihomo-tun.yaml、本机 client-clash.yaml）都填：
-#   peers: ["tcp://<这台机器的公网IP>:11010"]
+# 然后家侧与客户端都填：peers: ["tcp://<这台机器的公网IP>:11010"]
 #
-# 说明：
-#   * `easytier-core` **不带任何参数**即为官方共享节点模式（无需 root、无需配置文件）；
-#   * 它只做"牵线"与必要时的中继，资源占用极小（1 核 512MB 的机器足够）；
-#   * 家侧没有公网 IP / 不能做端口映射时，**这一台公网机器是两端能相遇的唯一前提**。
+# ⚠️ 云安全组 / 防火墙需要放行 **11010 的 tcp 与 udp**（udp 用于 P2P 探测与中继）。
 #
-# 只暴露 11010 一个端口（tcp + udp 都要，P2P 探测与中继会用到 udp）。
+# 为什么默认用「私有模式」而不是官方文档里的公共共享节点（不带参数那种）：
+#   * 公共共享节点会接受**任意网络**的节点连接，官方文档专门教你怎么配 fail2ban 挡滥用；
+#   * 私有模式只允许你自己的网络（同名 + 同密钥）连接，==不需要 fail2ban、不担心被人白嫖==，
+#     中继流量也只会是你自己的网络。
+#   想为社区贡献公共节点的话，把下面 command 换成注释里的那段，并按官方文档配 fail2ban。
+
+name: easytier-rendezvous
 
 services:
-  easytier-shared:
+  rendezvous:
     image: easytier/easytier:latest
-    container_name: easytier-shared
+    container_name: easytier-rendezvous
     restart: unless-stopped
+
+    # 改这一行：network-name / network-secret 必须与家侧、客户端完全一致
+    command:
+      - "--private-mode"
+      - "true"
+      - "--network-name"
+      - "home"
+      - "--network-secret"
+      - "<改成与家侧/客户端一致的强密钥>"
+
+    # 可选：自建公共共享节点（为社区做贡献，需要按官方文档配 fail2ban 防滥用）
+    # command: []
+
     ports:
       - "11010:11010/tcp"
       - "11010:11010/udp"
+      # 其它承载方式：只有当 peers 用 ws/wss/quic/faketcp 时才需要放行
+      # - "11011:11011/tcp"   # ws
+      # - "11012:11012/tcp"   # wss
+      # - "11012:11012/udp"   # quic
+      # - "11013:11013/udp"   # faketcp
+
+    # EasyTier 官方建议：作为服务器运行时把 fd 上限调高，避免连接数一多就耗尽
+    ulimits:
+      nofile: 1048576
+
+    # 日志轮转兜底：任何异常都不会把磁盘写满（最多 30MB）
     logging:
       driver: json-file
       options:

@@ -36,9 +36,19 @@ services:
       # 多网卡（docker network connect 了内网）时，用 `ip -o -4 addr show` 确认后改成 eth1 等
       NAT_INTERFACE: eth0
 
+      # 看门狗（默认开）：只在"本地 easytier 网卡消失"时优雅重启实例。
+      # 会合点掉线 / DNS 抖动 / API 报错都不会触发重启（实例自己会重连）。
+      # 防重启风暴：WATCHDOG_WINDOW 秒内最多自动恢复 WATCHDOG_MAX_RESTARTS 次，
+      # 达到上限就永久停用并只留一行日志；日志本身还有下面的 max-size 轮转兜底。
+      WATCHDOG: "1"                    # 设 "0" 完全关闭
+      WATCHDOG_INTERVAL: "60"          # 每 60s 检查一次
+      WATCHDOG_FAILS: "3"              # 连续 3 次异常才动作
+      WATCHDOG_MAX_RESTARTS: "3"       # 窗口内最多 3 次
+      WATCHDOG_WINDOW: "3600"          # 窗口 = 1 小时
+
     volumes:
       - ./home-mihomo-tun.yaml:/root/.config/mihomo/config.yaml:ro
-      - ./state:/root/.config/mihomo/easytier          # overlay 节点身份持久化，别删
+      - ./state:/root/.config/mihomo/easytier          # overlay 节点身份 + 看门狗计数，别删
 
     logging:
       driver: json-file

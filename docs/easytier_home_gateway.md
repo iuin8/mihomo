@@ -145,9 +145,15 @@ proxies:
 
 | 方式 | 做法 | 适用 |
 | --- | --- | --- |
-| 自建共享节点 | 有公网 IP 的机器上跑 `easytier-core`（**无参数**），两端 `peers: ["tcp://<IP>:11010"]` | 通用、无需改家宽 |
+| **自建会合点（推荐）** | 有公网 IP 的机器上跑 `rendezvous/docker-compose.yml`：**私有模式**（`--private-mode true` + 网络名/密钥），只有你自己的网络能连 | 通用、无需改家宽；不用 fail2ban、不会被陌生人白嫖 |
+| 公共共享节点 | `easytier-core` 不带参数即公共共享节点；官方文档要求配 fail2ban 防滥用，并可用 `--relay-network-whitelist --relay-all-peer-rpc` 只帮忙打洞不转发 | 想为社区做贡献时 |
 | 家侧公网 IPv6 | 客户端 `peers` 直接写家侧监听地址 | 家宽有 v6 时零第三方 |
 | 家宽端口映射 | 映射 11010/tcp+udp 到家侧 | 有公网 IPv4 时最短路径 |
+
+> **调研结论（2026-10-01，DoH 复核绕开本机 DNS 劫持）**：==官方与社区都没有公布可用的公共节点地址==。
+> `public.easytier.cn` / `public.easytier.top` 均为 **NXDOMAIN**；官方文档里出现的地址（`tcp://1.2.3.4:11010` 等）
+> 全是占位符。官方模型是"用户自建公共共享节点给社区用"——所以无公网环境下**必须自备一台公网机器**。
+> 部署步骤见 [easytier_home_gateway_sop.md](easytier_home_gateway_sop.md) §0。
 
 ### 4. DNS（复用 mihomo，零代码）
 

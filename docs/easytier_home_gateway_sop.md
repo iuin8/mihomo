@@ -6,20 +6,39 @@
 > 详细原理与实测数据见 [easytier_home_gateway.md](easytier_home_gateway.md)，
 > 验收标准见 [easytier_tun_spec.md](easytier_tun_spec.md)。
 
-## 0. 会合点（只做一次，约 2 分钟）
+## 0. 会合点（只做一次，约 5 分钟）
 
-在**有公网 IP 的机器**上（VPS）：
+**先说调研结论（2026-10-01，用 DoH 复核，绕开本机 DNS 劫持）**：
+
+| 结论 | 依据 |
+| --- | --- |
+| **没有可用的官方/社区公共节点** | `public.easytier.cn`、`public.easytier.top` 均为 **NXDOMAIN**；官方文档里出现的地址（`tcp://1.2.3.4:11010` 之类）全是占位符 |
+| 官方模型 = **自建** | 官方文档《搭建共享节点》教的就是"用你自己的公网机器给别人/给自己做共享节点"，并给了 fail2ban 防滥用配置 |
+| ⇒ 你必须自备一台公网机器 | 1 核 512MB 云服务器足够；只跑一个容器、只占 11010 端口 |
+
+**推荐用「私有模式」而不是公共共享节点**：只允许你自己的网络（同名 + 同密钥）连接，不会被陌生人白嫖、
+不需要 fail2ban、中继流量也只属于你自己的网络。用仓库里的
+`examples/easytier-home-gateway/rendezvous/docker-compose.yml`：
 
 ```bash
-docker run -d --name easytier-shared --restart unless-stopped \
-    -p 11010:11010/tcp -p 11010:11010/udp easytier/easytier:latest
+# 在云服务器上（把文件拷过去，改一行密钥，然后一条命令）
+mkdir -p /root/easytier-rendezvous
+scp 本仓库/mihomo/docs/examples/easytier-home-gateway/rendezvous/docker-compose.yml \
+    root@<云服务器>:/root/easytier-rendezvous/
+ssh root@<云服务器>
+cd /root/easytier-rendezvous
+vi docker-compose.yml          # 改 network-secret 一处（与家侧/客户端一致）
+docker compose up -d
+docker compose logs --tail=20  # 期望看到一堆 new listener added
 ```
 
-不带任何参数 = 官方共享节点模式，无需 root、无需配置文件。记下这台机器的公网 IP，
-下面两端都填 `tcp://<公网IP>:11010`。
+**云安全组 / 防火墙放行 `11010` 的 tcp 与 udp**（udp 用于 P2P 探测与中继）。
+记下公网 IP，家侧与客户端都填 `peers: ["tcp://<公网IP>:11010"]`。
 
-> 仓库里也有等价文件：`examples/easytier-home-gateway/rendezvous/docker-compose.yml`（`docker compose up -d` 即可）。
-> 防火墙只需放行 11010 的 **tcp 和 udp**。
+> 不 clone 仓库、也不想用 compose 的话，等价的一条命令是：
+> `docker run -d --name easytier-rendezvous --restart unless-stopped -p 11010:11010/tcp -p 11010:11010/udp easytier/easytier:latest`
+> —— 但那是**公共共享节点**（任何网络的节点都能连），要给社区做贡献再用它，并按官方文档配 fail2ban。
+> 想两者兼顾：公共模式 + `--relay-network-whitelist --relay-all-peer-rpc`（只帮忙打洞、不转发别人的数据）。
 
 ## 1. 家侧部署（约 10 分钟）
 

@@ -68,4 +68,63 @@ if [ "$i" -ge 20 ]; then
     echo "[entrypoint] WARN: 触发后 20s 内未见 easytier TUN；检查 external-controller 是否开启、TRIGGER_PROXY 是否与配置里的出站名一致、以及日志中的 EasyTier 报错" >&2
 fi
 
+# ---- 看门狗：实例静默挂掉时自动恢复，但绝不允许重启风暴 ----
+#
+# 三条硬约束（对应"不能反复重启 / 不能刷爆日志"）：
+#   1) **只认本地信号**：仅当 easytier 网卡连续 N 次不存在才动作。会合点不可达、DNS 抖动、
+#      API 报错都**不会**触发重启——实例自己会重连，重启反而有害。
+#   2) **跨重启限流**：窗口内最多 MAX 次；达到上限就永久停用并只留一行说明，
+#      避免"起不来 → 重启 → 还是起不来"的循环（计数写在持久化的 state 目录里）。
+#   3) **稀疏日志**：每次事件只在"首次失败 / 恢复 / 真正动作"各打一行，
+#      不会每次检查都打；容器日志另有 compose 的 max-size 轮转兜底。
+WATCHDOG="${WATCHDOG:-1}"
+WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-60}"
+WATCHDOG_FAILS="${WATCHDOG_FAILS:-3}"
+WATCHDOG_MAX_RESTARTS="${WATCHDOG_MAX_RESTARTS:-3}"
+WATCHDOG_WINDOW="${WATCHDOG_WINDOW:-3600}"
+WATCHDOG_STATE="/root/.config/mihomo/easytier/.watchdog-restarts"
+
+watchdog() {
+    fails=0
+    warned=0
+    while kill -0 "$MIHOMO_PID" 2>/dev/null; do
+        sleep "$WATCHDOG_INTERVAL"
+        if ip -o link show 2>/dev/null | grep -q ": easytier"; then
+            if [ "$fails" -gt 0 ]; then
+                echo "[watchdog] gateway is back after $fails failed check(s)"
+            fi
+            fails=0
+            warned=0
+            continue
+        fi
+        fails=$((fails + 1))
+        if [ "$warned" -eq 0 ]; then
+            echo "[watchdog] easytier 网卡不见了（$fails/$WATCHDOG_FAILS）；只有本地信号会计数，会合点掉线不计" >&2
+            warned=1
+        fi
+        [ "$fails" -lt "$WATCHDOG_FAILS" ] && continue
+
+        now=$(date +%s)
+        [ -f "$WATCHDOG_STATE" ] || : > "$WATCHDOG_STATE"
+        awk -v now="$now" -v w="$WATCHDOG_WINDOW" '$1 > now - w' "$WATCHDOG_STATE" >"$WATCHDOG_STATE.tmp" 2>/dev/null || true
+        mv "$WATCHDOG_STATE.tmp" "$WATCHDOG_STATE" 2>/dev/null || true
+        count=$(wc -l <"$WATCHDOG_STATE" 2>/dev/null | tr -d ' ')
+        if [ "${count:-0}" -ge "$WATCHDOG_MAX_RESTARTS" ]; then
+            echo "[watchdog] ${WATCHDOG_WINDOW}s 内已自动恢复 ${count} 次，停止自动恢复以免反复重启；请人工排查：docker compose logs mihomo" >&2
+            return
+        fi
+        echo "$now" >>"$WATCHDOG_STATE"
+        echo "[watchdog] 连续 $WATCHDOG_FAILS 次未见网卡 → 优雅停止 mihomo，交由 restart 策略重建实例（本窗口第 $((count + 1)) 次）" >&2
+        kill -TERM "$MIHOMO_PID" 2>/dev/null || true
+        return
+    done
+}
+
+if [ "$WATCHDOG" = "1" ]; then
+    watchdog &
+    echo "[watchdog] enabled (interval ${WATCHDOG_INTERVAL}s, ${WATCHDOG_FAILS} fails, max ${WATCHDOG_MAX_RESTARTS}/${WATCHDOG_WINDOW}s)"
+else
+    echo "[watchdog] disabled (WATCHDOG=0)"
+fi
+
 wait "$MIHOMO_PID"
