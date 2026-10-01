@@ -191,6 +191,7 @@ ping -c 3 <内网IP>
 | 规则里的某个家网段与本机当前网段重叠 | 会把你**本机局域网**的流量吸进隧道 | 在新网络里删掉重叠那条；或加 `SRC-IP-CIDR,<本机网段>,DIRECT` 兜底 |
 | 浏览器访问不了，但命令行 `-x` 能通 | ① 内核根本没在跑（TUN 也就没了）；② 系统代理被别的工具（Proxyman 之类）占着，浏览器流量先到它，根本进不了 Clash | 先 `pgrep -fl mihomo` 与 `ifconfig utun*` 确认内核在跑；再 `scutil --proxy` 看系统代理指向谁——TUN 模式下**不需要**系统代理，把抢它的工具关掉即可 |
 | 延迟测试报 error | 测速 URL 是公网地址，而 overlay 只承载家侧发布的网段（家侧不是互联网出口） | 用内网地址测，或忽略（`select` 分组不需要自动测速） |
+| **内核被反复重启**（GUI 日志 `service restarted the core (N restarts so far); last exit: … SIGKILL`，PID 一直变、TUN 时有时无） | 这条 easytier 出站的拨号**挂死** → 内核的 ext-ctl socket 不响应 → CVR 服务的 owner 看门狗连读不到状态就判定 `TransportFailure`（`core/runstate/owner.rs`）→ SIGKILL 重启 → 重启后再次挂死 → 循环。**先确认不是 OOM**：`sysctl -n hw.memsize`、`memory_pressure`、`log show --predicate 'eventMessage CONTAINS "jetsam"'`、内核 RSS | ① **止血**：把 🏠 分组切到 `DIRECT`（或暂时取消勾选该配置项），停止这个循环；② **验证环境变量**：CVR 设置里把「服务模式 ↔ Sidecar 模式」互切——隔离实例（非 root、无 TUN）里同一份参数是通的，所以多半是 root 服务模式 + 自开 TUN 的组合；③ 去掉 `interface-name`（或换成 `route -n get default` 显示的接口），并试 `disable-p2p: true` 区分"打洞卡住"与"underlay 被自己的 TUN 捕获"；④ 清掉内核的 easytier state 目录后重启 |
 
 ## 5. 日常运维与回退
 
