@@ -678,4 +678,17 @@ images: ghcr.io/${{ github.repository_owner }}/easytier-home-gateway
    分支约定同步更新 ✓；
 4. 合并习惯：feature 线（如 `fa/easytier-*`）→ 合进 `trunk` ✓ 再打 tag ✓；
 5. `main` 保持"上游镜像、只读" ✓：不再往 `main` 提交 fork 内容 ✗（本次那 6 个 CI 提交随第 1 步一并
+
+**已执行（2026-10-03）** ✓：`fa/trunk` 从 `fa/easytier-v1.19.32` 建立 ✓ 并已设为**仓库默认分支** ✓
+（`gh repo view iuin8/mihomo --json defaultBranchRef` → `fa/trunk` ✓）。切完后默认可触发的工作流为
+`Build` / `mihomo image` / `SSH System Release` / `Test` ✓ —— 与 `fa/trunk` 上的文件一一对应 ✓。
+
+**因此新的约定**（tag 与发布都从 trunk 走）：
+* 发布相关触发一律 `--ref fa/trunk` ✓（例如 `gh workflow run mihomo-image.yml -R iuin8/mihomo --ref fa/trunk …` ✓）；
+* feature 线先合进 `fa/trunk` ✓ 再打 tag ✓；
+* `main` 暂不动 ✓（保留现状；将来可选重置为纯上游镜像 ✓）。
+
+**切换时发现并记录**：`main` 上有个上游的 `Delete.yml`（每周日清理 30 天前的工作流运行 ✓，带 `schedule:` ✗）
+不在 `fa/trunk` 上 ✗ —— 定时工作流只从默认分支运行 ✓，所以它暂时不会跑 ✓；它是上游在 v1.19.32 之后
+新增的文件 ✓，**会在下次上游同步时自然带进来** ✓，无需手工处理 ✓。
    落入 `trunk` 后，`main` 可重置为上游 ✓）。
