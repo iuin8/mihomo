@@ -37,6 +37,9 @@ type EasyTierOption struct {
 	EnableQUICProxy     *bool    `proxy:"enable-quic-proxy,omitempty"`
 	DisableQUICInput    *bool    `proxy:"disable-quic-input,omitempty"`
 	MTU                 int      `proxy:"mtu,omitempty"`
+	// FORK(easytier-tun): 与 !no_easytier 构建保持字段一致，避免配置解析报未知字段
+	Tun                 bool     `proxy:"tun,omitempty"`
+	TunRoutes           []string `proxy:"tun-routes,omitempty"`
 	TLDDNSZone          string   `proxy:"tld-dns-zone,omitempty"`
 	SecureMode          *bool    `proxy:"secure-mode,omitempty"`
 	LocalPrivateKey     string   `proxy:"local-private-key,omitempty"`

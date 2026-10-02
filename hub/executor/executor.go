@@ -530,7 +530,11 @@ func updateIPTables(cfg *config.Config) {
 }
 
 func Shutdown() {
+	// FORK(easytier-resilience): 把关停各步骤拆开打点，便于定位关停卡在哪一步
+	// （宿主超时后会 SIGKILL，此时唯一的线索就是这些日志）。
+	log.Warnln("shutdown: cleaning up listeners")
 	listener.Cleanup()
+	log.Warnln("shutdown: listeners closed")
 	tproxy.CleanupTProxyIPTables()
 	resolver.StoreFakePoolState()
 

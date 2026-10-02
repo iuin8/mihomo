@@ -51,6 +51,10 @@ type EasyTier struct {
 	host       *corehost.Host
 	instance   *corehost.Instance
 	unregister func()
+	// FORK(easytier-tun): TUN 模式资源，见 docs/easytier_tun_spec.md
+	tunBridge *easytier.TunBridge
+	tunPrefix netip.Prefix
+	tunRoutes []netip.Prefix
 }
 
 type EasyTierOption struct {
@@ -82,10 +86,13 @@ type EasyTierOption struct {
 	EnableQUICProxy     *bool    `proxy:"enable-quic-proxy,omitempty"`
 	DisableQUICInput    *bool    `proxy:"disable-quic-input,omitempty"`
 	MTU                 int      `proxy:"mtu,omitempty"`
-	TLDDNSZone          string   `proxy:"tld-dns-zone,omitempty"`
-	SecureMode          *bool    `proxy:"secure-mode,omitempty"`
-	LocalPrivateKey     string   `proxy:"local-private-key,omitempty"`
-	LocalPublicKey      string   `proxy:"local-public-key,omitempty"`
+	// FORK(easytier-tun): 宿主 TUN 模式；tun-routes 为 pin 进该设备的前缀列表。
+	Tun             bool     `proxy:"tun,omitempty"`
+	TunRoutes       []string `proxy:"tun-routes,omitempty"`
+	TLDDNSZone      string   `proxy:"tld-dns-zone,omitempty"`
+	SecureMode      *bool    `proxy:"secure-mode,omitempty"`
+	LocalPrivateKey string   `proxy:"local-private-key,omitempty"`
+	LocalPublicKey  string   `proxy:"local-public-key,omitempty"`
 }
 
 func (o EasyTierOption) structuredConfig() easytier.Config {
@@ -131,6 +138,20 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 		return nil, err
 	}
 	configTOML = easytier.ApplyRequiredFlags(configTOML)
+	// FORK(easytier-tun): TUN 模式改为 no_tun=false，并在构造期校验参数（配置错误快速失败）
+	var (
+		tunPrefix netip.Prefix
+		tunRoutes []netip.Prefix
+	)
+	if option.Tun {
+		configTOML = easytier.ApplyTunFlags(configTOML)
+		if tunPrefix, err = easytier.TunPrefix(option.IPv4); err != nil {
+			return nil, err
+		}
+		if tunRoutes, err = easytier.TunRoutes(option.TunRoutes); err != nil {
+			return nil, err
+		}
+	}
 
 	stateDir := option.StateDir
 	if stateDir == "" {
@@ -160,6 +181,8 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 		option:     option,
 		configTOML: configTOML,
 		stateDir:   stateDir,
+		tunPrefix:  tunPrefix,
+		tunRoutes:  tunRoutes,
 		zone:       easytier.NormalizeZone(option.TLDDNSZone),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -229,7 +252,16 @@ func (e *EasyTier) loop() {
 		if closed {
 			return
 		}
-		err := e.init()
+		// FORK(easytier-resilience): 兜底——init 里任何 panic 都不能带走整个内核进程
+		err := func() (err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Errorln("[EasyTier](%s) init panicked: %v", e.Name(), r)
+					err = fmt.Errorf("easytier: init panicked: %v", r)
+				}
+			}()
+			return e.init()
+		}()
 		if err != nil {
 			log.Warnln("[EasyTier](%s) start failed: %v; retry in %s", e.Name(), err, backoff)
 			_ = e.shutdown()
@@ -315,6 +347,21 @@ func (e *EasyTier) init() error {
 		return err
 	}
 	log.Infoln("[EasyTier](%s) instance %s running", e.Name(), instance.ID())
+	// FORK(easytier-tun): 接上宿主 TUN 设备与实例包面（需要 root / CAP_NET_ADMIN）
+	if e.option.Tun {
+		bridge, err := easytier.StartTunBridge(e.ctx, easytier.TunDeviceOptions{
+			Prefix: e.tunPrefix,
+			MTU:    e.option.MTU,
+			Routes: e.tunRoutes,
+		}, instance)
+		if err != nil {
+			return err
+		}
+		e.mu.Lock()
+		e.tunBridge = bridge
+		e.mu.Unlock()
+		log.Infoln("[EasyTier](%s) tun mode enabled on %s", e.Name(), e.tunPrefix)
+	}
 	return nil
 }
 
@@ -526,6 +573,14 @@ func (e *EasyTier) shutdown() error {
 	e.instance = nil
 	e.host = nil
 	e.mu.Unlock()
+	e.mu.Lock()
+	tunBridge := e.tunBridge
+	e.tunBridge = nil
+	e.mu.Unlock()
+	// FORK(easytier-tun): 先停包面搬运并关设备，再关实例
+	if tunBridge != nil {
+		_ = tunBridge.Close()
+	}
 	var err error
 	if instance != nil {
 		err = instance.Close(ctx)

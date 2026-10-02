@@ -1,0 +1,70 @@
+# 家侧网关（方案 A：mihomo TUN 模式）——— 一键启动
+#
+#   cd mihomo/docs/examples/easytier-home-gateway     # 需要本 fork 的完整仓库（要编译内核）
+#   1) 编辑 home-mihomo-tun.yaml：network-secret / proxy-networks（家里网段）/ peers（会合点）
+#   2) 多网卡时改下面的 NAT_INTERFACE（单网卡保持 eth0）
+#   3) docker compose up -d                            # 首次会自动编译内核，之后秒起
+#
+# 需要家侧机器能出网拉取基础镜像；构建一次后镜像缓存在本机，重启用 restart: unless-stopped 自动拉起。
+#
+# 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
+# ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
+
+name: easytier-home-gateway
+
+services:
+  mihomo:
+    build:
+      context: ../../..                                  # mihomo 仓库根目录
+      # 默认在容器里编译内核；不想编译（或 Go 代理不可达）时改用纯打包路径：
+      #   GOOS=linux GOARCH=<uname -m 对应> CGO_ENABLED=0 go build -tags with_gvisor \
+      #       -trimpath -ldflags '-w -s' -o docs/examples/easytier-home-gateway/mihomo-linux .
+      #   HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt docker compose up -d --build
+      #
+      # 注意：dockerfile 路径是相对 **context（仓库根）** 解析的，必须带目录——
+      # 写成裸 `Dockerfile` 会命中仓库根那个打包用的 Dockerfile（典型报错：COPY bin/ failed）。
+      dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier-home-gateway/Dockerfile}
+      args:
+        # 国内默认走 goproxy.cn（官方代理 proxy.golang.org 会 i/o timeout）
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
+        # Alpine 镜像源（置空 APK_MIRROR= 则用官方源）
+        APK_MIRROR: ${APK_MIRROR:-mirrors.ustc.edu.cn}
+    image: easytier-home-gateway:local
+    container_name: mihomo-home
+    restart: unless-stopped
+
+    # 三件硬性要求之一：建 TUN 需要 NET_ADMIN + /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    # 三件硬性要求之二：容器内 /proc/sys 只读，转发开关只能在这里注入
+    sysctls:
+      net.ipv4.ip_forward: 1
+
+    environment:
+      # 三件硬性要求之三：MASQUERADE 由 entrypoint.sh 自动加在这张网卡上
+      # 多网卡（docker network connect 了内网）时，用 `ip -o -4 addr show` 确认后改成 eth1 等
+      NAT_INTERFACE: eth0
+
+      # 看门狗（默认开）：只在"本地 easytier 网卡消失"时优雅重启实例。
+      # 会合点掉线 / DNS 抖动 / API 报错都不会触发重启（实例自己会重连）。
+      # 防重启风暴：WATCHDOG_WINDOW 秒内最多自动恢复 WATCHDOG_MAX_RESTARTS 次，
+      # 达到上限就永久停用并只留一行日志；日志本身还有下面的 max-size 轮转兜底。
+      WATCHDOG: "1"                    # 设 "0" 完全关闭
+      WATCHDOG_INTERVAL: "60"          # 每 60s 检查一次
+      WATCHDOG_FAILS: "3"              # 连续 3 次异常才动作
+      WATCHDOG_MAX_RESTARTS: "3"       # 窗口内最多 3 次
+      WATCHDOG_WINDOW: "3600"          # 窗口 = 1 小时
+
+    volumes:
+      - ./home-mihomo-tun.yaml:/root/.config/mihomo/config.yaml:ro
+      - ./state:/root/.config/mihomo/easytier          # overlay 节点身份 + 看门狗计数，别删
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

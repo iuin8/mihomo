@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/metacubex/mihomo/common/cmd"
 	"github.com/metacubex/mihomo/component/age"
@@ -76,6 +77,10 @@ func init() {
 	flag.BoolVar(&testConfig, "t", false, "test configuration and exit")
 	flag.Parse()
 }
+
+// FORK(easytier-resilience): 收到终止信号后允许关停流程使用的最长时间。
+// 必须小于宿主的宽限期（CVR 服务是 SIGTERM 后 1 秒就 SIGKILL），否则"自行退出"永远来不及。
+const shutdownGrace = 700 * time.Millisecond
 
 func main() {
 	// Defensive programming: panic when code mistakenly calls net.DefaultResolver
@@ -242,7 +247,19 @@ func main() {
 	signal.Notify(hupSign, syscall.SIGHUP)
 	for {
 		select {
-		case <-termSign:
+		case sig := <-termSign:
+			// FORK(easytier-resilience): 宿主（macOS 上 CVR 的特权服务）先发 SIGTERM、只等 1 秒就 SIGKILL
+			// （见 clash-verge-service-ipc 的 process.rs: SIGTERM → 10×100ms → SIGKILL）。
+			// 内核的日志是同步写 stdout 的，而 stdout 是宿主持有的管道：一旦管道满、宿主那端不及时读，
+			// 信号处理里的第一行日志就会阻塞，关停永远走不到，1 秒后必然被 -9 打断——
+			// 表现刚好就是"无任何关停日志、无崩溃报告、进程凭空消失"。
+			// 所以兜底必须先启动、且预算必须小于宿主那 1 秒窗口：无论后续日志/清理是否卡住，都自行退出。
+			go func() {
+				time.Sleep(shutdownGrace)
+				log.Warnln("shutdown did not finish within %v, exiting anyway", shutdownGrace)
+				os.Exit(0)
+			}()
+			log.Warnln("received %v, shutting down", sig)
 			return
 		case <-hupSign:
 			if err := hub.Parse(configBytes, options...); err != nil {

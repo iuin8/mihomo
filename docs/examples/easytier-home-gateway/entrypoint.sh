@@ -1,0 +1,130 @@
+#!/bin/sh
+# 家侧网关入口：① 配好"当路由器"需要的 NAT；② 启动 mihomo 并触发 easytier 出站的懒启动。
+#
+# 为什么需要第 ② 步：mihomo 的出站是**懒启动**的——家侧没有流量命中它时，实例不会启动，
+# TUN 设备也就不会创建，表现为"容器起来了但网关并不在"。
+#
+# 这不是"顺手提前启动一下"，而是家侧这个**服务器角色**必须的开机动作，因为存在死锁：
+#   客户端要连进来，前提是家侧已经在 overlay 上；而家侧自己没有任何流量会把该出站当代理用
+#   （家侧出网走直连），所以它**永远不会自启**。实测现象：容器 healthy、TUN 不存在、会合点看不到 peer。
+# 客户端那一侧相反：保持懒启动更好（第一次访问家里内网时才建实例，平时不占资源）。
+# 所以这个触发只属于家侧部署，没有改 mihomo 的任何默认语义。
+#
+# 为什么要在这里做 NAT：TUN 模式让家侧成为真路由器——内网主机看到的是 overlay 源地址，
+# 回包必须能被 NAT 回去。容器内 /proc/sys 只读，所以 ip_forward 由 compose 的 sysctls 注入，
+# NAT 只能在这里加。本脚本幂等，重启不会重复插入规则。
+#
+# 环境变量：
+#   NAT_INTERFACE  连内网的那张网卡（默认 eth0；多网卡时用 ip -o -4 addr show 确认后改）
+#   SKIP_NAT=1     完全跳过 NAT（例如家侧本来就是内网网关时）
+#   TRIGGER_PROXY  要触发的出站名（默认 et-home，与示例配置一致）
+set -e
+
+IFACE="${NAT_INTERFACE:-eth0}"
+PROXY="${TRIGGER_PROXY:-et-home}"
+API="http://127.0.0.1:9090"
+
+if [ "${SKIP_NAT:-0}" != "1" ]; then
+    if iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null; then
+        echo "[entrypoint] MASQUERADE already present on $IFACE"
+    elif iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null; then
+        echo "[entrypoint] added MASQUERADE on $IFACE"
+    else
+        echo "[entrypoint] WARN: 无法在 $IFACE 上添加 MASQUERADE（缺少 NET_ADMIN，或网卡名不对）" >&2
+        echo "[entrypoint] WARN: 内网主机的回包可能收不到；检查 cap_add 与 NAT_INTERFACE" >&2
+    fi
+    iptables -P FORWARD ACCEPT 2>/dev/null || true
+fi
+
+echo "[entrypoint] starting mihomo (NAT interface: $IFACE, ip_forward: $(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo '?'))"
+/usr/local/bin/mihomo -d /root/.config/mihomo -f /root/.config/mihomo/config.yaml &
+MIHOMO_PID=$!
+trap 'kill -TERM "$MIHOMO_PID" 2>/dev/null || true' TERM INT
+
+# 等 API 就绪（最多 30s），然后触发出站懒启动；失败不阻塞容器启动，只留下告警。
+i=0
+while [ "$i" -lt 30 ]; do
+    if wget -q -O /dev/null --timeout=2 "$API/version" 2>/dev/null; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 1
+done
+
+# 触发出站懒启动。注意：不能用这条请求的返回码判断成败——delay 探测本身会失败（家侧没有
+# 那个探测目标），API 返回 5xx，但出站已经被拉起来了。所以触发后改为轮询 easytier 网卡是否出现。
+wget -q -O /dev/null --timeout=10 "$API/proxies/$PROXY/delay?url=http://127.0.0.1&timeout=3000" 2>/dev/null || true
+
+i=0
+while [ "$i" -lt 20 ]; do
+    if ip -o link show 2>/dev/null | grep -q ": easytier"; then
+        echo "[entrypoint] easytier TUN is up: $(ip -o -4 addr show | awk '/easytier/ {print $2" "$4; exit}')"
+        break
+    fi
+    i=$((i + 1))
+    sleep 1
+done
+if [ "$i" -ge 20 ]; then
+    echo "[entrypoint] WARN: 触发后 20s 内未见 easytier TUN；检查 external-controller 是否开启、TRIGGER_PROXY 是否与配置里的出站名一致、以及日志中的 EasyTier 报错" >&2
+fi
+
+# ---- 看门狗：实例静默挂掉时自动恢复，但绝不允许重启风暴 ----
+#
+# 三条硬约束（对应"不能反复重启 / 不能刷爆日志"）：
+#   1) **只认本地信号**：仅当 easytier 网卡连续 N 次不存在才动作。会合点不可达、DNS 抖动、
+#      API 报错都**不会**触发重启——实例自己会重连，重启反而有害。
+#   2) **跨重启限流**：窗口内最多 MAX 次；达到上限就永久停用并只留一行说明，
+#      避免"起不来 → 重启 → 还是起不来"的循环（计数写在持久化的 state 目录里）。
+#   3) **稀疏日志**：每次事件只在"首次失败 / 恢复 / 真正动作"各打一行，
+#      不会每次检查都打；容器日志另有 compose 的 max-size 轮转兜底。
+WATCHDOG="${WATCHDOG:-1}"
+WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-60}"
+WATCHDOG_FAILS="${WATCHDOG_FAILS:-3}"
+WATCHDOG_MAX_RESTARTS="${WATCHDOG_MAX_RESTARTS:-3}"
+WATCHDOG_WINDOW="${WATCHDOG_WINDOW:-3600}"
+WATCHDOG_STATE="/root/.config/mihomo/easytier/.watchdog-restarts"
+
+watchdog() {
+    fails=0
+    warned=0
+    while kill -0 "$MIHOMO_PID" 2>/dev/null; do
+        sleep "$WATCHDOG_INTERVAL"
+        if ip -o link show 2>/dev/null | grep -q ": easytier"; then
+            if [ "$fails" -gt 0 ]; then
+                echo "[watchdog] gateway is back after $fails failed check(s)"
+            fi
+            fails=0
+            warned=0
+            continue
+        fi
+        fails=$((fails + 1))
+        if [ "$warned" -eq 0 ]; then
+            echo "[watchdog] easytier 网卡不见了（$fails/$WATCHDOG_FAILS）；只有本地信号会计数，会合点掉线不计" >&2
+            warned=1
+        fi
+        [ "$fails" -lt "$WATCHDOG_FAILS" ] && continue
+
+        now=$(date +%s)
+        [ -f "$WATCHDOG_STATE" ] || : > "$WATCHDOG_STATE"
+        awk -v now="$now" -v w="$WATCHDOG_WINDOW" '$1 > now - w' "$WATCHDOG_STATE" >"$WATCHDOG_STATE.tmp" 2>/dev/null || true
+        mv "$WATCHDOG_STATE.tmp" "$WATCHDOG_STATE" 2>/dev/null || true
+        count=$(wc -l <"$WATCHDOG_STATE" 2>/dev/null | tr -d ' ')
+        if [ "${count:-0}" -ge "$WATCHDOG_MAX_RESTARTS" ]; then
+            echo "[watchdog] ${WATCHDOG_WINDOW}s 内已自动恢复 ${count} 次，停止自动恢复以免反复重启；请人工排查：docker compose logs mihomo" >&2
+            return
+        fi
+        echo "$now" >>"$WATCHDOG_STATE"
+        echo "[watchdog] 连续 $WATCHDOG_FAILS 次未见网卡 → 优雅停止 mihomo，交由 restart 策略重建实例（本窗口第 $((count + 1)) 次）" >&2
+        kill -TERM "$MIHOMO_PID" 2>/dev/null || true
+        return
+    done
+}
+
+if [ "$WATCHDOG" = "1" ]; then
+    watchdog &
+    echo "[watchdog] enabled (interval ${WATCHDOG_INTERVAL}s, ${WATCHDOG_FAILS} fails, max ${WATCHDOG_MAX_RESTARTS}/${WATCHDOG_WINDOW}s)"
+else
+    echo "[watchdog] disabled (WATCHDOG=0)"
+fi
+
+wait "$MIHOMO_PID"

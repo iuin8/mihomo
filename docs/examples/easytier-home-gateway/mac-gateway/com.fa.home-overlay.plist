@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 家侧 overlay 网关常驻服务（用户级 LaunchAgent）
+     安装：把下面两处 __HOME__ 换成实际家目录路径，然后
+       cp com.fa.home-overlay.plist ~/Library/LaunchAgents/
+       launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.fa.home-overlay.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fa.home-overlay</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/Library/Application Support/home-overlay/verge-mihomo-alpha</string>
+    <string>-d</string><string>__HOME__/Library/Application Support/home-overlay</string>
+    <string>-f</string><string>__HOME__/Library/Application Support/home-overlay/config.yaml</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/Library/Application Support/home-overlay/gateway.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Application Support/home-overlay/gateway.log</string>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>
