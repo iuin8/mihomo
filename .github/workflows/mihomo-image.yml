@@ -1,4 +1,9 @@
-name: mihomo image MAINCOPYTEST
+name: mihomo image
+
+# ⚠️ 本文件在 **main 与各功能分支上各有一份**，实测结论（2026-10-03）：`workflow_dispatch` 执行的是
+#    **默认分支（main）上那份定义**，`--ref` 只决定 checkout 用哪个提交的代码 —— 所以**改这个文件必须
+#    同时提交到 main**，否则触发时会静默地跑 main 上那份旧定义（症状：改了半天没生效，见 SOP §6.14）。
+#
 
 # 家侧网关镜像的发布通道：把 mihomo fork 的内核（含 TUN 模式）打成多架构镜像推到 GHCR，
 # 于是使用方只需要 docker compose up -d，不必再拉仓库源码、也不必本地编译。
