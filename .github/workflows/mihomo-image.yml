@@ -1,4 +1,4 @@
-name: mihomo image
+name: mihomo image MAINCOPYTEST
 
 # 家侧网关镜像的发布通道：把 mihomo fork 的内核（含 TUN 模式）打成多架构镜像推到 GHCR，
 # 于是使用方只需要 docker compose up -d，不必再拉仓库源码、也不必本地编译。
@@ -43,7 +43,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/mihomo
+          images: ghcr.io/iuin8/mihomo
           tags: |
             type=raw,value=latest
             type=sha,format=short
