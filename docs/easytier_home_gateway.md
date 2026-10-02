@@ -19,7 +19,7 @@
 ### Step 1：家侧起 mihomo（TUN 模式，推荐）
 
 **一键版见 [easytier_home_gateway_sop.md](easytier_home_gateway_sop.md)**。仓库已把三件硬性要求与内核编译
-都封装进 `examples/easytier-home-gateway/docker-compose.yml` + 已发布镜像 `ghcr.io/iuin8/mihomo`
+都封装进 `examples/easytier-home-gateway/home/docker-compose.yml` + 已发布镜像 `ghcr.io/iuin8/mihomo`
 （镜像=纯 mihomo ✓，特权与转发由 compose 提供 ✓；不再需要入口脚本或 NAT ✓，见 SOP §6.12–§6.13）：
 
 ```bash
@@ -50,7 +50,7 @@ $ ip -4 -o addr show | grep easytier0
 
 ### Step 2：本机 Clash 并入配置
 
-把 `examples/easytier-home-gateway/client-clash.yaml` 的 `proxies` 与 `rules` 并进 Clash 配置
+把 `examples/easytier-home-gateway/client/subscription.yaml` 的 `proxies` 与 `rules` 并进 Clash 配置
 （CVR 里放 merge profile 即可），改两处：`network-secret`、`peers`。
 
 ```yaml
@@ -173,11 +173,11 @@ dns:
 ## 四、方案 B 详解（家侧零特权 native 容器）
 
 适用：家侧不便给容器 `NET_ADMIN`/`/dev/net/tun`，或不想让家侧进程碰内核转发。文件在
-`examples/easytier-home-gateway/alt-native/`：`home-easytier-core.toml`（native 节点，`no_tun = true`，
+`examples/easytier-home-gateway/home/alt-native/`：`home-easytier-core.toml`（native 节点，`no_tun = true`，
 发布家里网段）、`docker-compose.yml`（**无 cap_add、无 /dev/net/tun、无 host 网络、无 iptables**）。
 
 ```bash
-cd docs/examples/easytier-home-gateway/alt-native
+cd docs/examples/easytier-home-gateway/home/alt-native
 # 1) 填 home-easytier-core.toml 的 network_secret  2) 改 compose 的 -n <家里网段>
 docker compose up -d
 docker compose logs -f --tail=50   # 期望 new listener added / new peer added
@@ -205,7 +205,7 @@ docker compose logs -f --tail=50   # 期望 new listener added / new peer added
 - 回退：
 
 ```bash
-docker compose down                       # 方案 A 家侧（在 examples/easytier-home-gateway/）
+docker compose down                       # 方案 A 家侧（在 examples/easytier-home-gateway/home/）
 cd alt-native && docker compose down      # 方案 B 家侧
 # 本机：移除 merge profile 里的 easytier 出站与那两条 IP-CIDR 规则
 ```

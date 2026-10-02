@@ -1,4 +1,4 @@
 # 运行时产物：overlay 节点身份（删了会在 overlay 里变成新节点）
-state/
+home/state/
 # 用 Dockerfile.prebuilt 时放这里的交叉编译产物
-mihomo-linux
+home/mihomo-linux

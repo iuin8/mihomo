@@ -56,7 +56,7 @@ docker compose exec mihomo iptables -t nat -S POSTROUTING | tail -1
 | CVR 的**带类型扩展条目**（`type: proxies` / `groups` / `rules`） | 条目文件里写 `prepend:` / `append:` / `delete:` | 这是 CVR 真正实现的 prepend 机制：`enhance/seq.rs::use_seq` + `enhance/mod.rs:349-357` 分别作用于 rules / proxies / proxy-groups |
 | 老式 Merge profile 里写 `prepend-proxies:` / `prepend-rules:` | **不要用** | 「键名自带类型前缀」的写法在上游 2.4.7 里只剩 `enhance/merge.rs` 的测试 fixture，没有实现；本 fork 的多订阅合并路径也不认 |
 
-用原生段名的完整片段见 `examples/easytier-home-gateway/client-clash.yaml`（含代理页分组）：
+用原生段名的完整片段见 `examples/easytier-home-gateway/client/subscription.yaml`（含代理页分组）：
 
 ```yaml
 proxies:
@@ -148,7 +148,7 @@ ping -c 3 <内网IP>
 | 小请求通、大流量卡住 | 走的是旧的历史方案或 no-TUN 路径 | 确认家侧 `tun: true` 生效 |
 | 两端一直不相遇 | 会合点不可达/端口没放开 | 家侧 `docker compose exec mihomo wget -qO- http://<会合点>:11010` 探活；确认 11010 tcp+udp 都放行 |
 | 构建卡在 `proxy.golang.org … i/o timeout` | 国内访问 Go 官方代理不通（Dockerfile 已默认换 goproxy.cn，若你本地改过或用了旧版本才会遇到） | 换源重试：`GOPROXY=https://goproxy.cn,direct docker compose build`；或走上方纯打包路径 |
-| 构建报 `COPY bin/ … not found` | `dockerfile:` 写成了裸 `Dockerfile`，命中了仓库根那个打包用的 Dockerfile | 保持默认（`docs/examples/easytier-home-gateway/Dockerfile`）；覆盖时也要带目录 |
+| 构建报 `COPY bin/ … not found` | `dockerfile:` 写成了裸 `Dockerfile`，命中了仓库根那个打包用的 Dockerfile | 保持默认（`docs/examples/easytier-home-gateway/home/Dockerfile`）；覆盖时也要带目录 |
 | `apk add` 卡住/超时 | Alpine 官方源在国内慢 | 默认已用中科大源；换源：`APK_MIRROR=mirrors.aliyun.com docker compose build` |
 | `path is not subpath of home directory or SAFE_PATHS: /tmp/...` | EasyTier 的 `state-dir` 必须在**内核自己的 home dir** 内。终端跑隔离实例时是 `-d /tmp/et-client`（所以 `/tmp/et-client/state` 合法），但 **CVR 的 home dir 是 `~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev`** → 放进 CVR 的配置里写 `/tmp/...` 必然被拒 | 放进 CVR 的配置**直接删掉 `state-dir` 那一行**（默认 `easytier/<代理名>`，就在 home dir 内，合法）。另外别把隔离用的整份配置当 CVR profile 导入——会顶掉你的订阅，正确做法是 merge profile 里的 `prepend-proxies` / `prepend-rules` |
 | 测 `10.144.0.2:9090` 连上但不回包 | 家侧 API 的 DNS-rebinding 保护（非本机来源直接关闭连接） | 别拿 API 当测试目标；用 LAN 上的普通服务，或 `--dns-query` 验 UDP |
@@ -174,7 +174,7 @@ docker compose down                 # 家侧（state/ 目录保留，证书身�
 ```
 
 > `./state` 目录保存 overlay 节点身份，**不要删**；删了会在 overlay 里变成新节点。
-> 家侧不便提权时改用 `examples/easytier-home-gateway/alt-native/`（零特权 native 容器，无 ICMP、吞吐低一档）。
+> 家侧不便提权时改用 `examples/easytier-home-gateway/home/alt-native/`（零特权 native 容器，无 ICMP、吞吐低一档）。
 
 ## 6. macOS 定案：不依赖 JIT 的内核（路线 B）
 
@@ -229,10 +229,6 @@ CVR 内核（服务模式 + TUN）  --socks5-->  用户态网关（launchd 常�
    rules: 10.x → 🏠 家里                     mixed-port 127.0.0.1:17899
 ```
 
-* 网关：`mac-gateway/`（`config.yaml` + `com.fa.home-overlay.plist`）
-  * 内核**用官方版即可**（实测：用户态下官方 JIT 内核跑 easytier 完全正常，内存 ~209MB；
-    解释器版同场景 ~435MB）。解释器版仅在"服务模式里跑 WASI"时才需要，而本架构已不需要那种组合
-  * 首次启动实例约 20 秒（懒启动），第 2 次起 ~0.1s；换内核/重启网关后第一请求请耐心等实例就绪
 * CVR 侧：把 `easytier` 出站换成 `type: socks5, server: 127.0.0.1, port: 17899, udp: true`，规则与分组不变
 * 特权只在 CVR 的服务模式下用（TUN 合法通道），WASI 只在用户态跑 → 两边各自都在"自然模式"里
 

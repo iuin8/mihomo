@@ -6,7 +6,7 @@
 #   1) 在**能出网且已有 Go 模块缓存**的机器上交叉编译（例如你的 Mac，在内网服务器上也可以）：
 #        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags with_gvisor -trimpath \
 #            -ldflags "-w -s -X 'github.com/metacubex/mihomo/constant.Version=v1.19.32-fa.1001'" \
-#            -o docs/examples/easytier-home-gateway/mihomo-linux .
+#            -o docs/examples/easytier-home-gateway/home/mihomo-linux .
 #      （家侧是 arm64 就把 GOARCH 换成 arm64；用 `uname -m` 确认，x86_64→amd64、aarch64→arm64）
 #      （不注入 -X 的话，`mihomo -v` 会显示源码里的占位值）
 #   2) 把 `mihomo-linux` 放到 docs/examples/easytier-home-gateway/ 下（scp 过去即可）
@@ -22,7 +22,7 @@ ARG APK_MIRROR=mirrors.ustc.edu.cn
 RUN if [ -n "$APK_MIRROR" ]; then sed -i "s#dl-cdn.alpinelinux.org#$APK_MIRROR#g" /etc/apk/repositories; fi \
  && apk add --no-cache iptables iproute2
 
-COPY docs/examples/easytier-home-gateway/mihomo-linux /usr/local/bin/mihomo
+COPY docs/examples/easytier-home-gateway/home/mihomo-linux /usr/local/bin/mihomo
 RUN chmod +x /usr/local/bin/mihomo
 ENTRYPOINT ["/usr/local/bin/mihomo"]
 CMD ["-d", "/root/.config/mihomo", "-f", "/root/.config/mihomo/config.yaml"]
