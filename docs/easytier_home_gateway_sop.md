@@ -354,3 +354,22 @@ WARN  [Service] service restarted the core (40 restarts so far); last exit: Kill
 
 结论与完整证据表已整理成可提交的上游 issue 草稿：`docs/easytier_service_mode_kill_issue.md`。
 在产品上，**§6.1 的解耦架构**仍是推荐形态（已连续稳定运行、TCP/UDP 均通、无需改动服务或系统）。
+
+### 6.6 终局证据：是**直接 SIGKILL**，没有礼貌停
+
+用内核自己的 `/logs` 流（`curl -N --unix-socket /var/run/clash-verge-service/users/501/verge-mihomo.sock 'http://localhost/logs?level=info'`，
+无需 sudo）在激发前就开始采集，然后发一条穿过 overlay 的真实连接：
+
+* 流本身是通的 ✓（采到大量正常 `[TCP] …` 行）；
+* **完全没有** `received interrupt, shutting down`（fix2 新加的信号点）；
+* **完全没有** `shutdown: cleaning up listeners` / `listeners closed` / `Mihomo shutting down`；
+* 内核在 +3.0 秒被换成新 pid，崩溃报告仍冻结（解释器内核 → 无 `CODESIGNING` 报告）。
+
+**结论**：执行者**直接用 `kill -9`**，没有先发 SIGINT —— 之前"SIGINT → 关停卡在 TUN 清理 → 超时升级"的假设**不成立** ✗。
+而 SIGKILL **不可捕获、不可防御** ✗ → **内核侧已无修复空间** ✓：无论内核怎么写，都无法阻止这次死亡。
+
+剩下的未知只有一个：**服务为什么决定直接 SIGKILL 一个正在正常服务的核心**。它的自身日志在编译期关闭
+（`ENABLE_LOGGING = false`）✗，IPC 又要求签名请求 ✗ → 想拿到答案就必须**自行构建并安装一份带日志的服务**
+（公开仓库可构建 ✓，但要以 root 替换系统守护进程 ✗，且服务与 App 之间的协议版本/签名必须匹配 ✗）。
+
+因此：**§6.1 的解耦架构**是当前唯一稳妥的生产形态 ✓；「一个 mihomo」需要先在上游层面解决服务的这次判定 ✓。
