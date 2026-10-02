@@ -130,3 +130,27 @@ supervisor's own `info!/warn!` messages go to log4rs, which is compiled off
 files. Answering it needs a locally built helper with logging enabled, and since
 the app verifies the installed helper's digest (`service_sha256` /
 `digest_mismatch`), that means touching both repositories.
+
+## Current status (2026-10-02, after the investigation closed)
+
+The kills stopped reproducing after the privileged service was **reinstalled**
+(the app's "reinstall service" flow), and the in-core easytier path now runs
+verbatim from upstream's v1.19.32 implementation (this fork's branch
+`fa/easytier-v1.19.32`) in the same service-mode core for tens of minutes with
+zero restarts, zero crash reports and a flat RSS. Every observation of a kill had
+been accompanied by `service owner status was unreadable` /
+`owner recovery (TransportFailure)` churn in the app log, and one of the service's
+five `stop_core()` call sites is an owner rollback - so the working hypothesis is
+that those SIGKILLs were an artifact of an owner-generation state left behind by
+repeatedly swapping the core under a running service, not of the overlay itself.
+
+What is still worth fixing upstream, independent of that hypothesis:
+
+* `stop_core()` reaches `terminate_process_inner`, which sends SIGTERM and then,
+  after exactly ten 100 ms polls, SIGKILLs unconditionally - with no log of its
+  own (the service's `info!/warn!` go to stdout, and launchd discards a daemon's
+  stdout when the plist has no StandardOutPath). A one-second grace with no
+  observable trace makes this class of failure very hard to attribute from
+  outside, which cost this investigation many hours.
+* The core's own log is written through a 64 KB / 500 ms buffered writer, so its
+  last lines before a hard kill can be lost even when the core did log them.
