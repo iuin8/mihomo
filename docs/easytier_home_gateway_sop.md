@@ -395,3 +395,31 @@ SIGTERM → 10 × 100ms → 若仍存活 → SIGKILL
 剩下的唯一盲区：这五个调用点里**是哪一个在跑**。服务的自身 `info!/warn!` 走 log4rs（编译期关闭 ✗），
 只有内核 stdout 会落盘 → 要回答它必须自建一份开启日志的服务；而 App 会校验服务的 `service_sha256`，
 所以那是一条**两个仓库都要动**的路。
+
+### 6.8 融合上游 #3215：内置 easytier 成为家里访问的主路径
+
+上游 v1.19.32 重写了 `adapter/outbound/easytier.go`（#3215：*restart EasyTier outbound after silent
+overlay failure*），自带监督循环：`StateRunning` 健康检查、`readyCh` 就绪通道、1s→30s 退避重启，
+并且**失败时会打日志**（`[EasyTier]… start failed: <原因>; retry in <退避>`）。
+
+融合分支 **`fa/easytier-v1.19.32`**（合并提交 `81d10d76`）：以上游实现为基，
+只重新挂上 fork-only 的部分 —— TUN 模式的五处位（选项 / 构造期校验 / 结构体 / `init` 里接包面 /
+`shutdown` 里先关设备）与 `init()` 的 panic 兜底。
+
+**丢弃**的两样东西值得记下来：
+
+* **自研重试状态机** —— 它每次失败都重跑 `init()` + `shutdown()`，而 **WASI 运行时没有随 `shutdown()`
+  释放**：内核 RSS 从 86MB 涨到 **1136MB**（≈2MB/s）。上游的 `loop()` 语义相同（同样是失败重启），
+  但至少**有日志**，所以同类问题下次能直接看到原因。
+* **构造期预 warm** —— 上游改为「调用方等 `readyCh` + 监督循环自动重启」，预 warm 不再需要。
+
+**当前生产形态**（一个 mihomo，主+备）：
+
+| 组件 | 角色 | overlay IP |
+| --- | --- | --- |
+| 内核内置 `et-core`（组 `🏠 家里` 首选） | **主路径**：家里内网 TCP/UDP 直通，无额外进程 | `10.144.0.9` |
+| 用户态网关（`home-overlay` socks5，组内可切换） | **兜底**：内置路径出问题时可一键切回 | `10.144.0.4` |
+
+注意：服务模式内核的终止机制仍是「SIGTERM → 1 秒 → SIGKILL」（§6.7），
+而历史那批「一用 easytier 就被杀」的现场，**重装服务（重置 owner 世代）后不再复现** —— 见 §6.5 的
+`owner recovery (TransportFailure)` 记录：那些 SIGKILL 更可能是被反复替换内核/重启搅乱的 **owner 会话状态**所致。
