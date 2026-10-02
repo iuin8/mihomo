@@ -373,3 +373,25 @@ WARN  [Service] service restarted the core (40 restarts so far); last exit: Kill
 （公开仓库可构建 ✓，但要以 root 替换系统守护进程 ✗，且服务与 App 之间的协议版本/签名必须匹配 ✗）。
 
 因此：**§6.1 的解耦架构**是当前唯一稳妥的生产形态 ✓；「一个 mihomo」需要先在上游层面解决服务的这次判定 ✓。
+
+### 6.7 服务侧的终止机制（来自它的源码）
+
+`clash-verge-rev/clash-verge-service-ipc`（安装版 2.7.4 的符号与之一致，`strings` 可验证 ✓）里，
+`src/core/process.rs` 的终止流程是**固定套路**：
+
+```
+SIGTERM → 10 × 100ms → 若仍存活 → SIGKILL
+```
+
+即**宽限期正好 1 秒**、且**无条件升级**。`stop_core()` 在 `src/core/server.rs` 有五个调用点
+（owner 启动切换 `stop_previous_core`、owner 回滚、显式停止命令、服务关停、启动失败），
+而 `manager.rs` 的 watchdog **不在其中** —— 它只 `child.wait()` 等内核退出然后重启（这就是
+`service restarted the core (N)` 的来源）。
+
+这也解释了「内核日志里什么都没有」：内核的日志是**同步写进宿主持有的管道**，
+管道一满，信号处理里的第一行日志就阻塞，关停永远走不到。fork 现在的做法是**先启动兜底再写日志**，
+并把兜底预算（700ms）压进宿主那 1 秒窗口 —— 于是内核会以「被正常停止」而不是「被杀」结束。
+
+剩下的唯一盲区：这五个调用点里**是哪一个在跑**。服务的自身 `info!/warn!` 走 log4rs（编译期关闭 ✗），
+只有内核 stdout 会落盘 → 要回答它必须自建一份开启日志的服务；而 App 会校验服务的 `service_sha256`，
+所以那是一条**两个仓库都要动**的路。

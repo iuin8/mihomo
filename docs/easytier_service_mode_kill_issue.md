@@ -96,3 +96,37 @@ only the supervisor's reason can be fixed. That reason is currently unobservable
 (its logging is compiled off, and its IPC rejects unsigned requests), so the
 next step would be a locally built helper with `ENABLE_LOGGING` enabled and the
 protocol version matched to the installed app.
+
+## The supervisor's tool, from its own source
+
+`clash-verge-rev/clash-verge-service-ipc` (the crate whose symbols are in the
+installed helper - verified with `strings` on
+`/Library/PrivilegedHelperTools/.../clash-verge-service`, version 2.7.4) has in
+`src/core/process.rs`:
+
+```rust
+warn!("Terminating process {}", pid);
+kill(pid, SIGTERM);
+for _ in 0..10 { if !alive { return } sleep(100ms) }
+warn!("Process {} did not exit, sending SIGKILL", pid);
+kill(pid, SIGKILL);
+```
+
+So the grace period is exactly one second, and the escalation is unconditional.
+`stop_core()` is reached from five places in `src/core/server.rs`: the owner
+start transition (`stop_previous_core`), an owner-rollback, the explicit stop
+command, service shutdown, and a start failure. `manager.rs`'s watchdog is not
+one of them - it only observes `child.wait()` and restarts.
+
+This also explains the empty core log: the core writes its log synchronously into
+a pipe held by the supervisor, so a full pipe blocks the signal handler before it
+can record anything. The fork now starts its own grace watchdog before that first
+write and keeps its budget (700ms) inside the supervisor's one second, so the core
+exits as stopped rather than killed.
+
+What remains unobservable is *which* of those five paths runs here: the
+supervisor's own `info!/warn!` messages go to log4rs, which is compiled off
+(`ENABLE_LOGGING = false`), while only the core's stdout is written to the log
+files. Answering it needs a locally built helper with logging enabled, and since
+the app verifies the installed helper's digest (`service_sha256` /
+`digest_mismatch`), that means touching both repositories.
