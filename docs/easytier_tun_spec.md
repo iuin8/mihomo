@@ -145,11 +145,11 @@ dns:
 
 ```bash
 # 目标侧（内网另一台机器上跑）：
-python3 docs/examples/easytier-home-gateway/tools/udp-echo-server.py --bind 0.0.0.0 --port 18001
+python3 docs/examples/easytier/tools/udp-echo-server.py --bind 0.0.0.0 --port 18001
 
 # 本机侧：TCP + UDP 一次跑完（UDP 走 SOCKS5 UDP ASSOCIATE；Docker/端口映射场景要带 --relay）
-bash docs/examples/easytier-home-gateway/tools/probe.sh 127.0.0.1:7891 172.32.0.2 18000 18001 /big.bin
-python3 docs/examples/easytier-home-gateway/tools/socks5-udp-probe.py \
+bash docs/examples/easytier/tools/probe.sh 127.0.0.1:7891 172.32.0.2 18000 18001 /big.bin
+python3 docs/examples/easytier/tools/socks5-udp-probe.py \
     --socks 127.0.0.1:7891 --relay 127.0.0.1:7891 --target 172.32.0.2 --port 18001 --payload tun-e2e
 ```
 

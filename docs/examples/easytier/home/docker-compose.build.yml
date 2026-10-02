@@ -9,8 +9,8 @@
 #   * 镜像名用本地 tag `mihomo:local`，与 GHCR 的镜像互不干扰；
 #   * 纯打包路径（不在容器里编译，最快、也不依赖 Go 代理）：
 #       GOOS=linux GOARCH=<uname -m 对应> CGO_ENABLED=0 go build -tags with_gvisor -trimpath \
-#           -ldflags '-w -s' -o docs/examples/easytier-home-gateway/home/mihomo-linux .
-#       HOME_DOCKERFILE=docs/examples/easytier-home-gateway/home/Dockerfile.prebuilt \
+#           -ldflags '-w -s' -o docs/examples/easytier/home/mihomo-linux .
+#       HOME_DOCKERFILE=docs/examples/easytier/home/Dockerfile.prebuilt \
 #         docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 services:
@@ -18,7 +18,7 @@ services:
     image: mihomo:local
     build:
       context: ../../../..
-      dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier-home-gateway/home/Dockerfile}
+      dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier/home/Dockerfile}
       args:
         # 国内默认走 goproxy.cn（官方代理 proxy.golang.org 会 i/o timeout）
         GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}

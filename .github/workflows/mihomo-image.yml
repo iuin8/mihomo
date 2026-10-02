@@ -57,7 +57,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: docs/examples/easytier-home-gateway/home/Dockerfile
+          file: docs/examples/easytier/home/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

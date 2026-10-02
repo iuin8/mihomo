@@ -40,13 +40,13 @@ TCP 20MB 校验一致（34.5–42.5 MB/s）、UDP 40 包 0% 丢包、`ping` 内�
 
 | 提交 | 内容 |
 | --- | --- |
-| `52a7970b` | 首版回家网关文档 + 推荐 native 家侧；含 `docs/examples/easytier-home-gateway/alt-dual-mihomo/{home-mihomo.yaml,client-clash.yaml}` 两个绕行配置 |
+| `52a7970b` | 首版回家网关文档 + 推荐 native 家侧；含 `docs/examples/easytier/alt-dual-mihomo/{home-mihomo.yaml,client-clash.yaml}` 两个绕行配置 |
 | `89809f26` | 追加"为什么会牵扯到协议层"（TUN vs 无 TUN 的数据面差异） |
 | `dcb322d9` | E2E 证据补全（当时的文档尚未移除绕行方案） |
 
 取回示例配置：
 
 ```bash
-git show 52a7970b:docs/examples/easytier-home-gateway/alt-dual-mihomo/home-mihomo.yaml
-git show 52a7970b:docs/examples/easytier-home-gateway/alt-dual-mihomo/client-clash.yaml
+git show 52a7970b:docs/examples/easytier/alt-dual-mihomo/home-mihomo.yaml
+git show 52a7970b:docs/examples/easytier/alt-dual-mihomo/client-clash.yaml
 ```
