@@ -491,6 +491,16 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ### 6.11 镜像通道验收结论 + 家侧切到 GHCR
 
+> ⚠️ **首次发布后必须做一次（否则匿名 pull 会被拒）**：GHCR 新建的包默认是 **private** ✗——
+> 匿名 `docker pull ghcr.io/iuin8/mihomo-home-gateway:…` 会返回 `error from registry: denied` ✗。
+> 需要包所有者点一次：<https://github.com/users/iuin8/packages/container/mihomo-home-gateway/settings>
+> → Danger Zone → **Change visibility → Public** ✓。
+>
+> 两个容易误判的点：
+> * `gh api /user/packages/...` 返回 **403/404** ✗ —— 那是因为 `gh` 的 OAuth token 默认**没有**
+>   `read:packages`/`write:packages` 权限 ✓，**不代表包是私有的** ✓（判断公开与否以匿名 `docker pull` 为准 ✓）。
+> * **改包名 = 新建一个包** ✗ —— 旧包不会自动消失，需要在 Packages 页面手动删除 ✓。
+
 **验收（2026-10-02，全部为匿名操作，不带任何凭据）**：
 
 | 项 | 结果 |
