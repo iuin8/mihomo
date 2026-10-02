@@ -488,3 +488,30 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | API 绑定 | `external-controller: 0.0.0.0:9090` ✗ | **`127.0.0.1:9090`** ✓（容器内探活/入口脚本都用回环 ✓）|
 | compose 默认路径 | 必须本地编译 ✗ | **默认拉 GHCR 镜像** ✓；自编译走 `docker-compose.build.yml` 覆盖 ✓ |
 | 发布产物源 | — | 官方 Alpine/Go 源 ✓（**不把国内镜像源烘进发布镜像** ✓；国内本地构建仍可用 `APK_MIRROR=`) |
+
+### 6.11 镜像通道验收结论 + 家侧切到 GHCR
+
+**验收（2026-10-02，全部为匿名操作，不带任何凭据）**：
+
+| 项 | 结果 |
+| --- | --- |
+| 多架构 manifest | `linux/amd64` ✓ + `linux/arm64` ✓（另有 docker 的 attestation manifest ✓）|
+| 匿名 `docker pull` | ✓ 成功（`ghcr.io/iuin8/easytier-home-gateway:v1.19.32-fa.1001`，约 7s）|
+| 包可见性 | **公开** ✓（匿名可拉 ✓）——注意 `gh` 的 OAuth token 默认**没有** `read:packages`，用 `gh api /user/packages/...` 查会 403 ✗；那只说明 token 范围不够，**不代表包是私有的** ✓ |
+| 镜像内版本 | `Mihomo Meta v1.19.32-fa.1001 linux arm64`（版本注入生效 ✓）|
+| 镜像内指纹 | 解释器补丁 **1** ✓ / 上游 #3215 监督 **1** ✓ / 旧泄漏重试 **0** ✓ / TUN 位 **3** ✓ |
+| 镜像体积 | 106MB ✓（alpine 3.24 ✓，含 iptables/ip ✓）|
+
+**家侧切到 GHCR（从"本地编译"改成"只用镜像"）**：
+
+```bash
+cd <家侧目录>                     # 里面应有 docker-compose.yml、home-mihomo-tun.yaml、state/
+# 1) 用仓库里新版的两个文件覆盖（新版 docker-compose.yml 默认拉 GHCR 镜像，不再 build）
+#    docker-compose.yml、home-mihomo-tun.yaml（后者把 API 收到 127.0.0.1）
+# 2) 切到钉版本并重启（state/ 不要动：overlay 节点身份在里面）
+GW_TAG=v1.19.32-fa.1001 docker compose pull mihomo
+GW_TAG=v1.19.32-fa.1001 docker compose up -d
+docker compose ps                 # 期望：healthy ✓
+```
+
+> 切换后如果出现"能连会合点但家里不通"，先查 §6.3：**同一 overlay 网络里每个客户端必须用唯一 ipv4** ✗。
