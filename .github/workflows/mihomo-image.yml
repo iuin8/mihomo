@@ -43,7 +43,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/easytier-home-gateway
+          images: ghcr.io/${{ github.repository_owner }}/mihomo
           tags: |
             type=raw,value=latest
             type=sha,format=short
