@@ -1,0 +1,66 @@
+name: easytier-home-gateway image
+
+# 家侧网关镜像的发布通道：把 mihomo fork 的内核（含 TUN 模式）打成多架构镜像推到 GHCR，
+# 于是使用方只需要 docker compose up -d，不必再拉仓库源码、也不必本地编译。
+#
+#   gh workflow run easytier-home-gateway-image.yml -f tag=v1.19.32-fa.1001
+#
+# 产物：ghcr.io/<owner>/easytier-home-gateway:latest / :sha-<short> / :<tag>
+#   <owner> 即本仓库所有者（iuin8）。镜像默认用官方 Alpine/Go 代理源，
+#   不把国内镜像源烘进发布产物（需要时用 compose 的 build 覆盖文件本地构建）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '额外镜像 tag（如 v1.19.32-fa.1001）；留空则只推 latest 与 sha-<short>'
+        required: false
+        default: ''
+      mihomo_version:
+        description: '写入内核的版本串（-X constant.Version），也是镜像里 mihomo -v 的输出'
+        required: false
+        default: 'Prerelease-Alpha'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/easytier-home-gateway
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docs/examples/easytier-home-gateway/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            MIHOMO_VERSION=${{ inputs.mihomo_version }}
+            GOPROXY=https://proxy.golang.org,direct
+            GOSUMDB=sum.golang.org
+            APK_MIRROR=
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
