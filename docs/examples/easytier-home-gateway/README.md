@@ -33,7 +33,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `docker-compose.build.yml` | 自编译覆盖文件（`-f docker-compose.yml -f docker-compose.build.yml … --build`）|
 | `Dockerfile` / `Dockerfile.prebuilt` | 多阶段构建：源码编本 fork 内核（含 TUN 模式）+ 预装 iptables；prebuilt 为纯打包路径 |
 | `home-mihomo-tun.yaml` | 家侧配置（`tun: true`，发布 `proxy-networks`；API 只绑 `127.0.0.1`） |
-| `state/` | 运行时生成：overlay 节点身份 + 看门狗计数，**别删** |
+| `state/` | 运行时生成：**overlay 节点身份**，别删（换了它 = 换一个节点 ✗）|
 
 ## 会合点（家侧无公网 / 不能端口映射时必需）
 

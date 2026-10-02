@@ -6,7 +6,7 @@
 #   * 构建上下文是 mihomo 仓库根目录（../../..），需要完整仓库源码与 Go 代理可达；
 #   * dockerfile 路径相对 **context（仓库根）** 解析，必须带目录——写成裸 `Dockerfile`
 #     会命中仓库根那个打包用的 Dockerfile（典型报错：COPY bin/ failed）；
-#   * 镜像名用本地 tag `easytier-home-gateway:local`，与 GHCR 的镜像互不干扰；
+#   * 镜像名用本地 tag `mihomo:local`，与 GHCR 的镜像互不干扰；
 #   * 纯打包路径（不在容器里编译，最快、也不依赖 Go 代理）：
 #       GOOS=linux GOARCH=<uname -m 对应> CGO_ENABLED=0 go build -tags with_gvisor -trimpath \
 #           -ldflags '-w -s' -o docs/examples/easytier-home-gateway/mihomo-linux .
