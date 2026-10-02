@@ -14,7 +14,14 @@ mkdir -p ~/easytier-home-gateway && cd ~/easytier-home-gateway
 docker compose up -d
 ```
 
-镜像：`ghcr.io/iuin8/mihomo-home-gateway`（多架构 amd64/arm64 ✓，由
+镜像：`ghcr.io/iuin8/mihomo`（多架构 amd64/arm64 ✓，由 `.github/workflows/easytier-home-gateway-image.yml` 构建）。
+
+> 这个镜像**默认就是"纯 mihomo"** —— 里面只有本 fork 的内核，没有任何内置配置，
+> 挂上你自己的 YAML 就能当通用代理容器用 ✓。
+> 只有传了网关相关 env（`NAT_INTERFACE` / `TRIGGER_PROXY` / `WATCHDOG` / `SKIP_NAT` / `API_BASE`，
+> 或显式 `GATEWAY=1`）才会启用家侧那三件事：NAT、触发出站懒启动、看门狗 ✓ —— 本目录的
+> `docker-compose.yml` 正是这样传的 ✓。
+（多架构 amd64/arm64 ✓，由
 `.github/workflows/easytier-home-gateway-image.yml` 构建）。
 生产建议钉版本：`GW_TAG=v1.19.32-fa.1001 docker compose up -d`。
 

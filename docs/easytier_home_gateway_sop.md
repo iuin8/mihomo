@@ -451,7 +451,11 @@ App 更新/恢复路径、以及 §6.4 那类 `CODESIGNING` 崩溃风险）→ �
 ### 6.10 家侧网关的镜像发布通道（不必再拉源码）
 
 CI：`.github/workflows/easytier-home-gateway-image.yml`（`workflow_dispatch`，多架构 `linux/amd64` + `linux/arm64`）
-产物：`ghcr.io/iuin8/mihomo-home-gateway:latest` / `:sha-<short>` / `:<tag>`
+产物：`ghcr.io/iuin8/mihomo:latest` / `:sha-<short>` / `:<tag>`
+
+> 镜像**默认是纯 mihomo**（无内置配置，挂自己的 YAML 即通用代理容器 ✓）；
+> 传了 `NAT_INTERFACE` / `TRIGGER_PROXY` / `WATCHDOG` / `SKIP_NAT` / `API_BASE` 或 `GATEWAY=1`
+> 才进入家侧网关模式（NAT + 触发懒启动 + 看门狗 ✓）。
 
 ```bash
 # 发布（把内核版本一并写进镜像里的 mihomo -v）
@@ -492,8 +496,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ### 6.11 镜像通道验收结论 + 家侧切到 GHCR
 
 > ⚠️ **首次发布后必须做一次（否则匿名 pull 会被拒）**：GHCR 新建的包默认是 **private** ✗——
-> 匿名 `docker pull ghcr.io/iuin8/mihomo-home-gateway:…` 会返回 `error from registry: denied` ✗。
-> 需要包所有者点一次：<https://github.com/users/iuin8/packages/container/mihomo-home-gateway/settings>
+> 匿名 `docker pull ghcr.io/iuin8/mihomo:…` 会返回 `error from registry: denied` ✗。
+> 需要包所有者点一次：<https://github.com/users/iuin8/packages/container/mihomo/settings>
 > → Danger Zone → **Change visibility → Public** ✓。
 >
 > 两个容易误判的点：
@@ -506,7 +510,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | 项 | 结果 |
 | --- | --- |
 | 多架构 manifest | `linux/amd64` ✓ + `linux/arm64` ✓（另有 docker 的 attestation manifest ✓）|
-| 匿名 `docker pull` | ✓ 成功（`ghcr.io/iuin8/mihomo-home-gateway:v1.19.32-fa.1001`，约 7s）|
+| 匿名 `docker pull` | ✓ 成功（`ghcr.io/iuin8/mihomo:v1.19.32-fa.1001`，约 7s）|
 | 包可见性 | **公开** ✓（匿名可拉 ✓）——注意 `gh` 的 OAuth token 默认**没有** `read:packages`，用 `gh api /user/packages/...` 查会 403 ✗；那只说明 token 范围不够，**不代表包是私有的** ✓ |
 | 镜像内版本 | `Mihomo Meta v1.19.32-fa.1001 linux arm64`（版本注入生效 ✓）|
 | 镜像内指纹 | 解释器补丁 **1** ✓ / 上游 #3215 监督 **1** ✓ / 旧泄漏重试 **0** ✓ / TUN 位 **3** ✓ |
