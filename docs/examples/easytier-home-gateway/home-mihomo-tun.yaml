@@ -19,7 +19,10 @@ bind-address: 0.0.0.0
 mode: rule
 log-level: info
 ipv6: false
-external-controller: 0.0.0.0:9090
+# 只绑回环：容器内 entrypoint 与健康检查都用 127.0.0.1 探它，
+# 这样即使以后把容器接到别的网络、或临时加了 9090 端口映射，API 也不会裸露出去。
+# 需要在宿主机上直接调 API 调试时，改成 0.0.0.0:9090 并在 compose 里显式加端口映射。
+external-controller: 127.0.0.1:9090
 
 proxies:
   - name: et-home

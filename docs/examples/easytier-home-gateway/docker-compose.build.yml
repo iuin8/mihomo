@@ -1,0 +1,29 @@
+# 自编译覆盖文件（可选）—— 不想用 GHCR 镜像、或改了内核代码时使用
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# 说明：
+#   * 构建上下文是 mihomo 仓库根目录（../../..），需要完整仓库源码与 Go 代理可达；
+#   * dockerfile 路径相对 **context（仓库根）** 解析，必须带目录——写成裸 `Dockerfile`
+#     会命中仓库根那个打包用的 Dockerfile（典型报错：COPY bin/ failed）；
+#   * 镜像名用本地 tag `easytier-home-gateway:local`，与 GHCR 的镜像互不干扰；
+#   * 纯打包路径（不在容器里编译，最快、也不依赖 Go 代理）：
+#       GOOS=linux GOARCH=<uname -m 对应> CGO_ENABLED=0 go build -tags with_gvisor -trimpath \
+#           -ldflags '-w -s' -o docs/examples/easytier-home-gateway/mihomo-linux .
+#       HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt \
+#         docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+services:
+  mihomo:
+    image: easytier-home-gateway:local
+    build:
+      context: ../../..
+      dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier-home-gateway/Dockerfile}
+      args:
+        # 国内默认走 goproxy.cn（官方代理 proxy.golang.org 会 i/o timeout）
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
+        GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
+        # Alpine 镜像源（置空 APK_MIRROR= 则用官方源；构建出的镜像里会保留该源，CI 发布时用官方源）
+        APK_MIRROR: ${APK_MIRROR:-mirrors.ustc.edu.cn}
+        # 注入版本号，否则 `mihomo -v` 显示源码占位值
+        MIHOMO_VERSION: ${MIHOMO_VERSION:-dev}

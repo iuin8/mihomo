@@ -8,15 +8,33 @@
 #   3) 不需要 iptables/MASQUERADE，也不需要打开 ip_forward（EasyTier 自行转发并做 SNAT）。
 #   4) 默认 bridge 网络 + 端口映射即可，无需 host 网络。
 #
+# 版本策略：**钉住 easytier 官方镜像的版本 tag**，不要用 latest。
+#   升级流程：先在家侧机器 `docker compose pull` → 观察一次重启后的连通性 → 再提交改动。
+#   当前钉 v2.6.4（多架构 amd64/arm64/arm/riscv64）。
+#
+# 端口说明：11010 只在"家侧有公网 IP / 能做端口映射"时才有意义；
+#   家侧在 NAT 后面时两端都靠会合点中继，**可以不发布任何端口**（删掉整个 ports 段即可）。
+#
+# 健康检查说明：容器主进程就是 easytier-core（镜像 entrypoint 是 tini → easytier-core），
+#   它退出容器即退出 → `restart: unless-stopped` 已经覆盖"进程挂了自动拉起"，
+#   因此这里**不需要**额外的 healthcheck（多加一个只会引入误报）。
+#
 # 若将来需要 ICMP 或家侧主动访问其他 overlay 节点：
 #   改为 host 网络 + cap_add: [NET_ADMIN] + devices: ["/dev/net/tun:/dev/net/tun"]，
 #   并把 home-easytier-core.toml 的 no_tun 改成 false。
 
 services:
   easytier:
-    image: easytier/easytier:latest
+    image: easytier/easytier:v2.6.4
     container_name: easytier
     restart: unless-stopped
+
+    # 零特权容器：不允许进程通过 setuid/文件能力再提权
+    security_opt:
+      - no-new-privileges:true
+
+    # 上限保护：家侧只做转发，实测 RSS 很低，512m 足够
+    mem_limit: 512m
 
     ports:
       - "11010:11010/tcp"

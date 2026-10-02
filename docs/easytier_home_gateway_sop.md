@@ -447,3 +447,44 @@ overlay failure*），自带监督循环：`StateRunning` 健康检查、`readyC
 即 JIT 只在用户态省 ~60MB，**服务模式无收益** ✗ —— 服务模式多出的 ~300MB 来自内核自身
 （TUN + gVisor + 48 个代理），而非 WASI 实例；而 JIT 需要**开发者证书签名**（证书有效期、
 App 更新/恢复路径、以及 §6.4 那类 `CODESIGNING` 崩溃风险）→ 故保留解释器版为生产形态。
+
+### 6.10 家侧网关的镜像发布通道（不必再拉源码）
+
+CI：`.github/workflows/easytier-home-gateway-image.yml`（`workflow_dispatch`，多架构 `linux/amd64` + `linux/arm64`）
+产物：`ghcr.io/iuin8/easytier-home-gateway:latest` / `:sha-<short>` / `:<tag>`
+
+```bash
+# 发布（把内核版本一并写进镜像里的 mihomo -v）
+gh workflow run easytier-home-gateway-image.yml -R iuin8/mihomo --ref <branch> \
+  -f tag=v1.19.32-fa.1001 -f mihomo_version=v1.19.32-fa.1001
+```
+
+**用镜像起家侧**（不需要仓库源码、不需要本地 Go）：
+
+```bash
+mkdir -p ~/easytier-home-gateway && cd ~/easytier-home-gateway
+# 只需从仓库取两个文件：docker-compose.yml + home-mihomo-tun.yaml
+# 改 home-mihomo-tun.yaml 中三处「改这里」：network-secret / peers / proxy-networks
+docker compose up -d
+GW_TAG=v1.19.32-fa.1001 docker compose up -d      # 生产建议钉版本
+```
+
+**自编译**（改了内核代码、或拉不到 GHCR）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
+
+**本轮容器侧修正**（都是生产级问题，不是风格偏好）：
+
+| 项 | 之前 | 现在 |
+| --- | --- | --- |
+| 构建镜像 | `golang:1.25` ✗（落后于仓库/CI 的 1.26）| **`golang:1.26-alpine`** ✓ |
+| 运行镜像 | `alpine:3.20` ✗（已 EOL）| **`alpine:3.24`** ✓ |
+| 版本注入 | 无 ✗ → `mihomo -v` 显示源码占位值 `1.10.0` | 注入 `constant.Version` ✓ |
+| easytier 镜像 | `easytier/easytier:latest` ✗（不可复现）| **钉 `v2.6.4`** ✓（升级流程写进注释 ✓）|
+| 容器加固 | 无 | `no-new-privileges` ✓ + `mem_limit` ✓（家侧 mihomo 1g / native 512m）|
+| 健康检查 | 无 | 家侧 mihomo 加 API 探活 ✓；native 方案主进程即服务，`restart: unless-stopped` 已覆盖 ✓ |
+| API 绑定 | `external-controller: 0.0.0.0:9090` ✗ | **`127.0.0.1:9090`** ✓（容器内探活/入口脚本都用回环 ✓）|
+| compose 默认路径 | 必须本地编译 ✗ | **默认拉 GHCR 镜像** ✓；自编译走 `docker-compose.build.yml` 覆盖 ✓ |
+| 发布产物源 | — | 官方 Alpine/Go 源 ✓（**不把国内镜像源烘进发布镜像** ✓；国内本地构建仍可用 `APK_MIRROR=`) |

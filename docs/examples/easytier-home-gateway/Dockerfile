@@ -8,10 +8,12 @@
 #    换源（任何可用代理都行）：
 #      docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/,direct
 #    完全不想在容器里编译（最快、也不依赖 Go 代理）：见 Dockerfile.prebuilt
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 
 ARG GOPROXY=https://goproxy.cn,direct
 ARG GOSUMDB=sum.golang.google.cn
+# 版本号注入：不注入的话 `mihomo -v` 会显示源码里的占位值（1.10.0）
+ARG MIHOMO_VERSION=dev
 ENV GOPROXY=${GOPROXY} \
     GOSUMDB=${GOSUMDB} \
     CGO_ENABLED=0
@@ -23,9 +25,11 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -tags with_gvisor -trimpath -ldflags '-w -s' -o /out/mihomo .
+    go build -tags with_gvisor -trimpath \
+      -ldflags "-w -s -X 'github.com/metacubex/mihomo/constant.Version=${MIHOMO_VERSION}'" \
+      -o /out/mihomo .
 
-FROM alpine:3.20
+FROM alpine:3.24
 # 国内网络可换 Alpine 镜像源（默认已用中科大；置空则用官方源）
 ARG APK_MIRROR=mirrors.ustc.edu.cn
 RUN if [ -n "$APK_MIRROR" ]; then sed -i "s#dl-cdn.alpinelinux.org#$APK_MIRROR#g" /etc/apk/repositories; fi \

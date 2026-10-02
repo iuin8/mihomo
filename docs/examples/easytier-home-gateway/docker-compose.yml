@@ -1,11 +1,17 @@
-# 家侧网关（方案 A：mihomo TUN 模式）——— 一键启动
+# 家侧网关（方案 A：mihomo TUN 模式）——— 直接用镜像，一键启动
 #
-#   cd mihomo/docs/examples/easytier-home-gateway     # 需要本 fork 的完整仓库（要编译内核）
 #   1) 编辑 home-mihomo-tun.yaml：network-secret / proxy-networks（家里网段）/ peers（会合点）
 #   2) 多网卡时改下面的 NAT_INTERFACE（单网卡保持 eth0）
-#   3) docker compose up -d                            # 首次会自动编译内核，之后秒起
+#   3) docker compose up -d
 #
-# 需要家侧机器能出网拉取基础镜像；构建一次后镜像缓存在本机，重启用 restart: unless-stopped 自动拉起。
+# 默认从 GHCR 拉取已构建好的镜像（不需要仓库源码，也不需要本地 Go/编译）：
+#   ghcr.io/iuin8/easytier-home-gateway
+# 镜像由本仓库的 .github/workflows/easytier-home-gateway-image.yml 构建（多架构 amd64/arm64）。
+#
+# 想自己编译内核（改了代码、或拉不到 GHCR）时用构建覆盖文件：
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# 需要家侧机器能出网拉取镜像；镜像缓存在本机，重启用 restart: unless-stopped 自动拉起。
 #
 # 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
 # ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
@@ -14,23 +20,8 @@ name: easytier-home-gateway
 
 services:
   mihomo:
-    build:
-      context: ../../..                                  # mihomo 仓库根目录
-      # 默认在容器里编译内核；不想编译（或 Go 代理不可达）时改用纯打包路径：
-      #   GOOS=linux GOARCH=<uname -m 对应> CGO_ENABLED=0 go build -tags with_gvisor \
-      #       -trimpath -ldflags '-w -s' -o docs/examples/easytier-home-gateway/mihomo-linux .
-      #   HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt docker compose up -d --build
-      #
-      # 注意：dockerfile 路径是相对 **context（仓库根）** 解析的，必须带目录——
-      # 写成裸 `Dockerfile` 会命中仓库根那个打包用的 Dockerfile（典型报错：COPY bin/ failed）。
-      dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier-home-gateway/Dockerfile}
-      args:
-        # 国内默认走 goproxy.cn（官方代理 proxy.golang.org 会 i/o timeout）
-        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
-        GOSUMDB: ${GOSUMDB:-sum.golang.google.cn}
-        # Alpine 镜像源（置空 APK_MIRROR= 则用官方源）
-        APK_MIRROR: ${APK_MIRROR:-mirrors.ustc.edu.cn}
-    image: easytier-home-gateway:local
+    # 生产建议钉版本而不是 latest：GW_TAG=v1.19.32-fa.1001 docker compose up -d
+    image: ghcr.io/iuin8/easytier-home-gateway:${GW_TAG:-latest}
     container_name: mihomo-home
     restart: unless-stopped
 
@@ -43,6 +34,13 @@ services:
     # 三件硬性要求之二：容器内 /proc/sys 只读，转发开关只能在这里注入
     sysctls:
       net.ipv4.ip_forward: 1
+
+    # 硬性要求之外的最小权限收敛：容器内不需要再提权
+    security_opt:
+      - no-new-privileges:true
+
+    # 上限保护：实测稳态 ~200MB，1g 留足余量，同时避免异常时吃满宿主机内存
+    mem_limit: 1g
 
     environment:
       # 三件硬性要求之三：MASQUERADE 由 entrypoint.sh 自动加在这张网卡上
@@ -58,6 +56,15 @@ services:
       WATCHDOG_FAILS: "3"              # 连续 3 次异常才动作
       WATCHDOG_MAX_RESTARTS: "3"       # 窗口内最多 3 次
       WATCHDOG_WINDOW: "3600"          # 窗口 = 1 小时
+
+    # 容器级健康检查（探内核 API）：内核挂了但入口脚本还在时，这里会报 unhealthy，
+    # docker compose ps 与外部监控都能立刻看到（实例级自愈由上面的 WATCHDOG 负责）
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
     volumes:
       - ./home-mihomo-tun.yaml:/root/.config/mihomo/config.yaml:ro
