@@ -532,7 +532,7 @@ docker compose ps                 # 期望：healthy ✓
 * **怎么才能不用它**（三种，按代价排序）：
   1. **改成"被路由"**：`SKIP_NAT=1` + 在**需要访问的机器**上加一条静态路由
      `ip route add 10.144.0.0/24 via <本机内网IP>` ✓ —— 不用 NAT ✓，而且家里内网能看到**真实客户端 overlay IP** ✓（日志/ACL 更清楚 ✓）。代价：要碰那几台机器 ✗（**不需要改路由器** ✓，符合原始约束 ✓）。
-  2. **待验证的免费午餐** ✗：EasyTier 在 native（`no_tun`）模式下**自己会做 SNAT** ✓（见 `alt-native/docker-compose.yml` 的说明 ✓），TUN 模式下是否同样如此**尚未实测** ✗ —— 值得在家侧做一次实验：设 `SKIP_NAT=1` ✓，从客户端 `curl`/`ping` 内网机器 ✓；若通 ✓ 则这一步 NAT 也可删掉 ✓✓。
+  2. **待验证的免费午餐** ✗：EasyTier 在 native（`no_tun`）模式下**自己会做 SNAT** ✓（见 `home/alt-native/docker-compose.yml` 的说明 ✓），TUN 模式下是否同样如此**尚未实测** ✗ —— 值得在家侧做一次实验：设 `SKIP_NAT=1` ✓，从客户端 `curl`/`ping` 内网机器 ✓；若通 ✓ 则这一步 NAT 也可删掉 ✓✓。
   3. **改用 native 方案（方案 B）** ✓：没有 TUN、没有 iptables ✓，EasyTier 内部 SNAT ✓ —— 代价是**没有 ICMP**、吞吐 ~8.4 MB/s ✓。
 * ~~**它不算妥协的原因**~~ → **已被本节下面的实验推翻** ✗：当时以为 SNAT 是拓扑必然 ✓，实测证明 EasyTier 自己就会 SNAT ✓，因此这条 NAT 连同入口脚本**整个删掉了** ✗；本段保留为决策过程记录 ✓。
 * 现在真正剩下的只有两件事 ✓：`cap_add NET_ADMIN` + `/dev/net/tun`（建 TUN）与 `sysctls ip_forward=1`（转发），都在 compose 里 ✓。

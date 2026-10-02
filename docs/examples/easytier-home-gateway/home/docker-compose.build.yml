@@ -17,7 +17,7 @@ services:
   mihomo:
     image: mihomo:local
     build:
-      context: ../../..
+      context: ../../../..
       dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier-home-gateway/home/Dockerfile}
       args:
         # 国内默认走 goproxy.cn（官方代理 proxy.golang.org 会 i/o timeout）
