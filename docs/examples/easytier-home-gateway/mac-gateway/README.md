@@ -1,3 +1,7 @@
+# ⚠️ 已退役（历史方案）：这套 macOS 用户态网关自 2026-10-02 起不再使用。
+# 现网形态是单内核（CVR 服务模式内核内置 easytier 出站 + 家侧 TUN 网关），见 SOP 6.9 / 6.12。
+# 本目录保留作为回滚与排障参考（退役操作：launchctl bootout + launchctl disable）。
+
 # 家侧 overlay 网关（macOS 客户端，用户态）
 
 服务模式（root + TUN）的内核**不能**跑 easytier：WASI 实例启动会挂住，被服务看门狗 SIGKILL

@@ -19,7 +19,8 @@
 ### Step 1：家侧起 mihomo（TUN 模式，推荐）
 
 **一键版见 [easytier_home_gateway_sop.md](easytier_home_gateway_sop.md)**。仓库已把三件硬性要求与内核编译
-都封装进 `examples/easytier-home-gateway/docker-compose.yml`（`entrypoint.sh` 自动配 NAT、`Dockerfile` 自动编本 fork 内核）：
+都封装进 `examples/easytier-home-gateway/docker-compose.yml` + 已发布镜像 `ghcr.io/iuin8/mihomo`
+（镜像=纯 mihomo ✓，特权与转发由 compose 提供 ✓；不再需要入口脚本或 NAT ✓，见 SOP §6.12–§6.13）：
 
 ```bash
 cd docs/examples/easytier-home-gateway

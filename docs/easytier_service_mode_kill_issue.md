@@ -1,3 +1,7 @@
+> ✅ 已发布：本文已整理为上游 issue
+> https://github.com/clash-verge-rev/clash-verge-service-ipc/issues/83
+> （两个可观测性缺口：1 秒 SIGTERM→SIGKILL 且服务自身日志被 launchd 丢弃；内核日志 64KB/500ms 缓冲）
+
 # Draft upstream issue: easytier outbound takes down the core in macOS service mode
 
 > 目标仓库：`MetaCubeX/mihomo`（内核侧）/ `clash-verge-rev/clash-verge-rev`（服务侧）

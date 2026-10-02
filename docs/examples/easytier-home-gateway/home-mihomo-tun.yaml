@@ -11,15 +11,16 @@
 #    结果就是又回到 no-TUN——表现为代理子网 TCP 不通、ICMP 不可用，且没有任何报错提示。
 #    docker-compose.yml 会自动用本仓库源码编译，无需你手动准备二进制。
 #
-# 三件硬性要求已由 docker-compose.yml + entrypoint.sh 自动满足
-# （NET_ADMIN + /dev/net/tun、ip_forward=1、MASQUERADE），你只需改下面标了「改这里」的两处。
+# 两个硬性要求由 docker-compose.yml 满足（NET_ADMIN + /dev/net/tun、ip_forward=1）；
+# NAT 不需要 —— 实测 EasyTier 在 TUN 模式下自己会 SNAT（SOP §6.13）✓。
+# 你只需改下面标了「改这里」的几处，并保留 prewarm: true（家侧必需）。
 mixed-port: 7890
 allow-lan: true
 bind-address: 0.0.0.0
 mode: rule
 log-level: info
 ipv6: false
-# 只绑回环：容器内 entrypoint 与健康检查都用 127.0.0.1 探它，
+# 只绑回环：容器内的健康检查用 127.0.0.1 探它，
 # 这样即使以后把容器接到别的网络、或临时加了 9090 端口映射，API 也不会裸露出去。
 # 需要在宿主机上直接调 API 调试时，改成 0.0.0.0:9090 并在 compose 里显式加端口映射。
 external-controller: 127.0.0.1:9090

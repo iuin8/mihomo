@@ -6,6 +6,9 @@ description: >-
   SSH system proxy 冲突。不用于普通 release 或 Prerelease-Alpha。
 ---
 
+> **发布线**：mihomo fork 的默认分支是 **`fa/trunk`**（fork 的发布主线）✓ —— 发布/预发布类触发一律
+> `--ref fa/trunk` ✓；feature 线先合进 `fa/trunk` ✓ 再打 tag ✓。
+
 # Upstream Sync — mihomo
 
 ## 边界

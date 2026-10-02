@@ -6,6 +6,9 @@ description: >-
   不用于刷新 `Prerelease-Alpha`。
 ---
 
+> **发布线**：mihomo fork 的默认分支是 **`fa/trunk`**（fork 的发布主线）✓ —— 发布/预发布类触发一律
+> `--ref fa/trunk` ✓；feature 线先合进 `fa/trunk` ✓ 再打 tag ✓。
+
 # Release — mihomo
 
 ## 边界

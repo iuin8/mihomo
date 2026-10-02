@@ -15,7 +15,7 @@
 
 services:
   mihomo:
-    image: easytier-home-gateway:local
+    image: mihomo:local
     build:
       context: ../../..
       dockerfile: ${HOME_DOCKERFILE:-docs/examples/easytier-home-gateway/Dockerfile}

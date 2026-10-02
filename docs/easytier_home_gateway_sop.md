@@ -20,61 +20,15 @@
 不需要 fail2ban、中继流量也只属于你自己的网络。用仓库里的
 `examples/easytier-home-gateway/rendezvous/docker-compose.yml`：
 
-```bash
-# 在云服务器上（把文件拷过去，改一行密钥，然后一条命令）
-mkdir -p /root/easytier-rendezvous
-scp 本仓库/mihomo/docs/examples/easytier-home-gateway/rendezvous/docker-compose.yml \
-    root@<云服务器>:/root/easytier-rendezvous/
-ssh root@<云服务器>
-cd /root/easytier-rendezvous
-vi docker-compose.yml          # 改 network-secret 一处（与家侧/客户端一致）
-docker compose up -d
-docker compose logs --tail=20  # 期望看到一堆 new listener added
-```
-
-**云安全组 / 防火墙放行 `11010` 的 tcp 与 udp**（udp 用于 P2P 探测与中继）。
-记下公网 IP，家侧与客户端都填 `peers: ["tcp://<公网IP>:11010"]`。
-
-> 不 clone 仓库、也不想用 compose 的话，等价的一条命令是：
-> `docker run -d --name easytier-rendezvous --restart unless-stopped -p 11010:11010/tcp -p 11010:11010/udp easytier/easytier:latest`
-> —— 但那是**公共共享节点**（任何网络的节点都能连），要给社区做贡献再用它，并按官方文档配 fail2ban。
-> 想两者兼顾：公共模式 + `--relay-network-whitelist --relay-all-peer-rpc`（只帮忙打洞、不转发别人的数据）。
-
-## 1. 家侧部署（约 10 分钟）
-
-```bash
-git clone <本 fork 仓库> && cd mihomo/docs/examples/easytier-home-gateway
-
-# 改 home-mihomo-tun.yaml 里标了「改这里」的三处：
-#   network-secret  与客户端一致的强密钥
-#   peers           ["tcp://<会合点公网IP>:11010"]
-#   proxy-networks  ["<家里网段>"]
-
-docker compose up -d          # 首次自动编译本 fork 内核（实测约 1m40s），之后秒起
-docker compose logs -f mihomo # 期望依次看到下面三行
-```
-
-> **国内网络**：Dockerfile 已默认走 `goproxy.cn`（官方代理 `proxy.golang.org` 在国内会 i/o timeout）
-> 与中科大 Alpine 源。要换源：`GOPROXY=https://mirrors.aliyun.com/goproxy/,direct docker compose build`。
-> 完全不想在容器里编译（也不依赖 Go 代理）→ 用纯打包路径，构建只要几秒：
->
-> ```bash
-> # 在能出网的机器上（例如你的 Mac）：交叉编译出内核
-> GOOS=linux GOARCH=<uname -m 对应：x86_64→amd64, aarch64→arm64> CGO_ENABLED=0 \
->     go build -tags with_gvisor -trimpath -ldflags '-w -s' \
->     -o docs/examples/easytier-home-gateway/mihomo-linux .
-> # 把 mihomo-linux 放到同一目录后：
-> HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt docker compose up -d --build
-> ```
-
 ```text
-[entrypoint] added MASQUERADE on eth0                                        # NAT 自动配好
-[entrypoint] starting mihomo (NAT interface: eth0, ip_forward: 1)            # 转发已注入
-[entrypoint] easytier TUN is up: easytier0 10.144.0.2/24                     # 网关就绪
+[EasyTier](et-home) instance 8b7e138a-... running          # 实例已起（prewarm 生效）
+[EasyTier](et-home) tun mode enabled on 10.144.0.2/24      # TUN 已建 = 网关就绪
+[EasyTier](et-home) peer_added: PeerAdded(...)             # 已发现对端
 ```
 
-> 出站是**懒启动**的：没人用它时 EasyTier 实例不会启动、TUN 也不会创建。entrypoint 已自动触发
-> （通过 `TRIGGER_PROXY`，默认 `et-home`）；如果你改了出站名，记得同步这个环境变量。
+> 出站是**懒启动**的：没人用它时 EasyTier 实例不会启动、TUN 也不会创建 ✗。家侧因此**必须**在配置里写
+> `prewarm: true` ✓（内核构造完就把实例起起来 ✓）—— 这是家侧配置里唯一的"服务端专属"设置 ✓，
+> 不再有任何环境变量或入口脚本参与（见 §6.12）✓。
 > 家侧必须开机就位——这里存在死锁：客户端要连进来要求家侧已在 overlay 上，而家侧自己没有流量
 > 会把该出站当代理用，所以它**永远不会自启**。客户端侧相反：保持懒启动更好（首次访问家里时才建实例）。
 > `docker stop` 是**优雅退出**（实测 0.12s，不会等 10s 被 SIGKILL）。
@@ -88,7 +42,8 @@ docker compose exec mihomo iptables -t nat -S POSTROUTING | tail -1
 #   期望：-A POSTROUTING -o eth0 -j MASQUERADE
 ```
 
-> 多网卡（容器接了内网/办公网两张网）时，把 `docker-compose.yml` 的 `NAT_INTERFACE` 改成连内网那张网卡名。
+> 多网卡无需改任何东西 ✓（镜像不做 NAT，NAT_INTERFACE 已删除 ✓；TUN 由内核建 ✓）；
+> 唯一需要的是 `cap_add NET_ADMIN` + `/dev/net/tun` 与 `ip_forward=1` ✓（compose 已给 ✓）。
 > 家侧不需要任何端口映射，也不需要公网 IP —— 它靠出站连会合点。
 
 ## 2. 本机 CVR 配置（约 5 分钟）
@@ -188,7 +143,7 @@ ping -c 3 <内网IP>
 | 现象 | 原因 | 处置 |
 | --- | --- | --- |
 | 家侧日志没有 `tun mode enabled` | 内核不是本 fork 构建的（上游会静默忽略 `tun: true`） | 用本仓库的 `docker compose up -d --build` 重建；别用官方镜像 |
-| 两条验收命令任一不过 | 缺 `NET_ADMIN`/`/dev/net/tun`、`ip_forward`、或网卡名错 | 见 `entrypoint.sh` 的 WARN 日志；改 `NAT_INTERFACE` |
+| 两条验收命令任一不过 | 缺 `NET_ADMIN`/`/dev/net/tun`，或缺 `ip_forward` | 看**内核日志**：`tun mode enabled` 没出现就是没起来 ✓（通常是设备或能力缺失 ✓）；`ip_forward` 由 compose 的 `sysctls` 注入 ✓ |
 | 客户端日志出现 `match MATCH using DIRECT` | 规则没生效或网段写错 | 检查 `prepend-rules` 与网段是否精确 |
 | 小请求通、大流量卡住 | 走的是旧的历史方案或 no-TUN 路径 | 确认家侧 `tun: true` 生效 |
 | 两端一直不相遇 | 会合点不可达/端口没放开 | 家侧 `docker compose exec mihomo wget -qO- http://<会合点>:11010` 探活；确认 11010 tcp+udp 都放行 |
@@ -453,13 +408,13 @@ App 更新/恢复路径、以及 §6.4 那类 `CODESIGNING` 崩溃风险）→ �
 CI：`.github/workflows/mihomo-image.yml`（`workflow_dispatch`，多架构 `linux/amd64` + `linux/arm64`）
 产物：`ghcr.io/iuin8/mihomo:latest` / `:sha-<short>` / `:<tag>`
 
-> 镜像**默认是纯 mihomo**（无内置配置，挂自己的 YAML 即通用代理容器 ✓）；
-> 传了 `NAT_INTERFACE` / `TRIGGER_PROXY` / `WATCHDOG` / `SKIP_NAT` / `API_BASE` 或 `GATEWAY=1`
-> 才进入家侧网关模式（NAT + 触发懒启动 + 看门狗 ✓）。
+> 镜像**就是纯 mihomo** ✓：没有入口脚本、没有环境变量、没有内置配置 ✓，行为全部来自挂载的 config ✓
+> （家侧的 `prewarm: true` 写在 config 里 ✓；`NET_ADMIN`/TUN 设备/`ip_forward` 由 compose 提供 ✓）。
+> NAT / 看门狗 / 存活看护 / 触发懒启动这四样自研逻辑均已删除，原因与实测见 §6.12–§6.13 ✓。
 
 ```bash
 # 发布（把内核版本一并写进镜像里的 mihomo -v）
-gh workflow run mihomo-image.yml -R iuin8/mihomo --ref <branch> \
+gh workflow run mihomo-image.yml -R iuin8/mihomo --ref fa/trunk \
   -f tag=v1.19.32-fa.1001 -f mihomo_version=v1.19.32-fa.1001
 ```
 
