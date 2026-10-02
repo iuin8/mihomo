@@ -87,8 +87,13 @@ type EasyTierOption struct {
 	DisableQUICInput    *bool    `proxy:"disable-quic-input,omitempty"`
 	MTU                 int      `proxy:"mtu,omitempty"`
 	// FORK(easytier-tun): 宿主 TUN 模式；tun-routes 为 pin 进该设备的前缀列表。
-	Tun             bool     `proxy:"tun,omitempty"`
-	TunRoutes       []string `proxy:"tun-routes,omitempty"`
+	Tun       bool     `proxy:"tun,omitempty"`
+	TunRoutes []string `proxy:"tun-routes,omitempty"`
+	// FORK(easytier-prewarm): 服务端角色（如家里那台网关）不会有任何流量把这个出站当代理用，
+	// 懒启动因此永远不会发生 —— 实例不启动、TUN 不创建，客户端根本连不进来。
+	// 置 true 表示"构造完就把它起起来"。实现上只调用一次上游的 ensureStarted()，
+	// 之后的健康检查与重建由上游 loop() 负责，不会出现重复 init/shutdown 式的泄漏。
+	Prewarm         bool     `proxy:"prewarm,omitempty"`
 	TLDDNSZone      string   `proxy:"tld-dns-zone,omitempty"`
 	SecureMode      *bool    `proxy:"secure-mode,omitempty"`
 	LocalPrivateKey string   `proxy:"local-private-key,omitempty"`
@@ -189,6 +194,14 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
 	outbound.unregister = dns.RegisterEasyTierDnsClient(option.Name, easyTierDNSTransport{easytier: outbound})
+	if option.Prewarm {
+		// FORK(easytier-prewarm): 只调一次；阻塞在这个 goroutine 里等就绪，失败/中断都由上游 loop() 处理
+		go func() {
+			if err := outbound.ensureStarted(context.Background()); err != nil {
+				log.Warnln("[EasyTier](%s) prewarm: %v", option.Name, err)
+			}
+		}()
+	}
 	return outbound, nil
 }
 

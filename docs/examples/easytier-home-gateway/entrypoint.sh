@@ -3,39 +3,44 @@
 #
 # 两种模式：
 #   1) **纯 mihomo（默认）**：没有传任何网关相关环境变量时走这里 —— 直接 exec 内核，
-#      不做 NAT、不触发出站、不开看门狗。适合"挂自己的配置当容器里的代理"。
-#   2) **家侧网关模式**：只要传了 NAT_INTERFACE / TRIGGER_PROXY / WATCHDOG / SKIP_NAT / API_BASE
-#      中的任意一个（或显式 GATEWAY=1），就启用下面三件事。家侧的 docker-compose.yml 正是这样传的。
+#      不做 NAT、不开存活看护。适合"挂自己的配置当容器里的代理"。
+#   2) **家侧网关模式**：传了 NAT_INTERFACE / SKIP_NAT / API_BASE / LIVENESS_* 中的任意一个
+#      （或显式 GATEWAY=1）就启用下面两件事。家侧的 docker-compose.yml 正是这样传的。
 #
-# 网关模式为什么要这三件事（家侧这个"服务器角色"特有）：
+# 网关模式只做两件事（其余职责都在内核里，见下）：
 #   ① NAT：TUN 模式让家侧成为真路由器，内网主机看到的是 overlay 源地址，回包必须能被 NAT 回去。
 #      容器内 /proc/sys 只读，ip_forward 由 compose 的 sysctls 注入，NAT 只能在这里加（幂等）。
-#   ② 触发懒启动：mihomo 的出站是懒启动的，而家侧**没有任何流量会把这个出站当代理用**
-#      （家侧自己出网走直连），所以实例永远不会自启、TUN 也不会创建 ——
-#      表现为"容器起来了但网关并不在"，客户端根本连不进来。客户端那侧相反：保持懒启动更好。
-#   ③ 看门狗：只在"本地 easytier 网卡消失"时优雅重启实例；会合点掉线/DNS 抖动/API 报错都不触发
-#      （实例自己会重连，重启反而有害），并且带跨重启限流，绝不允许重启风暴。
+#   ② 存活看护：只有"整个内核挂死（API 不通）"它才动手 —— 判据与 compose 的 healthcheck 完全一致，
+#      连续失败就 TERM 掉内核（PID 1），交给 `restart: unless-stopped` 重建。
+#
+# 这里**不再**做的事，以及为什么：
+#   * **不再**看 easytier 网卡是否消失 —— 那是"实例已经停了"的表象，现在由内核自己的监督循环
+#     （upstream #3215 的 loop()/serve()）秒级检测并按退避重建：只重建实例、不断其它连接、带日志，
+#     还不会像旧 shell 看门狗那样"一小时 3 次之后永久放弃"。
+#   * **不再**用 API 去"触发懒启动" —— 那是给懒启动打的补丁（还要靠一次注定失败的 delay 探测）。
+#     现在家侧配置直接写 `prewarm: true`，内核构造完就把实例起起来（只调一次 ensureStarted，
+#     后续重建同样交给 loop()）。
+#   * **不再**自己限流重启 —— 重启风暴由 Docker 的 restart 退避策略兜底，比脚本计数器可靠。
 #
 # 环境变量：
-#   GATEWAY=auto|1|0   模式（默认 auto：按是否传了下面这些变量推断）
-#   MIHOMO_DIR         配置目录（默认 /root/.config/mihomo）
-#   MIHOMO_CONFIG      配置文件（默认 $MIHOMO_DIR/config.yaml）
-#   NAT_INTERFACE      连内网的那张网卡（默认 eth0；多网卡时用 ip -o -4 addr show 确认后改）
-#   SKIP_NAT=1         完全跳过 NAT（例如家侧本来就是内网网关时）
-#   TRIGGER_PROXY      要触发的出站名（默认 et-home，与示例配置一致）
-#   API_BASE           内核 API 地址（默认 http://127.0.0.1:9090；改了配置里的 external-controller 时同步改这里）
-#   WATCHDOG / WATCHDOG_INTERVAL / WATCHDOG_FAILS / WATCHDOG_MAX_RESTARTS / WATCHDOG_WINDOW
+#   GATEWAY=auto|1|0      模式（默认 auto：按是否传了下面这些变量推断）
+#   MIHOMO_DIR            配置目录（默认 /root/.config/mihomo）
+#   MIHOMO_CONFIG         配置文件（默认 $MIHOMO_DIR/config.yaml）
+#   NAT_INTERFACE         连内网的那张网卡（默认 eth0；多网卡时用 ip -o -4 addr show 确认后改）
+#   SKIP_NAT=1            完全跳过 NAT（例如家侧本来就是内网网关时）
+#   API_BASE              内核 API 地址（默认 http://127.0.0.1:9090；改了配置里的 external-controller 时同步改）
+#   LIVENESS_INTERVAL     存活探测间隔秒数（默认 30；设 0 关闭存活看护）
+#   LIVENESS_FAILS        连续失败多少次才重启内核（默认 3）
 set -e
 
 MIHOMO_DIR="${MIHOMO_DIR:-/root/.config/mihomo}"
 MIHOMO_CONFIG="${MIHOMO_CONFIG:-$MIHOMO_DIR/config.yaml}"
 IFACE="${NAT_INTERFACE:-eth0}"
-PROXY="${TRIGGER_PROXY:-et-home}"
 API="${API_BASE:-http://127.0.0.1:9090}"
 
 GATEWAY="${GATEWAY:-auto}"
 if [ "$GATEWAY" = "auto" ]; then
-    if [ -n "${NAT_INTERFACE:-}${TRIGGER_PROXY:-}${WATCHDOG:-}${SKIP_NAT:-}${API_BASE:-}" ]; then
+    if [ -n "${NAT_INTERFACE:-}${SKIP_NAT:-}${API_BASE:-}${LIVENESS_INTERVAL:-}${LIVENESS_FAILS:-}" ]; then
         GATEWAY=1
     else
         GATEWAY=0
@@ -44,7 +49,7 @@ fi
 
 if [ "$GATEWAY" != "1" ]; then
     echo "[entrypoint] plain mihomo mode; dir=$MIHOMO_DIR config=$MIHOMO_CONFIG"
-    echo "[entrypoint] (set GATEWAY=1 or any of NAT_INTERFACE/TRIGGER_PROXY/WATCHDOG to enable the home-gateway behavior)"
+    echo "[entrypoint] (set GATEWAY=1 or any of NAT_INTERFACE/SKIP_NAT/API_BASE/LIVENESS_* to enable the home-gateway behavior)"
     exec /usr/local/bin/mihomo -d "$MIHOMO_DIR" -f "$MIHOMO_CONFIG"
 fi
 
@@ -64,88 +69,42 @@ else
     echo "[entrypoint] NAT skipped (SKIP_NAT=1)"
 fi
 
-# ---- ② 启动内核 + 触发懒启动 ----
-echo "[entrypoint] starting mihomo (ip_forward: $(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo '?'))"
-/usr/local/bin/mihomo -d "$MIHOMO_DIR" -f "$MIHOMO_CONFIG" &
-MIHOMO_PID=$!
-trap 'kill -TERM "$MIHOMO_PID" 2>/dev/null || true' TERM INT
+# ---- ② 存活看护（判据 = API 是否应答，与 compose 的 healthcheck 一致）----
+LIVENESS_INTERVAL="${LIVENESS_INTERVAL:-30}"
+LIVENESS_FAILS="${LIVENESS_FAILS:-3}"
 
-# 等 API 就绪（最多 30s）
-i=0
-while [ "$i" -lt 30 ]; do
-    if wget -q -O /dev/null --timeout=2 "$API/version" 2>/dev/null; then
-        break
-    fi
-    i=$((i + 1))
-    sleep 1
-done
-
-# 触发出站懒启动。注意：不能用这条请求的返回码判断成败——delay 探测本身会失败（家侧没有
-# 那个探测目标），API 返回 5xx，但出站已经被拉起来了。所以触发后改为轮询 easytier 网卡是否出现。
-wget -q -O /dev/null --timeout=10 "$API/proxies/$PROXY/delay?url=http://127.0.0.1&timeout=3000" 2>/dev/null || true
-
-i=0
-while [ "$i" -lt 20 ]; do
-    if ip -o link show 2>/dev/null | grep -q ": easytier"; then
-        echo "[entrypoint] easytier TUN is up: $(ip -o -4 addr show | awk '/easytier/ {print $2" "$4; exit}')"
-        break
-    fi
-    i=$((i + 1))
-    sleep 1
-done
-if [ "$i" -ge 20 ]; then
-    echo "[entrypoint] WARN: 触发后 20s 内未见 easytier TUN；检查 external-controller 是否开启、TRIGGER_PROXY 是否与配置里的出站名一致、以及日志中的 EasyTier 报错" >&2
-fi
-
-# ---- ③ 看门狗 ----
-WATCHDOG="${WATCHDOG:-1}"
-WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-60}"
-WATCHDOG_FAILS="${WATCHDOG_FAILS:-3}"
-WATCHDOG_MAX_RESTARTS="${WATCHDOG_MAX_RESTARTS:-3}"
-WATCHDOG_WINDOW="${WATCHDOG_WINDOW:-3600}"
-WATCHDOG_STATE="$MIHOMO_DIR/easytier/.watchdog-restarts"
-
-watchdog() {
+liveness() {
     fails=0
-    warned=0
-    while kill -0 "$MIHOMO_PID" 2>/dev/null; do
-        sleep "$WATCHDOG_INTERVAL"
-        if ip -o link show 2>/dev/null | grep -q ": easytier"; then
-            if [ "$fails" -gt 0 ]; then
-                echo "[watchdog] gateway is back after $fails failed check(s)"
-            fi
+    # 等内核先起来，别把启动时间算成失败
+    i=0
+    while [ "$i" -lt 60 ]; do
+        wget -q -O /dev/null --timeout=2 "$API/version" 2>/dev/null && break
+        i=$((i + 1))
+        sleep 1
+    done
+    while :; do
+        sleep "$LIVENESS_INTERVAL"
+        if wget -q -O /dev/null --timeout=3 "$API/version" 2>/dev/null; then
             fails=0
-            warned=0
             continue
         fi
         fails=$((fails + 1))
-        if [ "$warned" -eq 0 ]; then
-            echo "[watchdog] easytier 网卡不见了（$fails/$WATCHDOG_FAILS）；只有本地信号会计数，会合点掉线不计" >&2
-            warned=1
+        echo "[liveness] API 无响应（$fails/$LIVENESS_FAILS）：$API/version" >&2
+        if [ "$fails" -ge "$LIVENESS_FAILS" ]; then
+            echo "[liveness] 连续 $LIVENESS_FAILS 次无响应 → TERM 内核，交由 restart 策略重建" >&2
+            # exec 之后内核就是 PID 1；容器内 PID 1 需要自己装了信号处理器才收得到信号，mihomo 装了。
+            kill -TERM 1 2>/dev/null || true
+            fails=0
         fi
-        [ "$fails" -lt "$WATCHDOG_FAILS" ] && continue
-
-        now=$(date +%s)
-        [ -f "$WATCHDOG_STATE" ] || : > "$WATCHDOG_STATE"
-        awk -v now="$now" -v w="$WATCHDOG_WINDOW" '$1 > now - w' "$WATCHDOG_STATE" >"$WATCHDOG_STATE.tmp" 2>/dev/null || true
-        mv "$WATCHDOG_STATE.tmp" "$WATCHDOG_STATE" 2>/dev/null || true
-        count=$(wc -l <"$WATCHDOG_STATE" 2>/dev/null | tr -d ' ')
-        if [ "${count:-0}" -ge "$WATCHDOG_MAX_RESTARTS" ]; then
-            echo "[watchdog] ${WATCHDOG_WINDOW}s 内已自动恢复 ${count} 次，停止自动恢复以免反复重启；请人工排查：docker compose logs mihomo" >&2
-            return
-        fi
-        echo "$now" >>"$WATCHDOG_STATE"
-        echo "[watchdog] 连续 $WATCHDOG_FAILS 次未见网卡 → 优雅停止 mihomo，交由 restart 策略重建实例（本窗口第 $((count + 1)) 次）" >&2
-        kill -TERM "$MIHOMO_PID" 2>/dev/null || true
-        return
     done
 }
 
-if [ "$WATCHDOG" = "1" ]; then
-    watchdog &
-    echo "[watchdog] enabled (interval ${WATCHDOG_INTERVAL}s, ${WATCHDOG_FAILS} fails, max ${WATCHDOG_MAX_RESTARTS}/${WATCHDOG_WINDOW}s)"
+if [ "$LIVENESS_INTERVAL" = "0" ]; then
+    echo "[liveness] disabled (LIVENESS_INTERVAL=0)"
 else
-    echo "[watchdog] disabled (WATCHDOG=0)"
+    liveness &
+    echo "[liveness] enabled (interval ${LIVENESS_INTERVAL}s, ${LIVENESS_FAILS} fails → restart core)"
 fi
 
-wait "$MIHOMO_PID"
+echo "[entrypoint] starting mihomo (ip_forward: $(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo '?'))"
+exec /usr/local/bin/mihomo -d "$MIHOMO_DIR" -f "$MIHOMO_CONFIG"

@@ -37,7 +37,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `docker-compose.yml` | **一键盘（拉镜像）**：`NET_ADMIN`/`/dev/net/tun` + `ip_forward` + 自动 NAT + 健康检查 |
 | `docker-compose.build.yml` | 自编译覆盖文件（`-f docker-compose.yml -f docker-compose.build.yml … --build`）|
 | `Dockerfile` / `Dockerfile.prebuilt` | 多阶段构建：源码编本 fork 内核（含 TUN 模式）+ 预装 iptables；prebuilt 为纯打包路径 |
-| `entrypoint.sh` | 启动时幂等加 MASQUERADE，再启 mihomo 与看门狗（`NAT_INTERFACE` / `SKIP_NAT` / `WATCHDOG*` 可调） |
+| `entrypoint.sh` | 网关模式（传 `NAT_INTERFACE` 等）下：幂等加 MASQUERADE + 存活看护（API 探活失败则 TERM 内核，交给 restart）；不传则退化为纯 mihomo 直接 exec（`SKIP_NAT` / `API_BASE` / `LIVENESS_*` 可调）|
 | `home-mihomo-tun.yaml` | 家侧配置（`tun: true`，发布 `proxy-networks`；API 只绑 `127.0.0.1`） |
 | `state/` | 运行时生成：overlay 节点身份 + 看门狗计数，**别删** |
 
