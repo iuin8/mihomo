@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/metacubex/mihomo/common/cmd"
 	"github.com/metacubex/mihomo/component/age"
@@ -76,6 +77,9 @@ func init() {
 	flag.BoolVar(&testConfig, "t", false, "test configuration and exit")
 	flag.Parse()
 }
+
+// FORK(easytier-resilience): 收到终止信号后允许关停流程使用的最长时间，超过就自行退出。
+const shutdownGrace = 3 * time.Second
 
 func main() {
 	// Defensive programming: panic when code mistakenly calls net.DefaultResolver
@@ -242,7 +246,17 @@ func main() {
 	signal.Notify(hupSign, syscall.SIGHUP)
 	for {
 		select {
-		case <-termSign:
+		case sig := <-termSign:
+			log.Warnln("received %v, shutting down", sig)
+			// FORK(easytier-resilience): 宿主先发 SIGINT、等不到退出再升级 SIGKILL。
+			// 关停路径里的 listener.Cleanup() 在 overlay 数据路径在途时可能长时间不返回，
+			// 被 -9 打断的表现就是"无日志、无崩溃报告、进程凭空消失"。这里设硬上限：
+			// 到点无论清理是否完成都自行退出，让宿主拿到正常退出而不是超时。
+			go func() {
+				time.Sleep(shutdownGrace)
+				log.Warnln("shutdown did not finish within %v, exiting anyway", shutdownGrace)
+				os.Exit(0)
+			}()
 			return
 		case <-hupSign:
 			if err := hub.Parse(configBytes, options...); err != nil {
