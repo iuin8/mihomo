@@ -1,12 +1,26 @@
-# 家侧 overlay 节点（native EasyTier，零特权容器）——推荐方案
+# 家侧 overlay 节点（native EasyTier，零特权容器）—— 方案 B
 #
 #   docker compose -f docker-compose.yml up -d
 #
+# 它是什么：家侧**不跑 mihomo**，直接跑 EasyTier 官方原生内核（`easytier/easytier` 镜像）。
+#   对客户端完全透明 —— 客户端仍是一个 easytier 出站 + 家里网段规则，用同一组 network-name/secret。
+#
 # 为什么这样配（实测结论）：
-#   1) 家侧必须 native core：mihomo 内嵌核当家侧时，客户端经代理子网访问内网 TCP 不通（UDP 通）。
-#   2) 不需要 TUN / root / cap_add / devices —— no_tun 下实测四条路径全通，20MB 传输 8.4 MB/s。
-#   3) 不需要 iptables/MASQUERADE，也不需要打开 ip_forward（EasyTier 自行转发并做 SNAT）。
+#   1) 家侧不需要任何特权：没有 TUN / root / cap_add / devices，也没有 iptables/MASQUERADE。
+#      （历史上"家侧必须用原生内核"是因为**上游** mihomo 的 easytier 出站强制 no_tun，节点没有 L3 接口，
+#        客户端经代理子网访问家里内网 TCP 不通、UDP 通；本 fork 的 TUN 模式——方案 A——已解决这一点。
+#        所以现在两条路都可行，差别只在权限与性能，见下表。）
+#   2) no_tun 下实测四条路径全通，20MB 传输 8.4 MB/s（方案 A 为 34.5–42.5 MB/s）。
+#   3) EasyTier 自行转发并做 SNAT，所以不需要 ip_forward / iptables。
 #   4) 默认 bridge 网络 + 端口映射即可，无需 host 网络。
+#
+#   | 对比项 | 方案 A（mihomo TUN，推荐）| 方案 B（本文件，native）|
+#   | --- | --- | --- |
+#   | 家侧权限 | NET_ADMIN + /dev/net/tun + ip_forward + MASQUERADE | 无（零特权 ✓）|
+#   | 家侧内核 | 本 fork 构建（GHCR 镜像 ✓）| 官方 easytier 镜像 ✓ |
+#   | TCP 吞吐 | 34.5–42.5 MB/s | 8.4 MB/s |
+#   | ICMP（ping）| ✅ | ❌ |
+#   | 家侧主动访问其他 overlay 节点 | ✅ | ❌ |
 #
 # 版本策略：**钉住 easytier 官方镜像的版本 tag**，不要用 latest。
 #   升级流程：先在家侧机器 `docker compose pull` → 观察一次重启后的连通性 → 再提交改动。
