@@ -78,8 +78,9 @@ func init() {
 	flag.Parse()
 }
 
-// FORK(easytier-resilience): 收到终止信号后允许关停流程使用的最长时间，超过就自行退出。
-const shutdownGrace = 3 * time.Second
+// FORK(easytier-resilience): 收到终止信号后允许关停流程使用的最长时间。
+// 必须小于宿主的宽限期（CVR 服务是 SIGTERM 后 1 秒就 SIGKILL），否则"自行退出"永远来不及。
+const shutdownGrace = 700 * time.Millisecond
 
 func main() {
 	// Defensive programming: panic when code mistakenly calls net.DefaultResolver
@@ -247,16 +248,18 @@ func main() {
 	for {
 		select {
 		case sig := <-termSign:
-			log.Warnln("received %v, shutting down", sig)
-			// FORK(easytier-resilience): 宿主先发 SIGINT、等不到退出再升级 SIGKILL。
-			// 关停路径里的 listener.Cleanup() 在 overlay 数据路径在途时可能长时间不返回，
-			// 被 -9 打断的表现就是"无日志、无崩溃报告、进程凭空消失"。这里设硬上限：
-			// 到点无论清理是否完成都自行退出，让宿主拿到正常退出而不是超时。
+			// FORK(easytier-resilience): 宿主（macOS 上 CVR 的特权服务）先发 SIGTERM、只等 1 秒就 SIGKILL
+			// （见 clash-verge-service-ipc 的 process.rs: SIGTERM → 10×100ms → SIGKILL）。
+			// 内核的日志是同步写 stdout 的，而 stdout 是宿主持有的管道：一旦管道满、宿主那端不及时读，
+			// 信号处理里的第一行日志就会阻塞，关停永远走不到，1 秒后必然被 -9 打断——
+			// 表现刚好就是"无任何关停日志、无崩溃报告、进程凭空消失"。
+			// 所以兜底必须先启动、且预算必须小于宿主那 1 秒窗口：无论后续日志/清理是否卡住，都自行退出。
 			go func() {
 				time.Sleep(shutdownGrace)
 				log.Warnln("shutdown did not finish within %v, exiting anyway", shutdownGrace)
 				os.Exit(0)
 			}()
+			log.Warnln("received %v, shutting down", sig)
 			return
 		case <-hupSign:
 			if err := hub.Parse(configBytes, options...); err != nil {
