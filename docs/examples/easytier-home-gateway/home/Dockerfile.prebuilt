@@ -11,7 +11,7 @@
 #      （不注入 -X 的话，`mihomo -v` 会显示源码里的占位值）
 #   2) 把 `mihomo-linux` 放到 docs/examples/easytier-home-gateway/ 下（scp 过去即可）
 #   3) 指定用这个 Dockerfile 构建（路径必须相对仓库根，因为 compose 的 context 是仓库根）：
-#        HOME_DOCKERFILE=docs/examples/easytier-home-gateway/Dockerfile.prebuilt \
+#        HOME_DOCKERFILE=docs/examples/easytier-home-gateway/home/Dockerfile.prebuilt \
 #          docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
 # 与 Dockerfile 的差别只有：没有 golang 构建阶段，直接 COPY 现成二进制。
