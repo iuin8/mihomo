@@ -53,7 +53,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 | 文件 | 用途 |
 | --- | --- |
-| `client-clash.yaml` | **备选（历史方案）**：客户端走用户态网关（socks5 → 网关）；只在不能用本 fork 内核时使用 |
+| `client-clash.yaml` | **客户端模板（当前形态）**：内核内置 easytier 出站 + 家里网段规则 ✓；含 A/B 两种并入写法、`state-dir` 陷阱、以及"做成订阅链接分享"的三条注意事项（密钥即凭据 ✗ / 每台机器 ipv4 必须唯一 ✓ / 托管方式 ✓）|
 
 ## 方案 B（备选）：家侧零特权 native 容器
 

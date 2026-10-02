@@ -1,49 +1,76 @@
-# ⚠️ 历史/备选配置：本文件用于客户端经用户态网关（socks5）进 overlay 的旧形态。
-# 当前生产形态是内核内置 easytier 出站（CVR profile 里一个 type: easytier 出站 + 家里网段规则，
-# 且需要本 fork 的内核——服务模式下只有解释器构建能跑 easytier，见 SOP 6.4/6.8/6.9）。
-# 下面这段在不想换内核时仍然可用。
-
-# 本机 Clash 侧片段（推荐方案）
+# 客户端模板：内核内置 easytier 出站（= 当前生产形态 ✓）
 #
-# 用于两种并入方式，**段名不一样，别混**：
+# 用法总览：
+#   1) 把下面三处「改这里」填上你自己的值：network-secret / peers（会合点）/ ipv4（**每台机器必须唯一**）
+#   2) 按你用的 CVR 选一种并入方式（A 或 B，**段名不一样，别混** ✗）
+#   3) 家侧需要有网关：见同目录 docker-compose.yml（ghcr.io/iuin8/mihomo 镜像 ✓）
+#
+# 内核要求：
+#   * 任意较新的 mihomo 都支持 `type: easytier`（这是上游能力 ✓）；
+#   * 但 **macOS + 服务模式（root/TUN）下必须用本 fork 的内核** ✓ —— 服务模式里 wazero 的 JIT 页会被
+#     系统判非法、内核被 CODESIGNING 杀掉 ✗，本 fork 用解释器运行时绕开（见 SOP §6.4/§6.8）；
+#     用户态运行、或在 Linux 上跑则官方内核即可 ✓。
+#
+# 并入方式（二选一）：
 #   A) 当成一个「订阅 / 本地配置」，与你的机场订阅一起「多订阅合并」（本 fork 的 multi_merge）：
 #      用下面的**原生段名** proxies / proxy-groups / rules。
-#      —— 本 fork 的合并流水线只认这些原生段（MERGE_STEPS: proxies → proxy-providers →
-#         rule-providers → proxy-groups → rules），`prepend-proxies` 这类键**不会被识别**。
-#   B) 上游 CVR 的 **Merge 类型 profile**：用 `prepend-proxies:` / `prepend-rules:` 形式
-#      （那是 `enhance/merge.rs::use_merge` 的语义，本 fork 的多订阅合并路径不走它）。
+#      —— 本 fork 的合并流水线只认原生段（MERGE_STEPS: proxies → proxy-providers →
+#         rule-providers → proxy-groups → rules），`prepend-proxies` 这类键**不会被识别** ✗。
+#   B) 上游 CVR 的 **Merge 类型 profile**：把段名换成 `prepend-proxies:` / `prepend-rules:` 形式
+#      （那是 `enhance/merge.rs::use_merge` 的语义，本 fork 的多订阅合并路径不走它 ✗）。
 #
 # 实测：与家侧 TUN 网关配对，TCP 20MB 校验一致（34.5–42.5 MB/s）、UDP 40 包 0 丢包。
+
 proxies:
-  - name: home-overlay
+  - name: et-core                      # 出站名，下面规则会引用它
     type: easytier
-    network-name: home
-    network-secret: "<与家侧一致>"
-    hostname: mbp-clash
-    instance-name: mbp-clash
-    ipv4: 10.144.0.3/24
-    # 注意：**不要写 state-dir**。CVR 的 home dir 是
+    network-name: home                 # 与家侧一致
+    network-secret: "<改这里：与家侧一致的强密钥>"   # ⚠️ 这是凭据：别提交进公开仓库 ✗
+    hostname: "<改这里：本机名，如 mbp-张三>"         # overlay 里显示的名字
+    instance-name: "<改这里：同上>"
+    ipv4: "<改这里：10.144.0.x/24>"     # ⚠️ **每台机器必须唯一**，重复会互相破坏（SOP §6.3）
+    # 注意：**不要写 state-dir** ✗ —— CVR 的 home dir 是
     # ~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev，
     # 默认的 easytier/<代理名> 已在其中（SAFE_PATHS 限制）；写别处会被内核拒绝。
-    no-listener: true
-    peers: ["tcp://<会合点公网IP>:11010"]
-    udp: true
-    interface-name: en0        # 本机 Clash 跑 TUN 时建议：underlay 走物理网卡，避开自己的 TUN
+    no-listener: true                  # 客户端只需出站
+    peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]   # 家侧无公网时靠它会合（见 ../rendezvous/）
+    udp: true                          # 需要 UDP 走隧道就保留
+    interface-name: en0                # macOS=en0 / Linux=eth0：让底层走物理网卡，避开自己的 TUN
 
-# 代理页的卡片来自「分组」，不是出站本身——不加分组你会以为配置没生效。
+# 代理页的卡片来自「分组」，不是出站本身 —— 不加分组你会以为配置没生效 ✗
 proxy-groups:
   - name: 🏠 家里
     type: select
-    proxies: [home-overlay, DIRECT]      # 手动切换；不需要健康检查（避免被判死）
+    proxies: [et-core, DIRECT]         # 手动切换；不需要健康检查（避免被判死）
 
 rules:
   # 规则合并时，本片段的 rules 会被**前置插入**（multi_merge::merge_rules 用 insert(0, …)），
   # 所以这几条一定优先于订阅里的 MATCH / GEOIP 兜底规则。
-  # ⚠️ overlay 网段本身也要走隧道，否则会落到 MATCH 直连（表现为 502，极易误判为“虚拟 IP 不可达”）
+  # ⚠️ overlay 网段本身也要走隧道，否则会落到 MATCH 直连（表现为 502，极易误判为"虚拟 IP 不可达"✗）
   - IP-CIDR,10.144.0.0/24,🏠 家里
-  # 家里内网网段：**只能精确写**。与本机所在网段重叠的那条不要写（会让本机局域网流量被吸进隧道）。
-  - IP-CIDR,192.168.1.0/24,🏠 家里
+  # 家里内网网段：**只能精确写** ✗。与本机所在网段重叠的那条不要写（会让本机局域网流量被吸进隧道）。
+  - IP-CIDR,<改这里：家里网段，如 192.168.1.0/24>,🏠 家里
   # 人在家里时直连，避免绕隧道一圈
-  - SRC-IP-CIDR,192.168.1.0/24,DIRECT
+  - SRC-IP-CIDR,<改这里：同上>,DIRECT
   - DOMAIN-SUFFIX,home.lan,🏠 家里    # 域名寻址：再遇到网段冲突时最稳的退路
-  - PROCESS-NAME,ssh,DIRECT           # 防递归（见 docs/ssh_single_layer_guide.md）
+  - PROCESS-NAME,ssh,DIRECT           # 防递归（见 ../ssh_single_layer_guide.md）
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 想做成「订阅链接」发给别人用？先读这三条 ✗→✓
+#
+# ① **这份配置含密钥** ✓：`network-secret` 等于"进这个 overlay 的钥匙" ✗。
+#    → 公开仓库/公开 gist 里**只能放本模板**（占位符 ✓）；
+#    → 带真值的版本走**私有渠道**发（私聊文件 / 私有仓库 / 自建小服务）✓。
+#    → 一旦泄露：在所有节点的配置里**同时换掉 network-secret** 即可作废旧钥匙 ✓（家侧 compose 的
+#      config 与各客户端一起改 ✓）。
+#
+# ② **每台机器必须有唯一的 ipv4** ✓✓：发给别人时，让每个人自己挑一个没用过的
+#    （如 10.144.0.10、.11、.12 … ✓）。两个人用同一个地址会互相破坏 ✓（实测反复出现，SOP §6.3）。
+#
+# ③ 托管方式（择一）：
+#    * CVR 里直接导入**本文件**（本地 profile ✓）—— 最省事，但每次更新要重发 ✓；
+#    * 放到能出 **raw** 的私有位置（私有仓库 / 自建静态服务 ✓），CVR 里以 URL 导入，
+#      以后改一处、所有人重载即可 ✓；
+#    * 用 **secret gist** 也能给 raw URL ✓，但它只是"URL 难猜"✗，不算真正的私有 —— 只适合
+#      密钥可以接受一定暴露风险的场合 ✓。
+#    * 千万不要把带 secret 的文件提交进本仓库 ✗（这是公开 fork ✓）。
