@@ -16,14 +16,9 @@ docker compose up -d
 
 镜像：`ghcr.io/iuin8/mihomo`（多架构 amd64/arm64 ✓，由 `.github/workflows/easytier-home-gateway-image.yml` 构建）。
 
-> 这个镜像**默认就是"纯 mihomo"** —— 里面只有本 fork 的内核，没有任何内置配置，
-> 挂上你自己的 YAML 就能当通用代理容器用 ✓。
-> 只有传了网关相关 env（`NAT_INTERFACE` / `TRIGGER_PROXY` / `WATCHDOG` / `SKIP_NAT` / `API_BASE`，
-> 或显式 `GATEWAY=1`）才会启用家侧那三件事：NAT、触发出站懒启动、看门狗 ✓ —— 本目录的
-> `docker-compose.yml` 正是这样传的 ✓。
-（多架构 amd64/arm64 ✓，由
-`.github/workflows/easytier-home-gateway-image.yml` 构建）。
-生产建议钉版本：`GW_TAG=v1.19.32-fa.1001 docker compose up -d`。
+> 镜像就是**纯 mihomo**：里面没有任何配置、也没有入口脚本，行为全部来自挂载的 YAML。
+> 家侧需要的那点"路由器"能力不在镜像里：`NET_ADMIN` + `/dev/net/tun`（建 TUN）与 `ip_forward=1`
+> 由本目录的 `docker-compose.yml` 提供；SNAT 也不需要 —— 实测 EasyTier 自己会做（SOP §6.13）。
 
 想自己编译内核（改了代码、或拉不到 GHCR）：
 
@@ -37,7 +32,6 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `docker-compose.yml` | **一键盘（拉镜像）**：`NET_ADMIN`/`/dev/net/tun` + `ip_forward` + 自动 NAT + 健康检查 |
 | `docker-compose.build.yml` | 自编译覆盖文件（`-f docker-compose.yml -f docker-compose.build.yml … --build`）|
 | `Dockerfile` / `Dockerfile.prebuilt` | 多阶段构建：源码编本 fork 内核（含 TUN 模式）+ 预装 iptables；prebuilt 为纯打包路径 |
-| `entrypoint.sh` | 网关模式（传 `NAT_INTERFACE`）下只做一件事：幂等加 SNAT（MASQUERADE）；不传则退化为纯 mihomo 直接 exec（`SKIP_NAT` 可跳过 SNAT）|
 | `home-mihomo-tun.yaml` | 家侧配置（`tun: true`，发布 `proxy-networks`；API 只绑 `127.0.0.1`） |
 | `state/` | 运行时生成：overlay 节点身份 + 看门狗计数，**别删** |
 

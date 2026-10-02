@@ -33,11 +33,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -o /out/mihomo .
 
 FROM alpine:3.24
+# iptables 不是运行必需 —— 实测 guest（EasyTier）在 TUN 模式下自己会 SNAT，见 SOP §6.13。保留它是为了：
+#   ① 遇到特殊拓扑时按 §6.13 的逃生口自己加一条 SNAT；② 把本镜像当通用路由容器用时随手就有。
 # 国内网络可换 Alpine 镜像源（默认已用中科大；置空则用官方源）
 ARG APK_MIRROR=mirrors.ustc.edu.cn
 RUN if [ -n "$APK_MIRROR" ]; then sed -i "s#dl-cdn.alpinelinux.org#$APK_MIRROR#g" /etc/apk/repositories; fi \
  && apk add --no-cache iptables iproute2
 COPY --from=build /out/mihomo /usr/local/bin/mihomo
-COPY docs/examples/easytier-home-gateway/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# 纯 mihomo：镜像里没有入口脚本，配置与行为全部来自挂载的 YAML
+ENTRYPOINT ["/usr/local/bin/mihomo"]
+CMD ["-d", "/root/.config/mihomo", "-f", "/root/.config/mihomo/config.yaml"]

@@ -1,17 +1,19 @@
 # 家侧网关（方案 A：mihomo TUN 模式）——— 直接用镜像，一键启动
 #
 #   1) 编辑 home-mihomo-tun.yaml：network-secret / proxy-networks（家里网段）/ peers（会合点）
-#   2) 多网卡时改下面的 NAT_INTERFACE（单网卡保持 eth0）
+#   2) 多网卡时不用改这里（镜像不做 NAT，见下）
 #   3) docker compose up -d
 #
 # 默认从 GHCR 拉取已构建好的镜像（不需要仓库源码，也不需要本地 Go/编译）：
-#   ghcr.io/iuin8/mihomo
-# 镜像由本仓库的 .github/workflows/easytier-home-gateway-image.yml 构建（多架构 amd64/arm64）。
+#   ghcr.io/iuin8/mihomo   ← 镜像就是纯 mihomo：没有入口脚本，行为全部来自挂载的 config
+# 由 .github/workflows/easytier-home-gateway-image.yml 构建（多架构 amd64/arm64）。
 #
 # 想自己编译内核（改了代码、或拉不到 GHCR）时用构建覆盖文件：
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 #
-# 需要家侧机器能出网拉取镜像；镜像缓存在本机，重启用 restart: unless-stopped 自动拉起。
+# 这里**没有** iptables/MASQUERADE，也不需要：实测 EasyTier（guest）在 TUN 模式下自己会 SNAT，
+# 内网主机看到的是本机内网地址、回包正常（实验与判据见 SOP §6.13）。若你的内网拓扑特殊、
+# 实测回包不通，再用 §6.13 里那段 compose 逃生口加一条 SNAT 即可。
 #
 # 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
 # ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
@@ -25,31 +27,22 @@ services:
     container_name: mihomo-home
     restart: unless-stopped
 
-    # 三件硬性要求之一：建 TUN 需要 NET_ADMIN + /dev/net/tun
+    # 建 TUN 需要 NET_ADMIN + /dev/net/tun（网关模式唯一的两个硬性要求）
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
 
-    # 三件硬性要求之二：容器内 /proc/sys 只读，转发开关只能在这里注入
+    # 容器内 /proc/sys 只读，路由器需要的转发开关只能在这里注入
     sysctls:
       net.ipv4.ip_forward: 1
 
-    # 硬性要求之外的最小权限收敛：容器内不需要再提权
+    # 最小权限收敛：容器内不需要再提权
     security_opt:
       - no-new-privileges:true
 
     # 上限保护：实测稳态 ~200MB，1g 留足余量，同时避免异常时吃满宿主机内存
     mem_limit: 1g
-
-    environment:
-      # 三件硬性要求之三：MASQUERADE 由 entrypoint.sh 自动加在这张网卡上
-      # 多网卡（docker network connect 了内网）时，用 `ip -o -4 addr show` 确认后改成 eth1 等
-      # 这个变量同时也是"进入网关模式"的开关（不传则按纯 mihomo 运行）
-      NAT_INTERFACE: eth0
-
-      # 不再有存活看护开关：实例级自愈在内核里（upstream #3215 的监督循环），进程级重建交给 Docker。
-      # 剩下的唯一空白是"进程挂死但 API 不通"（罕见），处理方式是可见性 + 一条命令，见 SOP §6.13。
 
     # 容器级健康检查（探内核 API）：内核挂了/挂死时这里报 unhealthy —— 只做"可见"，
     # 不自动重启（普通 compose 没有按健康状态重启的原语；要无人值守见 SOP §6.13 的 B 方案）。
@@ -63,7 +56,7 @@ services:
 
     volumes:
       - ./home-mihomo-tun.yaml:/root/.config/mihomo/config.yaml:ro
-      - ./state:/root/.config/mihomo/easytier          # overlay 节点身份 + 看门狗计数，别删
+      - ./state:/root/.config/mihomo/easytier          # overlay 节点身份，别删
 
     logging:
       driver: json-file

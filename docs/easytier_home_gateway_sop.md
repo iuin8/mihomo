@@ -579,3 +579,32 @@ docker compose ps                 # 期望：healthy ✓
   2. **待验证的免费午餐** ✗：EasyTier 在 native（`no_tun`）模式下**自己会做 SNAT** ✓（见 `alt-native/docker-compose.yml` 的说明 ✓），TUN 模式下是否同样如此**尚未实测** ✗ —— 值得在家侧做一次实验：设 `SKIP_NAT=1` ✓，从客户端 `curl`/`ping` 内网机器 ✓；若通 ✓ 则这一步 NAT 也可删掉 ✓✓。
   3. **改用 native 方案（方案 B）** ✓：没有 TUN、没有 iptables ✓，EasyTier 内部 SNAT ✓ —— 代价是**没有 ICMP**、吞吐 ~8.4 MB/s ✓。
 * **它不算妥协的原因** ✓：入口脚本里只剩 8 行、幂等、失败时只告警不中断 ✓，而且它编码的是**拓扑事实**✓，不是给某个 bug 打的补丁 ✗（旧看门狗与"触发懒启动"才是补丁 ✗，都已被内核能力取代 ✓）。
+
+**实测（2026-10-02，本机 Docker 全本地复现）：结论是"连这一行 SNAT 也是多余的"** ✓✓
+
+实验设计（私有 overlay + 直连 peer，**不碰线上 overlay** ✓）：三个本地容器 ——
+`expt-lan`（nginx，扮演家里内网主机 `10.99.0.5`）、`expt-gw`（本镜像，家侧网关角色，权限与 compose
+**完全一致**：仅 `cap_add NET_ADMIN` + `/dev/net/tun` + `ip_forward=1`，无 privileged）、
+`expt-client`（本镜像，客户端角色，经代理访问内网主机）。判据两条：客户端能否通过代理取到内网页面 ✓、
+内网主机看到的来源地址是什么 ✓。
+
+| 实验 | 家侧 iptables | 结果 | 内网主机看到的来源 |
+| --- | --- | --- | --- |
+| 1（对照）| MASQUERADE **1** 条 | 成功 ✓ | `10.99.0.2`（网关内网地址）|
+| 2 | MASQUERADE **0** 条（`SKIP_NAT=1`）| **同样成功** ✓ | **`10.99.0.2`** ✓ |
+
+→ **guest（EasyTier）在 TUN 模式下自己会 SNAT** ✓（与 native 模式"EasyTier 自行转发并做 SNAT"一致 ✓）。因此：
+
+* 入口脚本里的 SNAT 是多余的 ✗ → **整个入口脚本已删除** ✓✓，镜像回归"纯 mihomo"（与镜像名一致 ✓，
+  也能当通用代理/路由容器用 ✓）；
+* **仍然必须**保留：`cap_add NET_ADMIN` + `/dev/net/tun`（建 TUN ✓）、`sysctls net.ipv4.ip_forward=1`（转发 ✓）；
+* **一键部署不受影响** ✓✓：不需要任何手工路由 ✓ —— 上一版 §6.13 里"改成被路由 + 手工加静态路由"那条
+  按"必须一键"的要求**不再需要** ✗，仅作为理论选项留档。
+
+**逃生口**（仅当你的内网拓扑特殊、实测回包不通时才用；镜像里保留 `iptables` 就是为了这一条 ✓）：
+
+```yaml
+# 加在 docker-compose.yml 的 mihomo 服务里
+    entrypoint: ["/bin/sh", "-c",
+      "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; exec mihomo -d /root/.config/mihomo -f /root/.config/mihomo/config.yaml"]
+```
