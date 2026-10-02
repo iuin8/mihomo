@@ -48,14 +48,12 @@ services:
       # 这个变量同时也是"进入网关模式"的开关（不传则按纯 mihomo 运行）
       NAT_INTERFACE: eth0
 
-      # 存活看护：判据就是下面 healthcheck 用的同一个 API 探测。
-      # 只有"整个内核挂死"它才动手：连续失败 LIVENESS_FAILS 次就 TERM 内核，交给 restart 策略重建。
-      # 实例级的自愈不在这儿 —— 内核自己的监督循环（upstream #3215）秒级重建实例，带退避与日志。
-      LIVENESS_INTERVAL: "30"          # 设 "0" 关闭存活看护
-      LIVENESS_FAILS: "3"
+      # 不再有存活看护开关：实例级自愈在内核里（upstream #3215 的监督循环），进程级重建交给 Docker。
+      # 剩下的唯一空白是"进程挂死但 API 不通"（罕见），处理方式是可见性 + 一条命令，见 SOP §6.13。
 
-    # 容器级健康检查（探内核 API）：内核挂了/挂死时这里报 unhealthy，
-    # docker compose ps 与外部监控都能立刻看到（同一个信号也驱动上面的存活看护）
+    # 容器级健康检查（探内核 API）：内核挂了/挂死时这里报 unhealthy —— 只做"可见"，
+    # 不自动重启（普通 compose 没有按健康状态重启的原语；要无人值守见 SOP §6.13 的 B 方案）。
+    # 真的 unhealthy 时：docker compose restart mihomo
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/version"]
       interval: 30s
