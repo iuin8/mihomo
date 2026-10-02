@@ -35,7 +35,7 @@
 #
 # 若将来需要 ICMP 或家侧主动访问其他 overlay 节点：
 #   改为 host 网络 + cap_add: [NET_ADMIN] + devices: ["/dev/net/tun:/dev/net/tun"]，
-#   并把 home-easytier-core.toml 的 no_tun 改成 false。
+#   并把 easytier-core.toml 的 no_tun 改成 false。
 
 services:
   easytier:
@@ -55,7 +55,7 @@ services:
       - "11010:11010/udp"
 
     volumes:
-      - ./home-easytier-core.toml:/app/config.toml:ro
+      - ./easytier-core.toml:/app/config.toml:ro
 
     # 镜像 entrypoint 为 `/sbin/tini -- easytier-core`，最终等价于：
     #   easytier-core -c /app/config.toml -n 192.168.1.0/24

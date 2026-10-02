@@ -1,7 +1,7 @@
 # 示例文件地图（EasyTier 回家）—— 按**三方**分目录
 
-**先读 SOP**：[`../../easytier_home_gateway_sop.md`](../../easytier_home_gateway_sop.md)（照做即可，约 20 分钟）。
-原理与实测数据：[`../../easytier_home_gateway.md`](../../easytier_home_gateway.md)；
+**先读 SOP**：[`../../easytier_gateway_sop.md`](../../easytier_gateway_sop.md)（照做即可，约 20 分钟）。
+原理与实测数据：[`../../easytier_gateway.md`](../../easytier_gateway.md)；
 规格与验收：[`../../easytier_tun_spec.md`](../../easytier_tun_spec.md)。
 
 | 角色 | 目录 | 一句话 |
@@ -27,7 +27,7 @@
 | [`home/docker-compose.yml`](home/docker-compose.yml) | **一键盘（拉镜像）**：`NET_ADMIN`/`/dev/net/tun` + `ip_forward` + 健康检查 ✓（镜像=纯 mihomo ✓） |
 | [`home/docker-compose.build.yml`](home/docker-compose.build.yml) | 自编译覆盖：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` ✓ |
 | [`home/Dockerfile`](home/Dockerfile) / [`home/Dockerfile.prebuilt`](home/Dockerfile.prebuilt) | 多阶段构建 / 纯打包（用别处交叉编译好的二进制 ✓） |
-| [`home/home-mihomo-tun.yaml`](home/home-mihomo-tun.yaml) | 家侧配置（`tun: true` ✓、`prewarm: true` ✓ 服务端必需 ✓、`proxy-networks` ✓） |
+| [`home/gateway.yaml`](home/gateway.yaml) | 家侧配置（`tun: true` ✓、`prewarm: true` ✓ 服务端必需 ✓、`proxy-networks` ✓） |
 | `home/state/` | 运行时生成：**overlay 节点身份**，别删 ✓（换了它就是新节点 ✗） |
 | [`home/alt-native/`](home/alt-native/) | **方案 B**：零特权 native 容器（无 TUN/无 iptables ✓；代价是无 ICMP、吞吐低一档 ✓） |
 

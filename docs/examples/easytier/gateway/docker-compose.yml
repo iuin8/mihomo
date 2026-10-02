@@ -1,6 +1,6 @@
 # 家侧网关（方案 A：mihomo TUN 模式）——— 直接用镜像，一键启动
 #
-#   1) 编辑 home-mihomo-tun.yaml：network-secret / proxy-networks（家里网段）/ peers（会合点）
+#   1) 编辑 gateway.yaml：network-secret / proxy-networks（家里网段）/ peers（会合点）
 #   2) 多网卡时不用改这里（镜像不做 NAT，见下）
 #   3) docker compose up -d
 #
@@ -18,13 +18,13 @@
 # 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
 # ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
 
-name: easytier-home-gateway
+name: easytier-gateway
 
 services:
   mihomo:
     # 生产建议钉版本而不是 latest：GW_TAG=v1.19.32-fa.1001 docker compose up -d
     image: ghcr.io/iuin8/mihomo:${GW_TAG:-latest}
-    container_name: mihomo-home
+    container_name: mihomo-gateway
     restart: unless-stopped
 
     # 建 TUN 需要 NET_ADMIN + /dev/net/tun（网关模式唯一的两个硬性要求）
@@ -55,7 +55,7 @@ services:
       start_period: 60s
 
     volumes:
-      - ./home-mihomo-tun.yaml:/root/.config/mihomo/config.yaml:ro
+      - ./gateway.yaml:/root/.config/mihomo/config.yaml:ro
       - ./state:/root/.config/mihomo/easytier          # overlay 节点身份，别删
 
     logging:

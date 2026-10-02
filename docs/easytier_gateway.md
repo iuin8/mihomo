@@ -18,13 +18,13 @@
 
 ### Step 1：家侧起 mihomo（TUN 模式，推荐）
 
-**一键版见 [easytier_home_gateway_sop.md](easytier_home_gateway_sop.md)**。仓库已把三件硬性要求与内核编译
-都封装进 `examples/easytier/home/docker-compose.yml` + 已发布镜像 `ghcr.io/iuin8/mihomo`
+**一键版见 [easytier_gateway_sop.md](easytier_gateway_sop.md)**。仓库已把三件硬性要求与内核编译
+都封装进 `examples/easytier/gateway/docker-compose.yml` + 已发布镜像 `ghcr.io/iuin8/mihomo`
 （镜像=纯 mihomo ✓，特权与转发由 compose 提供 ✓；不再需要入口脚本或 NAT ✓，见 SOP §6.12–§6.13）：
 
 ```bash
 cd docs/examples/easytier
-# 改 home-mihomo-tun.yaml 里标了「改这里」的三处：network-secret / peers / proxy-networks
+# 改 gateway.yaml 里标了「改这里」的三处：network-secret / peers / proxy-networks
 docker compose up -d
 docker compose logs -f mihomo     # 期望：tun mode enabled on 10.144.0.2/24
 ```
@@ -41,7 +41,7 @@ docker compose logs -f mihomo     # 期望：tun mode enabled on 10.144.0.2/24
 **成功的标志**：
 
 ```text
-[EasyTier](et-home) tun mode enabled on 10.144.0.2/24          # 日志
+[EasyTier](et-gateway) tun mode enabled on 10.144.0.2/24          # 日志
 $ ip -4 -o addr show | grep easytier0
 13: easytier0    inet 10.144.0.2/24 brd 10.144.0.255 scope global easytier0
 ```
@@ -119,7 +119,7 @@ TCP / UDP / ICMP 一视同仁。差别出现在**没有 TUN** 的时候：
 
 ```yaml
 proxies:
-  - name: et-home
+  - name: et-gateway
     type: easytier
     ipv4: 10.144.0.2/24          # TUN 模式必填，必须是带前缀的 IPv4 CIDR
     tun: true                    # ← 本 fork 的能力：建宿主 TUN + 接包面
@@ -154,7 +154,7 @@ proxies:
 > **调研结论（2026-10-01，DoH 复核绕开本机 DNS 劫持）**：==官方与社区都没有公布可用的公共节点地址==。
 > `public.easytier.cn` / `public.easytier.top` 均为 **NXDOMAIN**；官方文档里出现的地址（`tcp://1.2.3.4:11010` 等）
 > 全是占位符。官方模型是"用户自建公共共享节点给社区用"——所以无公网环境下**必须自备一台公网机器**。
-> 部署步骤见 [easytier_home_gateway_sop.md](easytier_home_gateway_sop.md) §0。
+> 部署步骤见 [easytier_gateway_sop.md](easytier_gateway_sop.md) §0。
 
 ### 4. DNS（复用 mihomo，零代码）
 
@@ -173,12 +173,12 @@ dns:
 ## 四、方案 B 详解（家侧零特权 native 容器）
 
 适用：家侧不便给容器 `NET_ADMIN`/`/dev/net/tun`，或不想让家侧进程碰内核转发。文件在
-`examples/easytier/home/alt-native/`：`home-easytier-core.toml`（native 节点，`no_tun = true`，
+`examples/easytier/gateway/alt-native/`：`easytier-core.toml`（native 节点，`no_tun = true`，
 发布家里网段）、`docker-compose.yml`（**无 cap_add、无 /dev/net/tun、无 host 网络、无 iptables**）。
 
 ```bash
-cd docs/examples/easytier/home/alt-native
-# 1) 填 home-easytier-core.toml 的 network_secret  2) 改 compose 的 -n <家里网段>
+cd docs/examples/easytier/gateway/alt-native
+# 1) 填 easytier-core.toml 的 network_secret  2) 改 compose 的 -n <家里网段>
 docker compose up -d
 docker compose logs -f --tail=50   # 期望 new listener added / new peer added
 ```
@@ -205,7 +205,7 @@ docker compose logs -f --tail=50   # 期望 new listener added / new peer added
 - 回退：
 
 ```bash
-docker compose down                       # 方案 A 家侧（在 examples/easytier/home/）
+docker compose down                       # 方案 A 家侧（在 examples/easytier/gateway/）
 cd alt-native && docker compose down      # 方案 B 家侧
 # 本机：移除 merge profile 里的 easytier 出站与那两条 IP-CIDR 规则
 ```

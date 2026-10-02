@@ -30,7 +30,7 @@ mihomo 内嵌的 EasyTier 核（WASI）**永远强制 `no_tun = true`**（`compo
 
 **Out of scope（v1，明确不做）**
 - 运行期动态增删路由（跟随规则集 / peer 广告）。理由：mihomo 自己对 TUN 路由表也是"建时确定、
-  配置变更时重建"（见 `docs/easytier_home_gateway.md` 与 `listener/sing_tun/server.go`）。
+  配置变更时重建"（见 `docs/easytier_gateway.md` 与 `listener/sing_tun/server.go`）。
 - 客户端侧自动路由管理（B 方案的动态部分）。
 - Windows 专项验证（sing-tun 支持 wintun，但本版本不承诺）。
 - DNS：不写代码，复用 `et://` + `nameserver-policy`（见第 6 节）。
@@ -124,14 +124,14 @@ dns:
 | 权限 | TUN 需 root/CAP_NET_ADMIN | 文档说明；家侧容器需 `NET_ADMIN` + `/dev/net/tun` |
 | 转发与 NAT | TUN 模式让家侧成为真路由器：内网主机看到的是 overlay 源地址，回包必须能被 NAT 回 | 家侧需 `net.ipv4.ip_forward=1`（容器用 `--sysctl` 注入，`/proc/sys` 在容器内只读）+ `MASQUERADE` |
 | 平台 | macOS utun / Linux tun | sing-tun 已覆盖；本机 macOS + 容器 Linux 双端实测 |
-| 与 mihomo TUN 共存 | 两块 TUN | 见 `docs/easytier_home_gateway.md`：建时确定 + 最长前缀匹配，不抢默认路由 |
+| 与 mihomo TUN 共存 | 两块 TUN | 见 `docs/easytier_gateway.md`：建时确定 + 最长前缀匹配，不抢默认路由 |
 | 上游冲突 | `toml.go` 未改；`easytier.go` +46 行、stub +3 行，均带 `// FORK:` | 新增代码集中在 `component/easytier/tun_*.go` |
 
 ## 8. E2E 实测结果（2026-10-01，Docker 实验室）
 
 拓扑：`本机 Clash 客户端（easytier 出站，无 TUN）` → overlay → `家侧 mihomo（tun: true，发布 172.32.0.0/24）` → 内网目标 `172.32.0.2`。
 家侧容器：`--cap-add NET_ADMIN --cap-add NET_RAW --device /dev/net/tun --sysctl net.ipv4.ip_forward=1`，
-启动后设备为 `easytier0 10.144.0.2/24`，日志 `[EasyTier](et-home) tun mode enabled on 10.144.0.2/24`。
+启动后设备为 `easytier0 10.144.0.2/24`，日志 `[EasyTier](et-gateway) tun mode enabled on 10.144.0.2/24`。
 
 | 编号 | 判据 | 实测 |
 | --- | --- | --- |

@@ -1,9 +1,9 @@
-# SOP：打通「本机 Clash → 家里内网」（精简版）
+# EasyTier 内网网关 SOP（示例场景：从外网访问家里的内网）
 
 > 一条主线：**会合点（公网）→ 家侧一键起网关 → 本机 CVR 加规则 → 三条命令验证**。
 > 前置：① 一台**有公网 IP 的机器**（VPS 即可，1 核 512MB 够用；家侧没有公网时这是两端相遇的唯一前提）；
 > ② 家侧服务器能拉 Docker 镜像、能 clone 本 fork 仓库。
-> 详细原理与实测数据见 [easytier_home_gateway.md](easytier_home_gateway.md)，
+> 详细原理与实测数据见 [easytier_gateway.md](easytier_gateway.md)，
 > 验收标准见 [easytier_tun_spec.md](easytier_tun_spec.md)。
 
 ## 0. 会合点（只做一次，约 5 分钟）
@@ -21,9 +21,9 @@
 `examples/easytier/rendezvous/docker-compose.yml`：
 
 ```text
-[EasyTier](et-home) instance 8b7e138a-... running          # 实例已起（prewarm 生效）
-[EasyTier](et-home) tun mode enabled on 10.144.0.2/24      # TUN 已建 = 网关就绪
-[EasyTier](et-home) peer_added: PeerAdded(...)             # 已发现对端
+[EasyTier](et-gateway) instance 8b7e138a-... running          # 实例已起（prewarm 生效）
+[EasyTier](et-gateway) tun mode enabled on 10.144.0.2/24      # TUN 已建 = 网关就绪
+[EasyTier](et-gateway) peer_added: PeerAdded(...)             # 已发现对端
 ```
 
 > 出站是**懒启动**的：没人用它时 EasyTier 实例不会启动、TUN 也不会创建 ✗。家侧因此**必须**在配置里写
@@ -74,13 +74,13 @@ proxies:
     # 不要写 state-dir：CVR 的 home dir 是 ~/Library/Application Support/…clash-verge-rev
 
 proxy-groups:                     # 代理页的卡片来自分组；不加分组你以为没生效
-  - name: 🏠 家里
+  - name: 🏠 内网
     type: select
     proxies: [home-overlay, DIRECT]
 
 rules:
-  - IP-CIDR,10.144.0.0/24,🏠 家里   # overlay 网段本身也要走隧道
-  - IP-CIDR,<家里网段>,🏠 家里      # 精确写！与本机所在网段重叠的那条不要写
+  - IP-CIDR,10.144.0.0/24,🏠 内网   # overlay 网段本身也要走隧道
+  - IP-CIDR,<家里网段>,🏠 内网      # 精确写！与本机所在网段重叠的那条不要写
   - SRC-IP-CIDR,<本机网段>,DIRECT   # 在家/在同网段时直连，避免绕隧道
 ```
 
@@ -89,7 +89,7 @@ rules:
 ```bash
 CFG=~/Library/Application\ Support/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml
 grep -c "home-overlay" "$CFG"     # 期望 ≥3：代理 1 + 分组 1 + 规则 2 以上
-grep -A3 "🏠 家里" "$CFG" | head  # 期望看到 type: select 与 home-overlay
+grep -A3 "🏠 内网" "$CFG" | head  # 期望看到 type: select 与 home-overlay
 ```
 
 > 客户端**不需要换内核**：`easytier` 出站是 upstream 就有的，你现在的 alpha 内核即可。
@@ -148,7 +148,7 @@ ping -c 3 <内网IP>
 | 小请求通、大流量卡住 | 走的是旧的历史方案或 no-TUN 路径 | 确认家侧 `tun: true` 生效 |
 | 两端一直不相遇 | 会合点不可达/端口没放开 | 家侧 `docker compose exec mihomo wget -qO- http://<会合点>:11010` 探活；确认 11010 tcp+udp 都放行 |
 | 构建卡在 `proxy.golang.org … i/o timeout` | 国内访问 Go 官方代理不通（Dockerfile 已默认换 goproxy.cn，若你本地改过或用了旧版本才会遇到） | 换源重试：`GOPROXY=https://goproxy.cn,direct docker compose build`；或走上方纯打包路径 |
-| 构建报 `COPY bin/ … not found` | `dockerfile:` 写成了裸 `Dockerfile`，命中了仓库根那个打包用的 Dockerfile | 保持默认（`docs/examples/easytier/home/Dockerfile`）；覆盖时也要带目录 |
+| 构建报 `COPY bin/ … not found` | `dockerfile:` 写成了裸 `Dockerfile`，命中了仓库根那个打包用的 Dockerfile | 保持默认（`docs/examples/easytier/gateway/Dockerfile`）；覆盖时也要带目录 |
 | `apk add` 卡住/超时 | Alpine 官方源在国内慢 | 默认已用中科大源；换源：`APK_MIRROR=mirrors.aliyun.com docker compose build` |
 | `path is not subpath of home directory or SAFE_PATHS: /tmp/...` | EasyTier 的 `state-dir` 必须在**内核自己的 home dir** 内。终端跑隔离实例时是 `-d /tmp/et-client`（所以 `/tmp/et-client/state` 合法），但 **CVR 的 home dir 是 `~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev`** → 放进 CVR 的配置里写 `/tmp/...` 必然被拒 | 放进 CVR 的配置**直接删掉 `state-dir` 那一行**（默认 `easytier/<代理名>`，就在 home dir 内，合法）。另外别把隔离用的整份配置当 CVR profile 导入——会顶掉你的订阅，正确做法是 merge profile 里的 `prepend-proxies` / `prepend-rules` |
 | 测 `10.144.0.2:9090` 连上但不回包 | 家侧 API 的 DNS-rebinding 保护（非本机来源直接关闭连接） | 别拿 API 当测试目标；用 LAN 上的普通服务，或 `--dns-query` 验 UDP |
@@ -174,7 +174,7 @@ docker compose down                 # 家侧（state/ 目录保留，证书身�
 ```
 
 > `./state` 目录保存 overlay 节点身份，**不要删**；删了会在 overlay 里变成新节点。
-> 家侧不便提权时改用 `examples/easytier/home/alt-native/`（零特权 native 容器，无 ICMP、吞吐低一档）。
+> 家侧不便提权时改用 `examples/easytier/gateway/alt-native/`（零特权 native 容器，无 ICMP、吞吐低一档）。
 
 ## 6. macOS 定案：不依赖 JIT 的内核（路线 B）
 
@@ -226,7 +226,7 @@ sudo cp verge-mihomo-alpha-nojit "<上一步找到的路径>"
 
 ```
 CVR 内核（服务模式 + TUN）  --socks5-->  用户态网关（launchd 常驻）  --easytier/WASI-->  会合点 --> 家侧
-   rules: 10.x → 🏠 家里                     mixed-port 127.0.0.1:17899
+   rules: 10.x → 🏠 内网                     mixed-port 127.0.0.1:17899
 ```
 
 * CVR 侧：把 `easytier` 出站换成 `type: socks5, server: 127.0.0.1, port: 17899, udp: true`，规则与分组不变
@@ -370,7 +370,7 @@ overlay failure*），自带监督循环：`StateRunning` 健康检查、`readyC
 
 | 组件 | 角色 | overlay IP |
 | --- | --- | --- |
-| 内核内置 `et-core`（组 `🏠 家里` 首选） | **主路径**：家里内网 TCP/UDP 直通，无额外进程 | `10.144.0.9` |
+| 内核内置 `et-core`（组 `🏠 内网` 首选） | **主路径**：家里内网 TCP/UDP 直通，无额外进程 | `10.144.0.9` |
 | 用户态网关（`home-overlay` socks5，组内可切换） | **兜底**：内置路径出问题时可一键切回 | `10.144.0.4` |
 
 注意：服务模式内核的终止机制仍是「SIGTERM → 1 秒 → SIGKILL」（§6.7），
@@ -382,7 +382,7 @@ overlay failure*），自带监督循环：`StateRunning` 健康检查、`readyC
 生产形态最终收敛为**一个内核进程**：
 
 * CVR 服务模式内核（**解释器版** easytier-go，见 §6.8）内置 `et-core`，
-  组 `🏠 家里: [et-core, DIRECT]`，家里四条网段规则不变；
+  组 `🏠 内网: [et-core, DIRECT]`，家里四条网段规则不变；
 * **用户态网关已退役**（`launchctl bootout` + `disable gui/$UID/com.fa.home-overlay`，
   文件保留可回滚：`enable` + `bootstrap`）；
 * 实测：家里 `10.0.1.181:8080` 连续 5 次 **200（0.12–0.14s）**、`10.0.0.1` 200、
@@ -417,9 +417,9 @@ gh workflow run mihomo-image.yml -R iuin8/mihomo --ref fa/trunk \
 **用镜像起家侧**（不需要仓库源码、不需要本地 Go）：
 
 ```bash
-mkdir -p ~/easytier-home-gateway && cd ~/easytier-home-gateway
-# 只需从仓库取两个文件：docker-compose.yml + home-mihomo-tun.yaml
-# 改 home-mihomo-tun.yaml 中三处「改这里」：network-secret / peers / proxy-networks
+mkdir -p ~/easytier-gateway && cd ~/easytier-gateway
+# 只需从仓库取两个文件：docker-compose.yml + gateway.yaml
+# 改 gateway.yaml 中三处「改这里」：network-secret / peers / proxy-networks
 docker compose up -d
 GW_TAG=v1.19.32-fa.1001 docker compose up -d      # 生产建议钉版本
 ```
@@ -448,7 +448,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 > ℹ️ **关于包可见性（2026-10-02 实测更正）**：官方文档说得很清楚 —— 包**默认继承的是"权限"，不是"可见性"**
 > （[Configuring a package's access control and visibility](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility)）。
-> 但**本仓库实测**：由工作流推上去的新包**就是 public** ✓（`ghcr.io/iuin8/easytier-home-gateway` 在删掉后
+> 但**本仓库实测**：由工作流推上去的新包**就是 public** ✓（`ghcr.io/iuin8/easytier-gateway` 在删掉后
 > 被 CI 重新创建，匿名 token 端点仍返回 **200** ✓），所以**通常不需要手动设置** ✓；若确实拿不到，
 > 再到包设置页把可见性改成 Public ✓。
 >
@@ -466,7 +466,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | 项 | 结果 |
 | --- | --- |
 | 多架构 manifest | `linux/amd64` ✓ + `linux/arm64` ✓（另有 docker 的 attestation manifest ✓）|
-| 匿名 `docker pull` | ⚠️ **本节初稿写错了**：当时匿名拉取成功的是**旧包名** `ghcr.io/iuin8/easytier-home-gateway` ✓，而 `mihomo` / `mihomo-home-gateway` 这两个名字**从未被创建过** ✗ —— 原因是 CI 里 `images:` 用的是 `${{ github.repository_owner }}` 表达式，改名时没匹配上（详见 §6.14）|
+| 匿名 `docker pull` | ⚠️ **本节初稿写错了**：当时匿名拉取成功的是**旧包名** `ghcr.io/iuin8/easytier-gateway` ✓，而 `mihomo` / `mihomo-home-gateway` 这两个名字**从未被创建过** ✗ —— 原因是 CI 里 `images:` 用的是 `${{ github.repository_owner }}` 表达式，改名时没匹配上（详见 §6.14）|
 | 包可见性 | **公开** ✓（匿名可拉 ✓）——注意 `gh` 的 OAuth token 默认**没有** `read:packages`，用 `gh api /user/packages/...` 查会 403 ✗；那只说明 token 范围不够，**不代表包是私有的** ✓ |
 | 镜像内版本 | `Mihomo Meta v1.19.32-fa.1001 linux arm64`（版本注入生效 ✓）|
 | 镜像内指纹 | 解释器补丁 **1** ✓ / 上游 #3215 监督 **1** ✓ / 旧泄漏重试 **0** ✓ / TUN 位 **3** ✓ |
@@ -475,9 +475,9 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 **家侧切到 GHCR（从"本地编译"改成"只用镜像"）**：
 
 ```bash
-cd <家侧目录>                     # 里面应有 docker-compose.yml、home-mihomo-tun.yaml、state/
+cd <家侧目录>                     # 里面应有 docker-compose.yml、gateway.yaml、state/
 # 1) 用仓库里新版的两个文件覆盖（新版 docker-compose.yml 默认拉 GHCR 镜像，不再 build）
-#    docker-compose.yml、home-mihomo-tun.yaml（后者把 API 收到 127.0.0.1）
+#    docker-compose.yml、gateway.yaml（后者把 API 收到 127.0.0.1）
 # 2) 切到钉版本并重启（state/ 不要动：overlay 节点身份在里面）
 GW_TAG=v1.19.32-fa.1001 docker compose pull mihomo
 GW_TAG=v1.19.32-fa.1001 docker compose up -d
@@ -568,14 +568,14 @@ docker compose ps                 # 期望：healthy ✓
 
 ### 6.14 镜像改名为什么前三次都没生效（教训）
 
-**症状**：本地改了三遍镜像名（`easytier-home-gateway` → `mihomo-home-gateway` → `mihomo`），
+**症状**：本地改了三遍镜像名（`easytier-gateway` → `mihomo-home-gateway` → `mihomo`），
 但每次 CI 构建完推上去的**仍是旧名字** ✗；被删掉的旧包名还会"自己回来" ✗；而
 `https://github.com/users/iuin8/packages/container/mihomo/settings` 始终 404 ✗。
 
 **根因**：工作流里那行是
 
 ```yaml
-images: ghcr.io/${{ github.repository_owner }}/easytier-home-gateway
+images: ghcr.io/${{ github.repository_owner }}/easytier-gateway
 ```
 
 用的是 **`${{ github.repository_owner }}` 表达式**，而不是字面量 `ghcr.io/iuin8/…` ✓ ——
@@ -666,3 +666,30 @@ images: ghcr.io/${{ github.repository_owner }}/easytier-home-gateway
 2. **中文内容一律用单引号 Python 字符串** ✓ —— 同一处嵌套引号错误在一天内犯了 **4 次** ✗；中文引号是 `"`，与 `'...'` 不冲突 ✓。
 3. **不要用 `2>/dev/null` 吞掉核对命令的错误** ✗ —— `git checkout <tag> -- <file>` 静默失败过一次 ✓，当时还被当成了"已恢复上游" ✓。
 4. **核对要打印原文行** ✓、**改名脚本与核对脚本不得共用同一套模式** ✗（否则盲区重合 ✓，详见 §6.14）。
+
+### 6.17 命名通用化（2026-10-03）与家侧迁移
+
+命名统一成业界通用词（原来的 "home" 只适用"回家"这一种用法 ✗ —— 别人可能只是要打通**某个**内网 ✓）：
+
+| 旧 | 新 |
+| --- | --- |
+| `docs/examples/easytier/home/` | `docs/examples/easytier/gateway/` |
+| `home-mihomo-tun.yaml` | `gateway.yaml` |
+| `home-easytier-core.toml` | `alt-native/easytier-core.toml` |
+| compose 项目名 `easytier-home-gateway` | **`easytier-gateway`** |
+| `container_name: mihomo-home` | `mihomo-gateway` |
+| 出站名 `et-home` | `et-gateway` |
+| `hostname`/`instance-name: home-gw` | 占位符（**每台网关都要唯一** ✗）|
+| 客户端分组 `🏠 家里` | **`🏠 内网`** |
+| `docs/easytier_home_gateway{,_sop}.md` | `docs/easytier_gateway{,_sop}.md` |
+
+⚠️ **家侧迁移：必须先停旧栈** ✗ —— compose 的 `name:` 变了，新老项目名不同 ✓；若直接 `up -d`，
+会变成**新旧两个实例同时在跑** ✗，而它们**共用同一个 `./state` 目录** → 两个 easytier 实例抢同一个节点身份 ✗
+（就是 §6.3 那种互相破坏 ✓）。正确顺序（第一步要在**旧**目录、用**旧**文件执行 ✓）：
+
+```bash
+cd <家侧目录>
+docker compose down                      # 用旧文件停掉旧项目名的栈 ✓
+# 再把新的 docker-compose.yml 与 gateway.yaml 覆盖进来
+docker compose up -d && docker compose ps # state/ 保留 → overlay 身份不变 ✓
+```

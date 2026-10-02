@@ -4,8 +4,8 @@
 # CLI 依据：easytier/src/core.rs（-c/--config-file、-n/--proxy-networks）
 #
 # 实测（2026-09-30）：本配置 + 本机 Clash 客户端 → TCP 20MB @ 8.4 MB/s（校验一致）、UDP 0% 丢包。
-instance_name = "home-gw"
-hostname = "home-gw"
+instance_name = "gateway"
+hostname = "gateway"
 
 dhcp = false
 ipv4 = "10.144.0.2/24"
