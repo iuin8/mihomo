@@ -81,3 +81,18 @@ observation (and if so, which one), or whether the core is dying on its own
 before the service notices. If it is the former, the decision needs a log line
 and a tolerance knob; if the latter, we can instrument the easytier/WASI host
 path further on request.
+
+## Decisive follow-up: no graceful stop is attempted
+
+Reading the core's own `/logs` stream (no root needed: `curl -N --unix-socket
+/var/run/clash-verge-service/users/<uid>/verge-mihomo.sock 'http://localhost/logs?level=info'`)
+while triggering the connection shows the stream working normally and then
+**no shutdown output at all** - not the signal line, not a single cleanup step.
+The process is replaced ~3s after the first connection traverses the overlay.
+
+So the supervisor does not ask the core to stop and then escalate; it kills
+outright. SIGKILL cannot be caught, which means the core side has no remedy left:
+only the supervisor's reason can be fixed. That reason is currently unobservable
+(its logging is compiled off, and its IPC rejects unsigned requests), so the
+next step would be a locally built helper with `ENABLE_LOGGING` enabled and the
+protocol version matched to the installed app.
