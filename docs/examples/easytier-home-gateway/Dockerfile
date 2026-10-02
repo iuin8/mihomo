@@ -20,6 +20,9 @@ ENV GOPROXY=${GOPROXY} \
 
 WORKDIR /src
 COPY go.mod go.sum ./
+# go.mod 里有 `replace github.com/easytier/easytier/easytier-go => ./third_party/easytier-go`，
+# 所以 go mod download 之前该目录必须已就位，否则解析不到替换目标（CI 首次构建就栽在这里）。
+COPY third_party/ ./third_party/
 # 模块缓存挂进 BuildKit cache：第二次构建起不再重复下载
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
