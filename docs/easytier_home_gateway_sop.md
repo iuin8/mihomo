@@ -264,6 +264,8 @@ sudo cp verge-mihomo-alpha-nojit "<上一步找到的路径>"
 
 ### 6.1 解耦架构：用户态 overlay 网关 + SOCKS5（macOS 客户端实测定案）
 
+> ⚠️ **历史方案（已被 §6.9 取代）**：自 2026-10-02 起生产形态是**单内核**（服务模式内核内置 `et-core`），用户态网关已退役。以下 §6.1 内容保留为排查记录与回滚参考。
+
 第 6 节那张表说明：服务模式（root + TUN）下 easytier 的 WASI 实例启动**必然挂住**（随后被服务看门狗 SIGKILL），
 而同一二进制、同一配置在**用户态**完全正常。于是把 overlay 拆出去：
 
@@ -327,7 +329,7 @@ CVR 内核（服务模式 + TUN）  --socks5-->  用户态网关（launchd 常�
 | 服务自身日志**编译期关闭**（`ENABLE_LOGGING = false`） | 它的决策无法从外部观测 ✗ |
 
 **因此**：要在一个内核里同时拥有 TUN 与 easytier，需要在 CVR/服务侧定位那条"下令 SIGKILL"的路径（可能需要给 App/服务加日志重编，或 macOS 级追踪），
-或者向 mihomo/CVR 上游提 issue（本节的表格就是最小复现集）。**在此之前，推荐 §6.1 的解耦架构**（用户态网关 + socks5 出站）——它已经在生产状态跑通，
+或者向 mihomo/CVR 上游提 issue（本节的表格就是最小复现集）。**在此之前，推荐 §6.1 的解耦架构**（用户态网关 + socks5 出站）——该方案已跑通并被 §6.9 的单内核形态取代：
 代价只是多一个 launchd 常驻进程。
 
 ### 6.5 定案（第二轮）：App 是观察者，服务是执行者
@@ -353,7 +355,7 @@ WARN  [Service] service restarted the core (40 restarts so far); last exit: Kill
 * **范围 = 服务模式（root + TUN + auto-route）**；同一内核在用户态（含 root、含 TUN 设备但 `auto-route: false`）完全正常。
 
 结论与完整证据表已整理成可提交的上游 issue 草稿：`docs/easytier_service_mode_kill_issue.md`。
-在产品上，**§6.1 的解耦架构**仍是推荐形态（已连续稳定运行、TCP/UDP 均通、无需改动服务或系统）。
+在产品上，**§6.1 的解耦架构**曾是推荐形态（已连续稳定运行、TCP/UDP 均通、无需改动服务或系统）；**该结论已被 §6.9 取代** —— 现网为单内核 + 内置 easytier。
 
 ### 6.6 终局证据：是**直接 SIGKILL**，没有礼貌停
 
