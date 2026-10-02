@@ -495,15 +495,20 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ### 6.11 镜像通道验收结论 + 家侧切到 GHCR
 
-> ⚠️ **首次发布后必须做一次（否则匿名 pull 会被拒）**：GHCR 新建的包默认是 **private** ✗——
-> 匿名 `docker pull ghcr.io/iuin8/mihomo:…` 会返回 `error from registry: denied` ✗。
-> 需要包所有者点一次：<https://github.com/users/iuin8/packages/container/mihomo/settings>
-> → Danger Zone → **Change visibility → Public** ✓。
+> ℹ️ **关于包可见性（2026-10-02 实测更正）**：官方文档说得很清楚 —— 包**默认继承的是"权限"，不是"可见性"**
+> （[Configuring a package's access control and visibility](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility)）。
+> 但**本仓库实测**：由工作流推上去的新包**就是 public** ✓（`ghcr.io/iuin8/easytier-home-gateway` 在删掉后
+> 被 CI 重新创建，匿名 token 端点仍返回 **200** ✓），所以**通常不需要手动设置** ✓；若确实拿不到，
+> 再到包设置页把可见性改成 Public ✓。
 >
-> 两个容易误判的点：
-> * `gh api /user/packages/...` 返回 **403/404** ✗ —— 那是因为 `gh` 的 OAuth token 默认**没有**
->   `read:packages`/`write:packages` 权限 ✓，**不代表包是私有的** ✓（判断公开与否以匿名 `docker pull` 为准 ✓）。
-> * **改包名 = 新建一个包** ✗ —— 旧包不会自动消失，需要在 Packages 页面手动删除 ✓。
+> **判断公开与否的正确方法**（别再用错判据 ✗）：看 **token 端点** ——
+> `curl -o /dev/null -w '%{http_code}' 'https://ghcr.io/token?scope=repository:iuin8/<包名>:pull&service=ghcr.io'`
+> → **200 = public** ✓ / **403 = private 或不存在** ✗。
+> `GET /v2/<包名>/tags/list` 返回 **401 是 OCI 的正常挑战** ✓，**不代表包是私有的** ✗（这里曾经误判过一次 ✓）。
+> 另一个常见误判：`gh api /user/packages/...` 返回 403/404 是因为 `gh` 的 OAuth token 默认没有
+> `read:packages` 权限 ✓，同样不代表包的状态 ✗。
+>
+> 附注：**改包名 = 新建包** ✓ —— 旧包不会自动消失，需要在 Packages 页面手动删除 ✓。
 
 **验收（2026-10-02，全部为匿名操作，不带任何凭据）**：
 
