@@ -18,11 +18,12 @@
 #   NAT_INTERFACE  连内网的那张网卡（默认 eth0；多网卡时用 ip -o -4 addr show 确认后改）
 #   SKIP_NAT=1     完全跳过 NAT（例如家侧本来就是内网网关时）
 #   TRIGGER_PROXY  要触发的出站名（默认 et-home，与示例配置一致）
+#   API_BASE       内核 API 地址（默认 http://127.0.0.1:9090；改了配置里的 external-controller 时同步改这里）
 set -e
 
 IFACE="${NAT_INTERFACE:-eth0}"
 PROXY="${TRIGGER_PROXY:-et-home}"
-API="http://127.0.0.1:9090"
+API="${API_BASE:-http://127.0.0.1:9090}"
 
 if [ "${SKIP_NAT:-0}" != "1" ]; then
     if iptables -t nat -C POSTROUTING -o "$IFACE" -j MASQUERADE 2>/dev/null; then

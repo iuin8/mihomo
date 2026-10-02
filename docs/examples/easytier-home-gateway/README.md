@@ -14,7 +14,7 @@ mkdir -p ~/easytier-home-gateway && cd ~/easytier-home-gateway
 docker compose up -d
 ```
 
-镜像：`ghcr.io/iuin8/easytier-home-gateway`（多架构 amd64/arm64 ✓，由
+镜像：`ghcr.io/iuin8/mihomo-home-gateway`（多架构 amd64/arm64 ✓，由
 `.github/workflows/easytier-home-gateway-image.yml` 构建）。
 生产建议钉版本：`GW_TAG=v1.19.32-fa.1001 docker compose up -d`。
 

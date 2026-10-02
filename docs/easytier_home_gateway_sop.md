@@ -451,7 +451,7 @@ App 更新/恢复路径、以及 §6.4 那类 `CODESIGNING` 崩溃风险）→ �
 ### 6.10 家侧网关的镜像发布通道（不必再拉源码）
 
 CI：`.github/workflows/easytier-home-gateway-image.yml`（`workflow_dispatch`，多架构 `linux/amd64` + `linux/arm64`）
-产物：`ghcr.io/iuin8/easytier-home-gateway:latest` / `:sha-<short>` / `:<tag>`
+产物：`ghcr.io/iuin8/mihomo-home-gateway:latest` / `:sha-<short>` / `:<tag>`
 
 ```bash
 # 发布（把内核版本一并写进镜像里的 mihomo -v）
@@ -496,7 +496,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | 项 | 结果 |
 | --- | --- |
 | 多架构 manifest | `linux/amd64` ✓ + `linux/arm64` ✓（另有 docker 的 attestation manifest ✓）|
-| 匿名 `docker pull` | ✓ 成功（`ghcr.io/iuin8/easytier-home-gateway:v1.19.32-fa.1001`，约 7s）|
+| 匿名 `docker pull` | ✓ 成功（`ghcr.io/iuin8/mihomo-home-gateway:v1.19.32-fa.1001`，约 7s）|
 | 包可见性 | **公开** ✓（匿名可拉 ✓）——注意 `gh` 的 OAuth token 默认**没有** `read:packages`，用 `gh api /user/packages/...` 查会 403 ✗；那只说明 token 范围不够，**不代表包是私有的** ✓ |
 | 镜像内版本 | `Mihomo Meta v1.19.32-fa.1001 linux arm64`（版本注入生效 ✓）|
 | 镜像内指纹 | 解释器补丁 **1** ✓ / 上游 #3215 监督 **1** ✓ / 旧泄漏重试 **0** ✓ / TUN 位 **3** ✓ |

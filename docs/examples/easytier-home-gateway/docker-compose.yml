@@ -5,7 +5,7 @@
 #   3) docker compose up -d
 #
 # 默认从 GHCR 拉取已构建好的镜像（不需要仓库源码，也不需要本地 Go/编译）：
-#   ghcr.io/iuin8/easytier-home-gateway
+#   ghcr.io/iuin8/mihomo-home-gateway
 # 镜像由本仓库的 .github/workflows/easytier-home-gateway-image.yml 构建（多架构 amd64/arm64）。
 #
 # 想自己编译内核（改了代码、或拉不到 GHCR）时用构建覆盖文件：
@@ -21,7 +21,7 @@ name: easytier-home-gateway
 services:
   mihomo:
     # 生产建议钉版本而不是 latest：GW_TAG=v1.19.32-fa.1001 docker compose up -d
-    image: ghcr.io/iuin8/easytier-home-gateway:${GW_TAG:-latest}
+    image: ghcr.io/iuin8/mihomo-home-gateway:${GW_TAG:-latest}
     container_name: mihomo-home
     restart: unless-stopped
 
