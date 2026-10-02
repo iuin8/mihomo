@@ -6,7 +6,7 @@
 #
 # 默认从 GHCR 拉取已构建好的镜像（不需要仓库源码，也不需要本地 Go/编译）：
 #   ghcr.io/iuin8/mihomo   ← 镜像就是纯 mihomo：没有入口脚本，行为全部来自挂载的 config
-# 由 .github/workflows/easytier-home-gateway-image.yml 构建（多架构 amd64/arm64）。
+# 由 .github/workflows/mihomo-image.yml 构建（多架构 amd64/arm64）。
 #
 # 想自己编译内核（改了代码、或拉不到 GHCR）时用构建覆盖文件：
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build

@@ -450,7 +450,7 @@ App 更新/恢复路径、以及 §6.4 那类 `CODESIGNING` 崩溃风险）→ �
 
 ### 6.10 家侧网关的镜像发布通道（不必再拉源码）
 
-CI：`.github/workflows/easytier-home-gateway-image.yml`（`workflow_dispatch`，多架构 `linux/amd64` + `linux/arm64`）
+CI：`.github/workflows/mihomo-image.yml`（`workflow_dispatch`，多架构 `linux/amd64` + `linux/arm64`）
 产物：`ghcr.io/iuin8/mihomo:latest` / `:sha-<short>` / `:<tag>`
 
 > 镜像**默认是纯 mihomo**（无内置配置，挂自己的 YAML 即通用代理容器 ✓）；
@@ -459,7 +459,7 @@ CI：`.github/workflows/easytier-home-gateway-image.yml`（`workflow_dispatch`�
 
 ```bash
 # 发布（把内核版本一并写进镜像里的 mihomo -v）
-gh workflow run easytier-home-gateway-image.yml -R iuin8/mihomo --ref <branch> \
+gh workflow run mihomo-image.yml -R iuin8/mihomo --ref <branch> \
   -f tag=v1.19.32-fa.1001 -f mihomo_version=v1.19.32-fa.1001
 ```
 
@@ -510,7 +510,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | 项 | 结果 |
 | --- | --- |
 | 多架构 manifest | `linux/amd64` ✓ + `linux/arm64` ✓（另有 docker 的 attestation manifest ✓）|
-| 匿名 `docker pull` | ✓ 成功（`ghcr.io/iuin8/mihomo:v1.19.32-fa.1001`，约 7s）|
+| 匿名 `docker pull` | ⚠️ **本节初稿写错了**：当时匿名拉取成功的是**旧包名** `ghcr.io/iuin8/easytier-home-gateway` ✓，而 `mihomo` / `mihomo-home-gateway` 这两个名字**从未被创建过** ✗ —— 原因是 CI 里 `images:` 用的是 `${{ github.repository_owner }}` 表达式，改名时没匹配上（详见 §6.14）|
 | 包可见性 | **公开** ✓（匿名可拉 ✓）——注意 `gh` 的 OAuth token 默认**没有** `read:packages`，用 `gh api /user/packages/...` 查会 403 ✗；那只说明 token 范围不够，**不代表包是私有的** ✓ |
 | 镜像内版本 | `Mihomo Meta v1.19.32-fa.1001 linux arm64`（版本注入生效 ✓）|
 | 镜像内指纹 | 解释器补丁 **1** ✓ / 上游 #3215 监督 **1** ✓ / 旧泄漏重试 **0** ✓ / TUN 位 **3** ✓ |
@@ -608,3 +608,27 @@ docker compose ps                 # 期望：healthy ✓
     entrypoint: ["/bin/sh", "-c",
       "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE; exec mihomo -d /root/.config/mihomo -f /root/.config/mihomo/config.yaml"]
 ```
+
+### 6.14 镜像改名为什么前三次都没生效（教训）
+
+**症状**：本地改了三遍镜像名（`easytier-home-gateway` → `mihomo-home-gateway` → `mihomo`），
+但每次 CI 构建完推上去的**仍是旧名字** ✗；被删掉的旧包名还会"自己回来" ✗；而
+`https://github.com/users/iuin8/packages/container/mihomo/settings` 始终 404 ✗。
+
+**根因**：工作流里那行是
+
+```yaml
+images: ghcr.io/${{ github.repository_owner }}/easytier-home-gateway
+```
+
+用的是 **`${{ github.repository_owner }}` 表达式**，而不是字面量 `ghcr.io/iuin8/…` ✓ ——
+而我的改名脚本与"核对脚本"都只匹配 `ghcr.io/iuin8/…` 与 `ghcr.io/<owner>/…` 两种字面写法 ✗，
+**表达式形式两种都没匹配上** ✗。于是：改名没生效 ✗、核对也看不见 ✗（**核对与改名共用同一套盲区** ✗），
+而每次 CI 一推就把刚被删掉的旧包**重新创建**出来（新包默认为 private ✗）✓。
+
+**教训（已固化为习惯）**：
+1. **核对要打印原文行，不要只看计数** ✓ —— 计数为 0 只说明"没有匹配到我的模式"，不等于"没有旧名字" ✗。
+2. **改名脚本与核对脚本不要共用同一套模式** ✗ —— 否则盲区完全重合 ✓。
+3. CI 里的镜像名**用字面量**，不要用表达式 ✓（少一层"看不出来"的间接 ✓）。
+4. `workflow_dispatch` 的工作流文件**必须存在于默认分支** ✓ —— 这次顺手把分支与 `main` 上的工作流
+   保持同步 ✓（虽然本次症状的根因不是它 ✓，但两份不一致迟早会咬人 ✗）。

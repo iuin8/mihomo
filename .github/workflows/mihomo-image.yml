@@ -3,7 +3,7 @@ name: mihomo image
 # 家侧网关镜像的发布通道：把 mihomo fork 的内核（含 TUN 模式）打成多架构镜像推到 GHCR，
 # 于是使用方只需要 docker compose up -d，不必再拉仓库源码、也不必本地编译。
 #
-#   gh workflow run easytier-home-gateway-image.yml -f tag=v1.19.32-fa.1001
+#   gh workflow run mihomo-image.yml -f tag=v1.19.32-fa.1001
 #
 # 产物：ghcr.io/<owner>/mihomo:latest / :sha-<short> / :<tag>
 #   <owner> 即本仓库所有者（iuin8）。镜像默认用官方 Alpine/Go 代理源，

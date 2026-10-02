@@ -14,7 +14,7 @@ mkdir -p ~/easytier-home-gateway && cd ~/easytier-home-gateway
 docker compose up -d
 ```
 
-镜像：`ghcr.io/iuin8/mihomo`（多架构 amd64/arm64 ✓，由 `.github/workflows/easytier-home-gateway-image.yml` 构建）。
+镜像：`ghcr.io/iuin8/mihomo`（多架构 amd64/arm64 ✓，由 `.github/workflows/mihomo-image.yml` 构建）。
 
 > 镜像就是**纯 mihomo**：里面没有任何配置、也没有入口脚本，行为全部来自挂载的 YAML。
 > 家侧需要的那点"路由器"能力不在镜像里：`NET_ADMIN` + `/dev/net/tun`（建 TUN）与 `ip_forward=1`
