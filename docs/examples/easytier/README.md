@@ -7,7 +7,7 @@
 | 角色 | 目录 | 一句话 |
 | --- | --- | --- |
 | **客户端**（你的电脑/手机） | [`client/`](client/) | 一份订阅模板 ✓ —— **别人拿到直接用，不用改任何字段** ✓ |
-| **家里**（L3 网关） | [`home/`](home/) | 方案 A：mihomo TUN 网关（用 GHCR 镜像 ✓）；[`home/alt-native/`](home/alt-native/) 是方案 B 零特权 |
+| **家里**（L3 网关） | [`gateway/`](gateway/) | 方案 A：mihomo TUN 网关（用 GHCR 镜像 ✓）；[`gateway/alt-native/`](gateway/alt-native/) 是方案 B 零特权 |
 | **公网节点**（会合点） | [`rendezvous/`](rendezvous/) | 有公网 IP 的机器上跑一个共享节点 ✓（家侧无公网时必需 ✓） |
 | 三方共用 | [`tools/`](tools/) | 探针与回声服务（排障用 ✓） |
 
@@ -21,16 +21,16 @@
 > 分享要点：**密钥即凭据** ✗（只在私有位置托管 ✓；外泄就在所有节点同时换 `network-secret` ✓）；
 > 对方用官方内核即可 ✓，只有"macOS + 服务模式"那种机器才需要本 fork 的解释器内核 ✓。
 
-## 家里 —— [`home/`](home/)
+## 家里 —— [`gateway/`](gateway/)
 
 | 文件 | 用途 |
 | --- | --- |
-| [`home/docker-compose.yml`](home/docker-compose.yml) | **一键盘（拉镜像）**：`NET_ADMIN`/`/dev/net/tun` + `ip_forward` + 健康检查 ✓（镜像=纯 mihomo ✓） |
-| [`home/docker-compose.build.yml`](home/docker-compose.build.yml) | 自编译覆盖：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` ✓ |
-| [`home/Dockerfile`](home/Dockerfile) / [`home/Dockerfile.prebuilt`](home/Dockerfile.prebuilt) | 多阶段构建 / 纯打包（用别处交叉编译好的二进制 ✓） |
-| [`home/gateway.yaml`](home/gateway.yaml) | 家侧配置（`tun: true` ✓、`prewarm: true` ✓ 服务端必需 ✓、`proxy-networks` ✓） |
-| `home/state/` | 运行时生成：**overlay 节点身份**，别删 ✓（换了它就是新节点 ✗） |
-| [`home/alt-native/`](home/alt-native/) | **方案 B**：零特权 native 容器（无 TUN/无 iptables ✓；代价是无 ICMP、吞吐低一档 ✓） |
+| [`gateway/docker-compose.yml`](gateway/docker-compose.yml) | **一键盘（拉镜像）**：`NET_ADMIN`/`/dev/net/tun` + `ip_forward` + 健康检查 ✓（镜像=纯 mihomo ✓） |
+| [`gateway/docker-compose.build.yml`](gateway/docker-compose.build.yml) | 自编译覆盖：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` ✓ |
+| [`gateway/Dockerfile`](gateway/Dockerfile) / [`gateway/Dockerfile.prebuilt`](gateway/Dockerfile.prebuilt) | 多阶段构建 / 纯打包（用别处交叉编译好的二进制 ✓） |
+| [`gateway/gateway.yaml`](gateway/gateway.yaml) | 家侧配置（`tun: true` ✓、`prewarm: true` ✓ 服务端必需 ✓、`proxy-networks` ✓） |
+| `gateway/state/` | 运行时生成：节点标识持久化点 ✓ —— **删了不会断连** ✓（overlay 地址来自配置里的 `ipv4` ✓），只会换一个新标识 ✗ |
+| [`gateway/alt-native/`](gateway/alt-native/) | **方案 B**：零特权 native 容器（无 TUN/无 iptables ✓；代价是无 ICMP、吞吐低一档 ✓） |
 
 ## 公网节点 —— [`rendezvous/`](rendezvous/)
 
@@ -48,7 +48,7 @@
 
 ## 两条家侧路线对照
 
-| | 方案 A（TUN，[`home/`](home/)，推荐） | 方案 B（[`home/alt-native/`](home/alt-native/)） |
+| | 方案 A（TUN，[`gateway/`](gateway/)，推荐） | 方案 B（[`gateway/alt-native/`](gateway/alt-native/)） |
 | --- | --- | --- |
 | 家侧要求 | `NET_ADMIN` + `/dev/net/tun` + `ip_forward`（compose 已给 ✓） | 无 ✓ |
 | 家侧内核 | **必须本 fork 构建**（上游会静默忽略 `tun: true` ✗）→ 用 GHCR 镜像 ✓ | 官方 `easytier/easytier:v2.6.4` ✓ |
