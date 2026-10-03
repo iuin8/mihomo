@@ -3,6 +3,7 @@
 package outbound
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -31,12 +32,19 @@ func TestNewEasyTierDefaultsHostnamePerOutbound(t *testing.T) {
 		return proxy.configTOML
 	}
 
-	a, b := build("et-a", ""), build("et-b", "")
-	if !strings.Contains(a, `hostname = "et-a"`) {
-		t.Fatalf("未兜底为出站名，配置为:\n%s", a)
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		t.Skip("本机取不到 hostname，跳过")
 	}
-	if !strings.Contains(b, `hostname = "et-b"`) {
-		t.Fatalf("未兜底为出站名，配置为:\n%s", b)
+
+	a, b := build("et-a", ""), build("et-b", "")
+	// 两个唯一性 ✓：每台机器唯一（带宿主名前缀 → 跨机不会撞 ✓）
+	if !strings.Contains(a, `hostname = "`+host+`-et-a"`) {
+		t.Fatalf("未按 <宿主>-<出站> 兜底，配置为:\n%s", a)
+	}
+	//           同一台机器内每个出站唯一 ✓（本次故障的成因 ✓）
+	if a == b || !strings.Contains(b, `hostname = "`+host+`-et-b"`) {
+		t.Fatalf("同机两个出站未区分，b 的配置为:\n%s", b)
 	}
 	if c := build("et-c", "custom-host"); !strings.Contains(c, `hostname = "custom-host"`) {
 		t.Fatalf("显式 hostname 被覆盖，配置为:\n%s", c)

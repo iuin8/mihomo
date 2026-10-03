@@ -789,9 +789,12 @@ rules:
 EasyTier 用 **(hostname, instance-name)** 标识节点 ✓；`instance-name` mihomo 一直有兜底（= 出站名 ✓），
 而 **`hostname` 此前没有兜底** ✗ → 未设置时两个出站共用宿主默认值 ✓ → overlay 视作**同一个节点** ✓ →
 症状：**同一时刻只有一个出站能用** ✗，且**哪个能用取决于注册顺序**（实测：重新激活 profile 后会反过来 ✓）。
-处置两选一 ✓：① **配置里各写一个唯一 `hostname`** ✓（立即生效 ✓，模板已改成必填 ✓）；
-② **升级到含 `FORK(easytier-identity)` 修复的内核** ✓（该提交让 `hostname` 默认等于出站名 ✓，与 `instance-name` 同款 ✓，
-回归测试 `TestNewEasyTierDefaultsHostnamePerOutbound` ✓ 已红→绿验证 ✓）。
+处置 ✓：**升级到含 `FORK(easytier-identity)` 修复的内核** ✓ —— 该修复让 `hostname` 默认为 **`<宿主主机名>-<出站名>`** ✓✓，
+**两个维度都唯一** ✓：跨机器唯一 ✓（同一份订阅发给多台机器不会撞 ✓）+ 同机每个出站唯一 ✓。
+回归测试 `TestNewEasyTierDefaultsHostnamePerOutbound` ✓ 已红→绿验证 ✓（连"只用出站名"的中间版本都会失败 ✓）。
+
+⚠️ **不要为了绕过它而在订阅里写死 `hostname`** ✗✓：写死的值会让**所有导入该订阅的机器**同名 ✓ ——
+把一个"同机冲突"换成更糟的"**跨机冲突**" ✗（这正是本条的教训 ✓）。真要显式填写时，**每台机器必须不同** ✗。
 
 **两个出站能共存吗** ✓（2026-10-03 实测 ✓）：**能** ✓ —— 同一个 mihomo 进程里跑两个 easytier 出站
 （各自 `state-dir` 默认 `easytier/<出站名>` ✓、各自 `machine_id` ✓、各自 `exit-nodes` ✓），

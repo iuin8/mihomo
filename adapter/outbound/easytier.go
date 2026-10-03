@@ -105,12 +105,18 @@ func (o EasyTierOption) structuredConfig() easytier.Config {
 	if instanceName == "" {
 		instanceName = o.Name
 	}
-	// FORK(easytier-identity): hostname 未设置时必须兜底 ✗✓ —— 否则**多个出站**会共用宿主默认
-	// hostname ✓，在 overlay 里被当成同一个节点 → 表现为"同一时刻只有一个出站能用" ✗，且哪个能用
-	// 取决于注册顺序（实测：重新激活 profile 后会反过来 ✓）。与 instance-name 保持同一套语义 ✓。
+	// FORK(easytier-identity): hostname 未设置时必须兜底，且兜底值要**同时**满足两个唯一性 ✗✓：
+	//   · **每台机器唯一** ✓ —— 否则同一份订阅被多台机器导入后全都同名 ✓（跨机冲突，比不兜底更糟 ✗）；
+	//   · **同机每个出站唯一** ✓ —— 否则同一进程里的两个出站会被 overlay 当成同一个节点 ✗，
+	//     表现为"同一时刻只有一个能用"，且谁活取决于注册顺序（实测：重新激活后翻转 ✓）。
+	// 所以取二者组合：<宿主主机名>-<出站名> ✓。取值仅在 hostname 未显式配置时生效 ✓。
 	hostname := o.Hostname
 	if hostname == "" {
-		hostname = o.Name
+		if host, err := os.Hostname(); err == nil && host != "" {
+			hostname = host + "-" + o.Name
+		} else {
+			hostname = o.Name
+		}
 	}
 	return easytier.Config{
 		NetworkName:         o.NetworkName,
