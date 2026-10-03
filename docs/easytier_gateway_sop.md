@@ -750,6 +750,16 @@ rules:
   - IP-CIDR,<Service CIDR>,et-k8s
 ```
 
+**`proxy-networks` 只能填 CIDR，不能填域名** ✗（2026-10-03 源码 + 实测定案 ✓）：
+
+* **类型就是 CIDR** ✓：`easytier-core/src/config/toml.rs` 里是 `ProxyNetworkConfig { cidr: cidr::Ipv4Cidr, mapped_cidr: Option<Ipv4Cidr>, allow: Option<Vec<String>> }` ✓
+  —— 域名无法反序列化进 `Ipv4Cidr` ✓。（mihomo 侧只暴露了最常用的 `proxy-networks` 字符串列表 ✓，`mapped-cidr` / `allow` 未暴露 ✗。）
+* **填域名会"响亮地失败"** ✓（不是静默 ✗）：实测实例**起不来** ✓，guest 报
+  `start failed: create EasyTier instance: Error: failed to parse config TOML from WASI` ✓（内核按监督策略重试 ✓，日志里能直接看到 ✓）。
+* **为什么** ✓：`proxy-networks` 是**路由广告**（"这些 **IP 前缀**在我这边" ✓）—— overlay 是 L3 ✓，没有"某个域名归我"这种路由 ✗；**DNS 是另一层** ✓。
+* **所以域名这样走** ✓✓：客户端 `dns.nameserver-policy` 把该域名交给**集群内的 DNS** ✓（`"+.cluster.local": ["<CoreDNS ClusterIP>#et-k8s"]` ✓）+ 一条 `DOMAIN-SUFFIX,cluster.local,et-k8s` 规则 ✓；
+  **CIDR（Pod CIDR + Service CIDR）放在 `proxy-networks`** ✓ —— 域名解析出来的就是这两个网段里的地址 ✓，两层配合才通 ✓（`cluster.local` 的普通 Service 落在 Service CIDR ✓、headless/Pod 落在 Pod CIDR ✓，所以两个都要写 ✓）。
+
 **本次已做的校验** ✓（2026-10-03 实测 ✓）：清单解析 ✓、不变量断言（replicas/strategy/caps/sysctls/探针类型/挂载 ✓）、
 **用同一镜像在容器内跑 `-t` = successful** ✓（连同 `state-dir` 的路径安全检查一起验掉 ✓）、`kubectl apply --dry-run=client` ✓。
 **未做** ✗（本机没有集群 ✓）：真实调度、TUN 设备、CNI 对源地址的处理 ✓ —— 上线后按"客户端能否访问 `kubernetes.default.svc` 与某个 Pod"验收 ✓。
