@@ -51,27 +51,28 @@ rules:
   - IP-CIDR,10.0.0.0/24,🏠 内网
   - IP-CIDR,10.0.1.0/24,🏠 内网
   - IP-CIDR,10.0.16.0/24,🏠 内网
+  # - DOMAIN-SUFFIX,example.lan,🏠 内网     # ← 配合上面的 hosts/dns 一起启用 ✓
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 内网域名（可选 ✓）：上面的规则只认 IP ✓，要按名字访问家里/公司的内网，两种做法：
+# 内网域名（可选 ✓）：按名字访问内网时，**取消注释**下面两块里的一块
 #
-# A) 少量名字 —— 直接静态映射，零依赖 ✓（推荐先用这个）
+# ⚠️ 放对位置（否则静默失效 ✗）：本 fork 的合并只合并 proxies/providers/proxy-groups/rules
+#    五个段，其余顶层键**只取 index 0 那个 profile**（代码注释原文：All other top-level keys
+#    come from primary (index 0)）。所以三选一：
+#      · 把本片段排在合并列表**第一位**（当基准 ✓）
+#      · 或写进应用的 **DNS 设置页**（hosts 就在那儿生效 ✓，不受合并顺序限制 ✓✓ 最省事）
+#      · 或写进 **Merge 类型 profile**（专门用来注入这类顶层键 ✓）
+#
+# 做法 A（少量名字，零依赖 ✓ 推荐先用）：
 # hosts:
-#   nas.home.lan: 10.0.1.5
-#   git.home.lan: 10.0.1.9
+#   nas.example.lan: 10.0.1.5
 #
-# B) 整个域名后缀 —— 把解析交给内网 DNS，并让"查询本身"也走隧道 ✓
+# 做法 B（整个后缀 → 交给内网 DNS，并让查询也经 et-core ✓）：
 # dns:
 #   enable: true
-#   respect-rules: true                      # ← 关键：DNS 查询按 rules 走，才会进 et-core ✓
 #   nameserver-policy:
-#     "+.home.lan": ["10.0.0.1#et-core"]     # ← 内网 DNS 地址 + 经 et-core 出站 ✓
-# 然后**必须**再加一条域名规则，否则连接不会走隧道 ✗：
-#   - DOMAIN-SUFFIX,home.lan,🏠 内网
+#     "+.example.lan": ["10.0.0.1#et-core"]     # 内网 DNS 地址 + 经 et-core 出站 ✓
 #
-# 说明：本 fork 的内核把这个出站注册成了 DNS 传输（RegisterEasyTierDnsClient ✓），
-# 所以 `#et-core` 这种"经某出站解析"的写法是可用的 ✓；overlay 内节点按名字互访也可用
-# `accept-dns` + `tld-dns-zone: <你的域>.`（注意末尾的点 ✓），但那只管 overlay 自己的名字 ✓。
+# 无论哪种，**都要**再加一条域名规则（否则连接不进隧道 ✗）——下面 rules 里已备好，取消注释即可 ✓。
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 发出去之前：把 `network-secret` 换成真值，然后按下面托管 ✓
