@@ -105,10 +105,17 @@ func (o EasyTierOption) structuredConfig() easytier.Config {
 	if instanceName == "" {
 		instanceName = o.Name
 	}
+	// FORK(easytier-identity): hostname 未设置时必须兜底 ✗✓ —— 否则**多个出站**会共用宿主默认
+	// hostname ✓，在 overlay 里被当成同一个节点 → 表现为"同一时刻只有一个出站能用" ✗，且哪个能用
+	// 取决于注册顺序（实测：重新激活 profile 后会反过来 ✓）。与 instance-name 保持同一套语义 ✓。
+	hostname := o.Hostname
+	if hostname == "" {
+		hostname = o.Name
+	}
 	return easytier.Config{
 		NetworkName:         o.NetworkName,
 		NetworkSecret:       o.NetworkSecret,
-		Hostname:            o.Hostname,
+		Hostname:            hostname,
 		IPv4:                o.IPv4,
 		DHCP:                o.DHCP,
 		Peers:               o.Peers,

@@ -785,6 +785,14 @@ rules:
   - IP-CIDR,<Service CIDR>,et-k8s
 ```
 
+**⚠️ 多出站必须各自设置 `hostname`** ✗✓（2026-10-03 实测定位 + 已修 fork ✓）：
+EasyTier 用 **(hostname, instance-name)** 标识节点 ✓；`instance-name` mihomo 一直有兜底（= 出站名 ✓），
+而 **`hostname` 此前没有兜底** ✗ → 未设置时两个出站共用宿主默认值 ✓ → overlay 视作**同一个节点** ✓ →
+症状：**同一时刻只有一个出站能用** ✗，且**哪个能用取决于注册顺序**（实测：重新激活 profile 后会反过来 ✓）。
+处置两选一 ✓：① **配置里各写一个唯一 `hostname`** ✓（立即生效 ✓，模板已改成必填 ✓）；
+② **升级到含 `FORK(easytier-identity)` 修复的内核** ✓（该提交让 `hostname` 默认等于出站名 ✓，与 `instance-name` 同款 ✓，
+回归测试 `TestNewEasyTierDefaultsHostnamePerOutbound` ✓ 已红→绿验证 ✓）。
+
 **两个出站能共存吗** ✓（2026-10-03 实测 ✓）：**能** ✓ —— 同一个 mihomo 进程里跑两个 easytier 出站
 （各自 `state-dir` 默认 `easytier/<出站名>` ✓、各自 `machine_id` ✓、各自 `exit-nodes` ✓），
 实测两个实例**都** `instance … running` ✓、各自 `peer_added` ✓、零错误 ✓（复现命令：两个出站都加 `prewarm: true` ✓

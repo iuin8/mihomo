@@ -19,6 +19,10 @@ proxies:
   # ── 家侧网关 ─────────────────────────────────────────────────────────────
   - name: et-home
     type: easytier
+    # ⚠️ **多出站时必填** ✗✓：EasyTier 用 (hostname, instance-name) 标识节点 ✓，
+    #    两个出站共用同一个 hostname 会被当成**同一个节点** ✗ → 表现为"同一时刻只有一个能用"✓，
+    #    且哪个能用取决于注册顺序（实测：重新激活配置后会反过来 ✓）。
+    hostname: <本机+本出站唯一，如 mbp-et-home>
     network-name: <网络名，须与家侧/会聚点一致>
     network-secret: <强密钥>
     no-listener: true                 # 客户端只需出站 ✓
@@ -30,6 +34,7 @@ proxies:
   # ── 集群网关 ─────────────────────────────────────────────────────────────
   - name: et-k8s
     type: easytier
+    hostname: <与上面**不同**，如 mbp-et-k8s>       # ← 必须不同 ✗
     network-name: <同上>
     network-secret: <同上>
     no-listener: true
