@@ -77,12 +77,20 @@ data:
         network-secret: "<改这里：与其它节点一致的强密钥>"
         hostname: "k8s-gw"                 # ← 改这里：与其它网关**不能重名** ✗（如 home-gw / k8s-gw）
         instance-name: "k8s-gw"            # ← 同上
-        ipv4: 10.144.0.30/24               # ← 改这里：本节点在 overlay 里的地址，**全网唯一** ✗
+        ipv4: 10.144.0.30/24               # ← 改这里：**全网唯一** ✗，且要远离 DHCP 池 ✓
+        #        ⚠️ overlay 的 DHCP 从低位往后发 ✓：家侧是 .2 ✓，客户端 dhcp 常拿到 .3 ✗✓
+        #        → 静态地址请从 .30/.100 这类**高位**取 ✓，否则会与客户端抢同一地址 ✓
+        #        （实测后果：两边互相驱逐 → 对端日志每秒刷 peer_added/peer_removed ✗，整网不稳 ✓）
         state-dir: /root/.config/mihomo/easytier     # 与下方 PVC 挂载点一致 ✓
         listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
         peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]
         # 集群要访问的网段 —— 把占位符换成实际值 ✓（Pod CIDR + Service CIDR）
         proxy-networks: ["<改这里：Pod CIDR，如 10.244.0.0/16>", "<改这里：Service CIDR，如 10.96.0.0/12>"]
+        #        ⚠️ 不确定就先写 [] ✓（tun: true 时照样会起 ✓）——**绝不要写 "0.0.0.0/0"** ✗✓：
+        #        那等于向整个 overlay 公告一条默认路由 ✓ → 会把**别的节点的转发**也拉过来 ✓，
+        #        症状就是"连其它网关都不通了" ✗（2026-10-03 实测踩到 ✓）。
+        # 客户端用 exit-nodes 指向本节点时必须为 true ✓（否则它的落地流量不被转发 ✗，与家侧同理）
+        enable-exit-node: true
         udp: true
         mtu: 1380                          # 同时作为 TUN 设备 MTU
         tun: true                          # ← 本 fork 的能力：建 TUN + 接包面（上游会静默忽略 ✗）
@@ -144,18 +152,24 @@ spec:
             limits:
               memory: 512Mi   # 不设 CPU limit ✓（会给数据面限速 ✗）
           # exec 探针在容器内探 loopback ✓（httpGet 从 Pod 外探不到 127.0.0.1 ✗，见文件头 ②）
+          # 启动探针：只负责"等它起来" ✓ —— 起来之前**不会**被 liveness 杀掉 ✓
+          startupProbe:
+            exec:
+              command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
+            periodSeconds: 10
+            failureThreshold: 30        # 最多等 5 分钟 ✓（overlay 预热 + 集群调度 ✓）
           readinessProbe:
             exec:
               command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
-            initialDelaySeconds: 20     # overlay 实例要预热（prewarm ✓）
             periodSeconds: 15
-            failureThreshold: 6
+            failureThreshold: 4
+          # liveness 放宽 ✓：这是**路由器** ✓ —— 一次瞬时探针失败就重启会让整网路由抖动 ✗
           livenessProbe:
             exec:
               command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
-            initialDelaySeconds: 60
             periodSeconds: 30
-            failureThreshold: 6
+            failureThreshold: 10        # 连续 5 分钟探测失败才重启 ✓
+            timeoutSeconds: 5
           volumeMounts:
             - name: config
               mountPath: /root/.config/mihomo/config.yaml
