@@ -111,6 +111,12 @@ gh release view "$TAG" -R iuin8/mihomo --json isDraft,assets,url \
 - `isDraft == false`
 - assets 覆盖本 fork 预期平台；普通 release 至少要有 darwin-arm64、linux-amd64-v3、linux-arm64、windows-amd64。
 
+### 验收还要"打开产物" ✓（2026-10-03 补 ✓）
+
+`isDraft` + 资产数只是第一层 ✓ —— 至少再验一次**产物内容** ✓：下载本平台的产物 → `-v` 看构建时间 ✓ →
+并 grep **本次改动新增的字面量** ✓（证明"发布物里确实有这次改动" ✓，而不是"名字对上了" ✗）。
+完整命令与理由见 `prerelease` 技能的"验收要打开产物"一节 ✓（两个渠道同一套方法 ✓）。
+
 ## 失败诊断不变量
 
 - 失败必须引用具体 job、step、原始错误片段；不要只按 job 名猜。

@@ -115,6 +115,19 @@ git push -u origin fa/<TARGET_TAG>-fa.0
 5. 推送 short SHA。
 6. `NEEDS_USER_REVIEW` 与非阻塞异步事项。
 
+## 同步完成后：刷新参考快照 ✓（2026-10-03 补 ✓）
+
+合并/升级之后 ✓，**立刻**把 workspace 的参考资料对齐新版本 ✓ —— 否则后续"读源码下结论"全部错位 ✗
+（**教训** ✓：曾经把参考仓停在 v1.19.21 / v2.4.7，差点拿错版本的实现下结论 ✓）：
+
+```bash
+cd open-source/<repo> && git fetch --tags && git checkout <新 tag>   # 只切 tag ✓ 不改文件、不建分支 ✗
+git describe --tags                                                  # 复核 ✓
+```
+
+同时更新 workspace 根 `CLAUDE.md` 的「上游参考快照」表 ✓（三行：内核 / App / 服务 ✓，各自独立核对 ✓），
+并注意该表的语义 ✓：钉的是"**本机正在运行**的那一版" ✓ —— 不是 fork 开发线的版本 ✗。
+
 ## Red Flags
 
 - “脚本退出码 0 = 完成”——错，仍需复审和验证。

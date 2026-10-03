@@ -106,6 +106,35 @@ gh release view Prerelease-Alpha -R iuin8/mihomo \
 
 `targetCommitish` 可能显示默认分支；以本次 workflow run 的 `headBranch` / `headSha` 为主验收依据。
 
+## 本技能实测坑位（2026-10-03 实测）
+
+### `version.txt` 的内容就是 tag 名 ✗ → 下游更新器**分辨不出新构建**
+
+`Prerelease-Alpha` 是**滚动 tag** ✓ —— 它的 `version.txt` 恒为 `Prerelease-Alpha` ✓，
+而客户端更新器（clash-verge-rev fork）比较的是"远端 `version.txt` vs 已安装内核版本串" ✗ →
+**两者永远相同** ✓ → 点「升级内核」会**静默不下载** ✗✓（实测：资产已更新到 12:48 构建 ✓，本机仍跑 06:35 ✗，`host-id` 指纹为 0 ✓）。
+
+**所以刷新预发布之后** ✓：
+
+- 客户端**不会**自动拿到新内核 ✗ → 要么**同时发一个 App 版本** ✓（推荐 ✓），要么让用户**手动替换** ✓；
+- 手动替换的关键点 ✗✓：**服务模式实际运行的是 `clash-verge-service/cores/` 下那份** ✓（root 所有 ✓），
+  **不是** app 包里的副本 ✗ —— 两处都要换 ✓：
+
+```bash
+SVC="/Library/Application Support/clash-verge-service/cores/verge-mihomo-alpha"
+APP="/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo-alpha"
+sudo cp core "$SVC" && sudo chmod +x "$SVC"
+sudo cp core "$APP" && sudo chmod +x "$APP"
+sudo strings "$SVC" | grep -c <本次新增的字面量>      # 确认运行物真换了 ✓
+```
+
+### 验收要**打开产物**并用"本次新增的字面量"当指纹 ✗✓
+
+只验 `isDraft/isPrerelease/资产数` 不够 ✓（名字会骗人 ✗）。做法 ✓：下载本渠道产物 → `-v` 看构建时间 ✓ →
+再 grep **本次改动新增的字符串** ✓（例如本次的 `host-id` ✓）—— 这样证明的是"**发布物里确实有这次改动**" ✓。
+
+**不要**断言"另一通道的串不存在" ✗（同一个二进制里 alpha/stable 命名可能都合法 ✓，见 workspace 验证纪律第 8 条 ✓）。
+
 ## 失败诊断不变量
 
 - 失败必须引用具体 job、step、原始错误片段；不要只按 job 名猜。
