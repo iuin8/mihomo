@@ -750,6 +750,47 @@ rules:
   - IP-CIDR,<Service CIDR>,et-k8s
 ```
 
+**怎么取集群的网段** ✓（2026-10-03 补；下面的命令都是标准 `kubectl` ✓，我这边没有集群 ✗ 未逐条跑过 ✓）：
+
+只需要**两个** ✓：**Pod CIDR**（Pod 地址，headless/直连 Pod 用 ✓）与 **Service CIDR**（ClusterIP，所有 Service 用 ✓）。
+
+```bash
+# ① Pod CIDR：权威来源是 controller-manager 的 --cluster-cidr（kubeadm 类 ✓）
+kubectl -n kube-system get pod -l component=kube-controller-manager -o yaml | grep -oE '\-\-cluster-cidr=[^ "]+'
+# 也可以从节点分配上看（每个节点一块 ✓，合起来就是集群范围 ✓）
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.podCIDR}{"\n"}{end}'
+
+# ② Service CIDR：看 apiserver 的 --service-cluster-ip-range，或用两个必然存在的 Service 反推 ✓
+kubectl -n kube-system get pod -l component=kube-apiserver -o yaml | grep -oE '\-\-service-cluster-ip-range=[^ "]+'
+kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}'; echo
+kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}'; echo
+
+# ③ 实测交叉验证（最可靠的一步 ✓：列真实地址，确认它们都落在你写的网段里 ✓）
+kubectl get pods -A -o wide | awk '{print $7}' | grep -E '^[0-9]' | sort -u | head
+kubectl get svc -A -o jsonpath='{range .items[*]}{.spec.clusterIP}{"\n"}{end}' | sort -u | head
+
+# ④ 集群域名（默认 cluster.local，可被改 ✗ ✓）
+kubectl -n kube-system get cm coredns -o yaml | grep -m1 -oE 'kubernetes [a-z0-9.-]+'
+```
+
+**发行版差异** ✗✓（别照抄默认值 ✓）：kubeadm 常见 `10.244.0.0/16` + `10.96.0.0/12` ✓；k3s 默认 `10.42.0.0/16` + `10.43.0.0/16` ✓；
+**EKS 默认 CNI 的 Pod 地址直接来自 VPC 网段** ✗（没有独立 Pod CIDR ✓）→ 那时"Pod 网段"就是 VPC CIDR ✓，**务必做下面的重叠检查** ✗。
+
+**重叠检查** ✗✓（overlay 与家侧网段都**不能**与集群网段重叠 ✓，否则规则无法区分 ✓）：
+```bash
+python3 - <<'EOF'
+import ipaddress
+overlay = ipaddress.ip_network('10.144.0.0/24')   # ← overlay
+home    = ipaddress.ip_network('10.0.0.0/24')     # ← 家侧内网
+for c in ['10.244.0.0/16', '10.96.0.0/12']:       # ← 集群的两个
+    n = ipaddress.ip_network(c)
+    print(c, 'overlay 重叠=', overlay.overlaps(n), '家侧 重叠=', home.overlaps(n))
+EOF
+```
+
+**最后一句实用建议** ✓✓：客户端**配了 `exit-nodes`** 时 ✓，非 overlay 目标**全部**交给该网关 ✓（含节点 IP ✓、LB IP ✓、公网 ✓）→
+所以 `proxy-networks` 只填这两个网段就够 ✓（它主要服务**转发侧** ✓）；**真正决定"去哪台网关"的仍是客户端的 `exit-nodes`** ✓。
+
 **`proxy-networks` 只能填 CIDR，不能填域名** ✗（2026-10-03 源码 + 实测定案 ✓）：
 
 * **类型就是 CIDR** ✓：`easytier-core/src/config/toml.rs` 里是 `ProxyNetworkConfig { cidr: cidr::Ipv4Cidr, mapped_cidr: Option<Ipv4Cidr>, allow: Option<Vec<String>> }` ✓
