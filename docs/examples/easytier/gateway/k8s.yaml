@@ -1,0 +1,183 @@
+# 网关版的 Kubernetes 清单 —— 集群内跑一个 EasyTier L3 网关，
+# 让其它节点（家里那台、你的笔记本）能直接访问**集群内的网段与域名**。
+#
+# 与 docker-compose.yml 的对应关系（同样的两个硬性要求）：
+#   cap_add: NET_ADMIN      → securityContext.capabilities.add
+#   devices: /dev/net/tun   → hostPath /dev/net/tun（见下方注释，某些运行时必需 ✓）
+#   sysctls: ip_forward: 1  → securityContext.sysctls
+#   挂载 config.yaml        → ConfigMap（subPath ✓）
+#  命名卷 gateway-state    → PVC（subPath 之外单独挂 ✓）
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ 五条 K8s 特有的注意事项（都是会真踩的坑 ✗，不是套话）
+#
+# ① **replicas 必须为 1，且策略必须是 Recreate** ✗✓
+#    网关的 `ipv4`/`hostname` 是**全网唯一**的身份 ✓；两个 Pod 同时跑 =
+#    同一 overlay 地址被抢 → 实测表现是**对端每秒刷 `peer_added/peer_removed`** ✗，
+#    看起来"能连上"其实谁都进不来 ✓。RollingUpdate 默认会先起新 Pod ✗ → 必须 Recreate ✓。
+#
+# ② **探针不能用 httpGet** ✗✓
+#    kubelet 从**Pod 之外**探 ✓，而配置里的 API 只绑 `127.0.0.1:9090` ✓（这是故意的 ✓，
+#    不暴露攻击面 ✓）→ 所以用 **exec 探针**在容器内探 loopback ✓（镜像里自带 wget ✓）。
+#
+# ③ **hostPath + NET_ADMIN 需要宽松的 Pod Security** ✗
+#    `restricted` 级会同时禁掉这两个 ✓→ 本清单需要 **baseline 或更宽松**的命名空间 ✓：
+#      kubectl label ns <你的命名空间> pod-security.kubernetes.io/enforce=baseline
+#    若你的集群本来就允许 /dev/net/tun（多数 containerd/CRI-O 默认给了 ✓），
+#    可以删掉 hostPath 那一段 ✓，但 NET_ADMIN 仍然必需 ✓。
+#
+# ④ **集群网段不能与 overlay 网段重叠** ✗✓
+#    本清单示例 overlay 用 `10.144.0.0/24` ✓；先确认它没落在你的 **Pod CIDR / Service CIDR** 里 ✓：
+#      kubectl cluster-info dump | grep -m2 -E 'cluster-cidr|service-cluster-ip-range'
+#      kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'
+#    重叠的表现是"某些 Pod 访问不到/时好时坏" ✗，极难排查 ✓。
+#
+# ⑤ **客户端要按"目标"分流到这台网关** ✓✓
+#    家里那台网关负责家庭网段 ✓，这台负责集群 ✓ —— 客户端侧要**两个出站 + 规则配对** ✓
+#    （DNS 与请求才会走同一条隧道 ✓）：
+#
+#      proxies:
+#        - {name: et-home, type: easytier, network-name: private-overlay, … , exit-nodes: ["10.144.0.2"]}
+#        - {name: et-k8s,  type: easytier, network-name: private-overlay, … , exit-nodes: ["10.144.0.30"]}
+#      dns:
+#        enable: true
+#        nameserver-policy:
+#          "+.cluster.local": ["<kube-dns 的 ClusterIP>#et-k8s"]   # 见下方 kubectl 取法 ✓
+#      rules:
+#        - DOMAIN-SUFFIX,cluster.local,et-k8s              # 集群域名 → 集群网关 ✓
+#        - IP-CIDR,<Pod CIDR>,et-k8s
+#        - IP-CIDR,<Service CIDR>,et-k8s
+#        - IP-CIDR,10.0.0.0/24,et-home                      # 家里网段 → 家侧网关 ✓
+#
+#    取集群 DNS 地址与网段：
+#      kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}'
+#      kubectl cluster-info dump | grep -m2 -E 'cluster-cidr|service-cluster-ip-range'
+#
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: easytier-gateway
+  namespace: easytier
+data:
+  config.yaml: |
+    mixed-port: 7890
+    allow-lan: true
+    bind-address: 0.0.0.0
+    mode: rule
+    log-level: info
+    ipv6: false
+    # 只绑回环 ✓：exec 探针在容器内探它 ✓，Pod 之外一律访问不到 ✓
+    external-controller: 127.0.0.1:9090
+
+    proxies:
+      - name: et-gateway
+        type: easytier
+        network-name: private-overlay
+        network-secret: "<改这里：与其它节点一致的强密钥>"
+        hostname: "k8s-gw"                 # ← 改这里：与其它网关**不能重名** ✗（如 home-gw / k8s-gw）
+        instance-name: "k8s-gw"            # ← 同上
+        ipv4: 10.144.0.30/24               # ← 改这里：本节点在 overlay 里的地址，**全网唯一** ✗
+        state-dir: /root/.config/mihomo/easytier     # 与下方 PVC 挂载点一致 ✓
+        listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
+        peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]
+        # 集群要访问的网段 —— 把占位符换成实际值 ✓（Pod CIDR + Service CIDR）
+        proxy-networks: ["<改这里：Pod CIDR，如 10.244.0.0/16>", "<改这里：Service CIDR，如 10.96.0.0/12>"]
+        udp: true
+        mtu: 1380                          # 同时作为 TUN 设备 MTU
+        tun: true                          # ← 本 fork 的能力：建 TUN + 接包面（上游会静默忽略 ✗）
+        prewarm: true                      # ← 服务端必需：没有流量用到它，不预启动就不会建实例 ✓
+        tun-routes: []                     # 集群内由 Pod 自己的路由/CNI 负责，无需 pin ✓
+
+    rules:
+      - MATCH,DIRECT
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: easytier-gateway-state
+  namespace: easytier
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # 用集群默认 StorageClass ✓；没有默认存储类时显式写上 ✓
+  # storageClassName: standard
+  resources:
+    requests:
+      storage: 16Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easytier-gateway
+  namespace: easytier
+  labels:
+    app: easytier-gateway
+spec:
+  replicas: 1                  # ✗ 不要改 ✓（见文件头 ①）
+  strategy:
+    type: Recreate             # ✗ 不要改成 RollingUpdate ✓（会短暂出现两个同身份 Pod ✗）
+  selector:
+    matchLabels:
+      app: easytier-gateway
+  template:
+    metadata:
+      labels:
+        app: easytier-gateway
+    spec:
+      # baseline 及以上要求 ✓；restricted 命名空间会被拒 ✓（见文件头 ③）
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ip_forward
+            value: "1"
+      containers:
+        - name: mihomo
+          image: ghcr.io/iuin8/mihomo:latest      # ← 建议钉版本，如 v1.19.32-fa.1001
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          args: []            # 镜像 CMD 已指向 /root/.config/mihomo/config.yaml ✓
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi   # 不设 CPU limit ✓（会给数据面限速 ✗）
+          # exec 探针在容器内探 loopback ✓（httpGet 从 Pod 外探不到 127.0.0.1 ✗，见文件头 ②）
+          readinessProbe:
+            exec:
+              command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
+            initialDelaySeconds: 20     # overlay 实例要预热（prewarm ✓）
+            periodSeconds: 15
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 6
+          volumeMounts:
+            - name: config
+              mountPath: /root/.config/mihomo/config.yaml
+              subPath: config.yaml       # 只盖住这一个文件 ✓，同级目录留给 state ✓
+              readOnly: true
+            - name: state
+              mountPath: /root/.config/mihomo/easytier
+            - name: tun
+              mountPath: /dev/net/tun
+      volumes:
+        - name: config
+          configMap:
+            name: easytier-gateway
+        - name: state
+          persistentVolumeClaim:
+            claimName: easytier-gateway-state
+        # 某些运行时不会把 /dev/net/tun 传进容器 ✓ → 用 hostPath 补上 ✓；
+        # 集群本来就给了的话可以删掉这一段 ✓（NET_ADMIN 仍然必需 ✓）。
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+# 说明 ✓：**不加 Service** ✗ —— 网关主动连会合点 ✓，不需要任何入向端口 ✓；
+# 想让它被其它节点**直连**（少走中继 ✓）再加 NodePort/LoadBalancer ✓，
+# 但直连能不能成功取决于 P2P 打洞（与 K8s 网络无关 ✓），并不影响可用性 ✓。

@@ -721,6 +721,39 @@ docker compose up -d && docker compose ps # state/ 保留 → overlay 身份不�
   overlay 内**节点名**另有专用开关：`accept-dns: true` + `tld-dns-zone: <你的域>.`（末尾带点 ✓），
   它只负责 overlay 自己的名字 ✓，不管家里路由器的域名 ✗。
 
+### 6.21 把网关放进 Kubernetes（2026-10-03）
+
+清单：[`examples/easytier/gateway/k8s.yaml`](examples/easytier/gateway/k8s.yaml) ✓ —— 目标是把**集群网段与集群域名**接到同一个 overlay ✓。
+
+**与 compose 版的对应** ✓：`cap_add` → `capabilities.add` ✓、`devices` → `hostPath /dev/net/tun` ✓、
+`sysctls` → `securityContext.sysctls` ✓、配置文件 → ConfigMap（`subPath` ✓）、命名卷 → PVC ✓。
+
+**五个 K8s 特有的坑** ✗（清单里逐条注释了 ✓）：
+
+| 坑 | 后果 | 处置 |
+| --- | --- | --- |
+| `replicas > 1` 或 `RollingUpdate` ✗ | 同一 `ipv4`/`hostname` 两副本互踢 ✓ —— 实测表现就是**对端每秒刷 `peer_added/peer_removed`** ✗ | `replicas: 1` + `strategy: Recreate` ✓（硬要求 ✓）|
+| 用 `httpGet` 探针 ✗ | kubelet 从 Pod 外探 ✓，而 API 只绑 `127.0.0.1:9090` ✓ → **永远不 Ready** ✗ | 用 **exec 探针**在容器内探 loopback ✓ |
+| `restricted` 命名空间 ✗ | hostPath 与 NET_ADMIN 双双被拒 ✓ | 命名空间用 **baseline 或更宽松** ✓ |
+| overlay 网段与集群 CIDR 重叠 ✗ | 部分 Pod 时通时不通 ✓，极难排查 ✓ | 先核对 `cluster-cidr` / `service-cluster-ip-range` ✓ |
+| 客户端只用一条规则 ✗ | 家里与集群混在一台网关上 ✓ | **两个出站 + 规则配对** ✓（见 §6.20 ✓）|
+
+**客户端侧** ✓（集群域名必须**经隧道**问 CoreDNS ✓）：
+```yaml
+dns:
+  enable: true
+  nameserver-policy:
+    "+.cluster.local": ["<kube-dns ClusterIP>#et-k8s"]
+rules:
+  - DOMAIN-SUFFIX,cluster.local,et-k8s
+  - IP-CIDR,<Pod CIDR>,et-k8s
+  - IP-CIDR,<Service CIDR>,et-k8s
+```
+
+**本次已做的校验** ✓（2026-10-03 实测 ✓）：清单解析 ✓、不变量断言（replicas/strategy/caps/sysctls/探针类型/挂载 ✓）、
+**用同一镜像在容器内跑 `-t` = successful** ✓（连同 `state-dir` 的路径安全检查一起验掉 ✓）、`kubectl apply --dry-run=client` ✓。
+**未做** ✗（本机没有集群 ✓）：真实调度、TUN 设备、CNI 对源地址的处理 ✓ —— 上线后按"客户端能否访问 `kubernetes.default.svc` 与某个 Pod"验收 ✓。
+
 ### 6.20 多个出口怎么配才不割裂（2026-10-03 源码定案）
 
 **源码**（`open-source/easytier` → `easytier-core/src/peers/peer_manager.rs:2724 get_msg_dst_peer_ipv4` ✓）：
