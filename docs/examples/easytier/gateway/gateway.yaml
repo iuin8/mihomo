@@ -28,7 +28,7 @@ external-controller: 127.0.0.1:9090
 proxies:
   - name: et-gateway
     type: easytier
-    network-name: home
+    network-name: private-overlay
     network-secret: "<改这里：与客户端一致的强密钥>"
     hostname: "<改这里：本网关名，全网唯一>"
     instance-name: "<改这里：同上>"

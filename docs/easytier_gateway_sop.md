@@ -64,18 +64,16 @@ docker compose exec mihomo iptables -t nat -S POSTROUTING | tail -1
 
 ```yaml
 proxies:
-  - name: home-overlay
+  - name: et-core
     type: easytier
-    network-name: home
+    network-name: private-overlay
     network-secret: "<与家侧一致>"
-    hostname: mbp-clash
-    instance-name: mbp-clash
-    ipv4: 10.144.0.3/24
     no-listener: true
     peers: ["tcp://<会合点公网IP>:11010"]
     udp: true
-    interface-name: en0           # 本机跑 TUN 时建议
+    # ipv4 留空 = 自动 DHCP ✓（手填容易与别的节点撞 ✗）
     # 不要写 state-dir：CVR 的 home dir 是 ~/Library/Application Support/…clash-verge-rev
+    # interface-name 通常不要填 ✗（仅"连得上但底层不稳"且本机也跑 TUN 时才试 ✓）
 
 proxy-groups:                     # 代理页的卡片来自分组；不加分组你以为没生效
   - name: 🏠 内网
@@ -685,6 +683,7 @@ images: ghcr.io/${{ github.repository_owner }}/easytier-gateway
 | 出站名 `et-home` | `et-gateway` |
 | `hostname`/`instance-name: home-gw` | 占位符（**每台网关都要唯一** ✗）|
 | 客户端分组 `🏠 家里` | **`🏠 内网`** |
+| 网络名 `home` | **`private-overlay`** ✓（2026-10-03 二次通用化：**网络名不是密钥** ✓ 可直接写进模板；密钥仍留占位符 ✓）|
 | `docs/easytier_home_gateway{,_sop}.md` | `docs/easytier_gateway{,_sop}.md` |
 
 ⚠️ **家侧迁移：必须先停旧栈** ✗ —— compose 的 `name:` 变了，新老项目名不同 ✓；若直接 `up -d`，

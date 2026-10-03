@@ -16,7 +16,7 @@ listeners = [
 ]
 
 [network_identity]
-network_name = "home"
+network_name = "private-overlay"
 network_secret = "<替换为强密钥，客户端填同一组>"
 
 # 会合点：三选一

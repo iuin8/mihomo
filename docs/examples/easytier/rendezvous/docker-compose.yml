@@ -26,7 +26,7 @@ services:
       - "--private-mode"
       - "true"
       - "--network-name"
-      - "home"
+      - "private-overlay"
       - "--network-secret"
       - "<改成与家侧/客户端一致的强密钥>"
 
