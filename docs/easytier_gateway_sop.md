@@ -741,6 +741,20 @@ kubectl -n default delete deploy easytier-gateway          # 最后才止血 ✓
 ```
 （若已删除 ✓：`kubectl get events` 仍可能保留约 1 小时 ✓；节点上的 `/var/log/pods/` 也可能还有 ✓。）
 
+**另一条同样重要的教训** ✗✓：**清理范围要覆盖"全部"对象** ✓ —— 本次只删了 `Deployment` ✓ 与 `PVC` ✓，
+**漏了 `ConfigMap`** ✗ → 它带着最早的旧内容**活过每一轮** ✗，于是"改对了文件却仍报同一个错" ✓
+（`Parse config error: yaml: line 1: did not find expected key` ✓）。而且 **`subPath` 挂载在 Pod 创建时固化** ✗ ——
+CM 更新后**必须重建 Pod** ✓ 才会重新挂载 ✓。**干净的重部署口令** ✓：
+
+```bash
+kubectl -n <ns> delete -f k8s.yaml          # 一次删干净：cm / pvc / deploy 全在内 ✓
+kubectl -n <ns> apply  -f k8s.yaml
+kubectl -n <ns> rollout restart deploy/easytier-gateway   # 或直接 apply（Recreate 策略会自己重建 ✓）
+# 验收：把集群里的内容与本地文件对比 ✓（这才是"生效物" ✓）
+kubectl -n <ns> get cm easytier-gateway -o jsonpath='{.data.config\.yaml}' | md5sum
+```
+
+
 ### 6.21 把网关放进 Kubernetes（2026-10-03）
 
 清单：[`examples/easytier/gateway/k8s.yaml`](examples/easytier/gateway/k8s.yaml) ✓ —— 目标是把**集群网段与集群域名**接到同一个 overlay ✓。
