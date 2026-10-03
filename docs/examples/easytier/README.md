@@ -11,21 +11,6 @@
 | **公网节点**（会合点） | [`rendezvous/`](rendezvous/) | 有公网 IP 的机器上跑一个共享节点 ✓（家侧无公网时必需 ✓） |
 | 三方共用 | [`tools/`](tools/) | 探针与回声服务（排障用 ✓） |
 
-## 从旧版（bind 挂载 `./state`）迁移到托管卷 ✓
-
-**可选** ✓：不做也行 —— 只是会使节点换一个新标识 ✓（不断连 ✓、地址不变 ✓）。
-
-```bash
-cd <家侧目录>
-docker volume create easytier-gateway-state
-# 把旧目录内容搬进卷（含 machine_id 等 ✓）
-docker run --rm -v easytier-gateway-state:/dst -v "$PWD/state":/src alpine sh -c 'cp -a /src/. /dst/ && ls -l /dst'
-docker compose up -d --force-recreate     # 用新 compose（卷挂载）
-rm -rf state                              # 确认起来后再删旧目录
-```
-
-> ⚠️ `docker compose down -v` 或 `docker volume prune` 会删掉这个卷 ✗ → 只会换一个新标识 ✓，不会断连 ✓。
-
 ## 客户端 —— [`client/`](client/)
 
 | 文件 | 用途 |
@@ -72,3 +57,18 @@ rm -rf state                              # 确认起来后再删旧目录
 | ICMP（`ping`） | ✅ | ❌ |
 
 > 本机与家里同属 `10/8` 时，客户端规则**只能精确写家里网段** ✓，不要用 `10.0.0.0/8` ✗。
+
+## 从旧版（bind 挂载 `./state`）迁移到托管卷 ✓
+
+**可选** ✓：不做也行 —— 只是会使节点换一个新标识 ✓（不断连 ✓、地址不变 ✓）。
+
+```bash
+cd <家侧目录>
+docker volume create easytier-gateway-state
+# 把旧目录内容搬进卷（含 machine_id 等 ✓）
+docker run --rm -v easytier-gateway-state:/dst -v "$PWD/state":/src alpine sh -c 'cp -a /src/. /dst/ && ls -l /dst'
+docker compose up -d --force-recreate     # 用新 compose（卷挂载）
+rm -rf state                              # 确认起来后再删旧目录
+```
+
+> ⚠️ `docker compose down -v` 或 `docker volume prune` 会删掉这个卷 ✗ → 只会换一个新标识 ✓，不会断连 ✓。
