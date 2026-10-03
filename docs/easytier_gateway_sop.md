@@ -824,6 +824,25 @@ EasyTier 用 **(hostname, instance-name)** 标识节点 ✓；`instance-name` mi
 所以"两条隧道都要能用"的正确写法是：**规则直接指向出站** ✓（`IP-CIDR,…,et-home` / `DOMAIN-SUFFIX,…,et-k8s` ✓），
 **分组只用于手动切换** ✓。
 
+**诊断法：架一个"旁观者节点"读整张网** ✓✓（2026-10-03 实战有效 ✓）
+
+排查"某个出站/节点不通"时 ✓，最快的一步不是翻日志 ✗，而是**直接从 overlay 里看 peer 列表** ✓ —— 一条命令列出
+**每个节点的 overlay 地址、hostname、链路方式与代价** ✓✓，重复地址、缺 hostname、节点缺失都会立刻现形 ✓：
+
+```bash
+# 用官方镜像起一个一次性观察点（不占 overlay 地址池的常用段，命名独立 ✓）
+docker run -d --name et-observer --entrypoint sh easytier/easytier -c \
+  "easytier-core --network-name <网络名> --network-secret <密钥> \
+     --peers tcp://<会合点>:11010 --hostname observer-check --no-tun true > /tmp/o.log 2>&1 & sleep 900"
+sleep 30
+docker exec et-observer easytier-cli peer        # ← 整张网的节点表 ✓
+docker exec et-observer sh -c 'tail -5 /tmp/o.log'   # 起不来时看这里（✗ 别把输出重定向进容器却去看 docker logs ✓）
+docker rm -f et-observer                          # ⚠️ 看完就删 ✓，别在别人的网络里留节点 ✗
+```
+
+**实战收获** ✓（2026-10-03 一次就定位 ✓）：看到客户端两个实例分别拿到 `10.144.0.4` / `10.144.0.5` ✓（**地址不冲突** ✓）、
+两台网关 `ssy-fa-gw`/`k8s-gw` 都在线 ✓ —— 于是"网络侧健康 ✓、问题在客户端侧 ✗"这个判断是**看出来的** ✓，不是猜的 ✓。
+
 **怎么取集群的网段** ✓（2026-10-03 补；下面的命令都是标准 `kubectl` ✓，我这边没有集群 ✗ 未逐条跑过 ✓）：
 
 只需要**两个** ✓：**Pod CIDR**（Pod 地址，headless/直连 Pod 用 ✓）与 **Service CIDR**（ClusterIP，所有 Service 用 ✓）。
