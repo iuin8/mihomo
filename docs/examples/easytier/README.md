@@ -16,7 +16,7 @@
 | 文件 | 用途 |
 | --- | --- |
 | [`client/subscription.yaml`](client/subscription.yaml) | **订阅模板**：内核内置 easytier 出站 + 家里网段规则 ✓。`ipv4`/`hostname` 故意不写 → 由 overlay DHCP 自动分配唯一地址 ✓（所以对方不用改 ✓）；含 A/B 两种并入写法、`state-dir` 陷阱、以及"做成订阅链接分享"的注意事项 ✓ |
-| 内网域名 | 模板内已备好两种写法（`hosts:` ✓ / `dns.nameserver-policy` ✓）与配套的 `DOMAIN-SUFFIX` 规则 ✓；**注意落点**：合并只合并五个段，其余顶层键取 index 0，故须放在基准 profile / 应用 DNS 设置 / Merge 类 profile ✓（见 SOP §6.18 ✓） |
+| 内网域名 | 模板内已备好两种写法（`hosts:` ✓ / `dns.nameserver-policy` ✓）与配套的 `DOMAIN-SUFFIX` 规则 ✓；**位置无忧** ✓：`dns` / `hosts` 属于合并的**深合并字段**（`DEEP_MERGE_FIELDS`），写在任一被合并的 profile 里都生效 ✓（见 SOP §6.18 ✓） |
 
 > 分享要点：**密钥即凭据** ✗（只在私有位置托管 ✓；外泄就在所有节点同时换 `network-secret` ✓）；
 > 对方用官方内核即可 ✓，只有"macOS + 服务模式"那种机器才需要本 fork 的解释器内核 ✓。

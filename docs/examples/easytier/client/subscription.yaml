@@ -55,12 +55,10 @@ rules:
 
 # 内网域名（可选 ✓）：按名字访问内网时，**取消注释**下面两块里的一块
 #
-# ⚠️ 放对位置（否则静默失效 ✗）：本 fork 的合并只合并 proxies/providers/proxy-groups/rules
-#    五个段，其余顶层键**只取 index 0 那个 profile**（代码注释原文：All other top-level keys
-#    come from primary (index 0)）。所以三选一：
-#      · 把本片段排在合并列表**第一位**（当基准 ✓）
-#      · 或写进应用的 **DNS 设置页**（hosts 就在那儿生效 ✓，不受合并顺序限制 ✓✓ 最省事）
-#      · 或写进 **Merge 类型 profile**（专门用来注入这类顶层键 ✓）
+# 位置 ✓：本 fork 的合并对 dns / hosts（以及 tun / profile）是**深合并**的
+#    （multi_merge.rs: DEEP_MERGE_FIELDS = ["dns", "tun", "hosts", "profile"] ✓），
+#    所以写在**任何一个**被合并的 profile 里都会生效 ✓，不必放主 profile。
+#    其余顶层键（mixed-port / mode / log-level 之类 ✗）只取合并列表第一位那个 profile ✓。
 #
 # 做法 A（少量名字，零依赖 ✓ 推荐先用）：
 # hosts:

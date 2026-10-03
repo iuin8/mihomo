@@ -718,6 +718,18 @@ docker compose up -d && docker compose ps # state/ 保留 → overlay 身份不�
   overlay 内**节点名**另有专用开关：`accept-dns: true` + `tld-dns-zone: <你的域>.`（末尾带点 ✓），
   它只负责 overlay 自己的名字 ✓，不管家里路由器的域名 ✗。
 
+**合并的两个键策略**（`multi_merge.rs`，改这块前先读它 ✓）：
+
+| 类别 | 键 | 行为 |
+| --- | --- | --- |
+| 五段合并 | `proxies` / `proxy-providers` / `proxy-groups` / `rules` / `rule-providers` | 逐项合并、冲突进 ConflictViewer ✓ |
+| **深合并** | **`dns` / `tun` / `hosts` / `profile`** | 逐键合并 ✓ —— 所以 `dns:`/`hosts:` 写在**任一**被合并的 profile 里都生效 ✓✓ |
+| 其余顶层键 | `mixed-port` / `mode` / `log-level` … | **只取合并列表第一位**（`configs[0]`）✗；主 profile 没有该键时，**该键的值不会被应用** ✗ |
+
+⚠️ 2026-10-03 修正：早先这里写成"`dns:`/`hosts:` 会被丢弃 ✗"是**错的** ✗ —— 原因是只读了 `MERGE_STEPS`
+没去解析 `DEEP_MERGE_FIELDS` 的内容 ✓。同一次修正还给第三种情况补了**如实的提示与 warn 日志**
+（原来基里没有该键时也报 "already exists in primary; kept primary value" ✗，与实际行为不符 ✗）。
+
 **确认走 P2P**（实测：把两端跑起来，看 guest 的 debug 日志 ✓）：
 
 * **方案 A（内核内置 easytier）** ✓：把日志级别设成 **`log-level: debug`** ✓ —— 只有 debug 才打印
