@@ -131,7 +131,7 @@ spec:
             value: "1"
       containers:
         - name: mihomo
-          image: ghcr.io/iuin8/mihomo:latest      # ← 建议钉版本，如 v1.19.32-fa.1001
+          image: ghcr.io/iuin8/mihomo:v1.19.32-fa.1001   # 钉版本 ✓；升级时改这里 ✓（不要用 latest ✗）
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:
