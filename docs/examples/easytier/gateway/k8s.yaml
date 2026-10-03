@@ -54,6 +54,43 @@
 #      kubectl cluster-info dump | grep -m2 -E 'cluster-cidr|service-cluster-ip-range'
 #
 # ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ **部署前先做这一步** ✗✓（2026-10-03 实测：集群间差异很大 ✓）
+#
+#   kubectl run netcheck --rm -it --restart=Never --image=busybox -- sysctl net.ipv4.ip_forward
+#
+# 网关是个**路由器** ✓ —— 它必须能把包从 TUN 转发出去 ✓，所以 Pod 网络命名空间里
+# `net.ipv4.ip_forward` 必须是 **1** ✓。实测两种集群都遇到过 ✓：
+#
+#   ▸ 输出 `= 1` ✓ → **什么都不用做** ✓ —— 直接用本清单部署 ✓（本清单不含 sysctls ✓）。
+#
+#   ▸ 输出 `= 0` ✗ → 下面三选一 ✓：
+#
+#     **A) 你能改 kubelet（自建集群最常见 ✓，推荐 ✓）**
+#        给**每个节点**（含 master ✓）的 kubelet 加白名单，然后重启 kubelet：
+#
+#          # kubeadm 类：在 /etc/default/kubelet 或 kubeadm-config.yaml 的 kubeletExtraArgs 里
+#          KUBELET_EXTRA_ARGS="--allowed-unsafe-sysctls=net.ipv4.ip_forward"
+#          sudo systemctl restart kubelet
+#
+#        加完**把 pod 级 sysctls 写回本清单** ✓（`spec.template.spec.securityContext.sysctls` ✓），
+#        并用这条命令验证它真的生效 ✓（比只看 Pod Running 可靠 ✓）：
+#
+#          kubectl run netcheck --rm -it --restart=Never --image=busybox \
+#            --overrides='{"spec":{"securityContext":{"sysctls":[{"name":"net.ipv4.ip_forward","value":"1"}]}}}' \
+#            -- sysctl net.ipv4.ip_forward        # 期望 = 1 ✓
+#
+#     **B) 不想动节点 → 用 `hostNetwork: true`** ✓（Pod 直接共享节点的网络命名空间 ✓）
+#        节点本身就是路由器 ✓（它为所有 Pod 转发 ✓）→ `ip_forward` 天然是 1 ✓✓；
+#        顺带还**绕开了 CNI 对"外来源地址"的处理** ✓✓。代价与注意 ✓：
+#          * 端口变成**节点级** ✗ → 把 `external-controller` 改成节点上没被占用的端口 ✓
+#            （如 `127.0.0.1:9095` ✓），同理留意 `listeners` 的 11010 与 `mixed-port` 7890 ✓；
+#          * 必须加 `dnsPolicy: ClusterFirstWithHostNet` ✓，否则集群 DNS 解析会失效 ✗；
+#          * TUN 会建在**节点**上 ✓（这本来就是网关要的 ✓），界面地址 = 配置里的 `ipv4` ✓。
+#
+#     **C) 两条都不行** ✗ → 这个集群跑不了 **TUN 网关** ✓；
+#        可以退到**零特权 native 方案**（用户态转发 ✓ 不需要 `ip_forward`/TUN/NET_ADMIN ✓，
+#        代价是没有 ICMP ✓、吞吐低一档 ✓）—— 见 `gateway/alt-native/` ✓。
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: v1
 kind: ConfigMap
 metadata:
