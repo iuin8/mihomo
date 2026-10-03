@@ -785,6 +785,15 @@ rules:
   - IP-CIDR,<Service CIDR>,et-k8s
 ```
 
+**两个出站能共存吗** ✓（2026-10-03 实测 ✓）：**能** ✓ —— 同一个 mihomo 进程里跑两个 easytier 出站
+（各自 `state-dir` 默认 `easytier/<出站名>` ✓、各自 `machine_id` ✓、各自 `exit-nodes` ✓），
+实测两个实例**都** `instance … running` ✓、各自 `peer_added` ✓、零错误 ✓（复现命令：两个出站都加 `prewarm: true` ✓
+—— **客户端出站是懒启动的** ✗，不加 prewarm 会看不到任何实例日志 ✓，容易误判成"没生效"✗）。
+
+⚠️ 但**"只有一个生效"是另一个原因** ✗✓：`select` 型**分组是单选** ✓ —— **指向分组的规则同一时刻只走选中的那条** ✗。
+所以"两条隧道都要能用"的正确写法是：**规则直接指向出站** ✓（`IP-CIDR,…,et-home` / `DOMAIN-SUFFIX,…,et-k8s` ✓），
+**分组只用于手动切换** ✓。
+
 **怎么取集群的网段** ✓（2026-10-03 补；下面的命令都是标准 `kubectl` ✓，我这边没有集群 ✗ 未逐条跑过 ✓）：
 
 只需要**两个** ✓：**Pod CIDR**（Pod 地址，headless/直连 Pod 用 ✓）与 **Service CIDR**（ClusterIP，所有 Service 用 ✓）。
