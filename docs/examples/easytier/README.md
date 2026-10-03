@@ -31,7 +31,7 @@
 | [`gateway/gateway.yaml`](gateway/gateway.yaml) | 家侧配置（`tun: true` ✓、`prewarm: true` ✓ 服务端必需 ✓、`proxy-networks` ✓） |
 | Docker 卷 `easytier-gateway-state` | 节点标识（`machine_id`）持久化点 ✓ —— **Docker 托管卷**（不落在仓库目录 ✓，不需要看/改 ✓）；**删了不会断连** ✓（地址来自配置里的 `ipv4` ✓），只会换一个新标识 ✗ |
 | [`gateway/alt-native/`](gateway/alt-native/) | **方案 B**：零特权 native 容器（无 TUN/无 iptables ✓；代价是无 ICMP、吞吐低一档 ✓） |
-| [`gateway/k8s.yaml`](gateway/k8s.yaml) | **集群内网关**：把 **K8s 的网段与域名**接到同一个 overlay ✓（Pod CIDR / Service CIDR + CoreDNS ✓）；`replicas: 1` + `Recreate` 是硬要求 ✗（同身份两副本会互踢 ✓）|
+| [`gateway/k8s.yaml`](gateway/k8s.yaml) | **集群内网关**：把 **K8s 的网段与域名**接到同一个 overlay ✓（Pod CIDR / Service CIDR + CoreDNS ✓）。默认 **`hostNetwork: true`** 变体 ✓（不需要 kubelet 白名单 ✓、绕开 CNI ✓；代价是端口为节点级 ✓、必须配 `dnsPolicy: ClusterFirstWithHostNet` ✓）；`replicas: 1` + `Recreate` 是硬要求 ✗（同身份两副本会互踢 ✓）|
 
 ## 公网节点 —— [`rendezvous/`](rendezvous/)
 

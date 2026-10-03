@@ -58,38 +58,32 @@
 #
 #   kubectl run netcheck --rm -it --restart=Never --image=busybox -- sysctl net.ipv4.ip_forward
 #
-# 网关是个**路由器** ✓ —— 它必须能把包从 TUN 转发出去 ✓，所以 Pod 网络命名空间里
-# `net.ipv4.ip_forward` 必须是 **1** ✓。实测两种集群都遇到过 ✓：
+#   ▸ `= 0` ✗（**本清单就是为这种情况准备的** ✓）→ 直接用本清单部署 ✓ → 跳到下方"端口检查" ✓。
+#   ▸ `= 1` ✓ → 本清单**照样能用** ✓（hostNetwork 只是多余 ✓，无害 ✓）。
 #
-#   ▸ 输出 `= 1` ✓ → **什么都不用做** ✓ —— 直接用本清单部署 ✓（本清单不含 sysctls ✓）。
+# **本清单默认走 `hostNetwork: true`** ✓✓（即文档里的 B 方案 ✓）：Pod 共享**节点**的网络命名空间 ✓ →
+# 节点本身就是路由器 ✓（`ip_forward` 天然为 1 ✓）→ **完全不需要 kubelet 白名单** ✓，
+# 顺带还**绕开了 CNI 对"外来源地址"的处理** ✓✓。确认节点确实在转发 ✓：
 #
-#   ▸ 输出 `= 0` ✗ → 下面三选一 ✓：
+#   kubectl run netcheck --rm -it --restart=Never --image=busybox \
+#     --overrides='{"spec":{"hostNetwork":true}}' -- sysctl net.ipv4.ip_forward   # 期望 = 1 ✓
 #
-#     **A) 你能改 kubelet（自建集群最常见 ✓，推荐 ✓）**
-#        给**每个节点**（含 master ✓）的 kubelet 加白名单，然后重启 kubelet：
+# **如果你更想走 A（改 kubelet 白名单 + Pod 用自己的网络命名空间）** ✓，相对本清单只需四处改动 ✓：
+#   1. 删掉 `hostNetwork: true` 与 `dnsPolicy: ClusterFirstWithHostNet` ✓；
+#   2. `external-controller` 改回 `127.0.0.1:9090` ✓（并把两个探针里的端口一起改 ✓）；
+#   3. `mixed-port` 改回 `7890` ✓；
+#   4. 在 `spec.template.spec` 加回 `securityContext.sysctls: [{name: net.ipv4.ip_forward, value: "1"}]` ✓
+#      —— **前提是每台节点的 kubelet 都加了** `--allowed-unsafe-sysctls=net.ipv4.ip_forward` ✗。
 #
-#          # kubeadm 类：在 /etc/default/kubelet 或 kubeadm-config.yaml 的 kubeletExtraArgs 里
-#          KUBELET_EXTRA_ARGS="--allowed-unsafe-sysctls=net.ipv4.ip_forward"
-#          sudo systemctl restart kubelet
+# ── **端口检查**（hostNetwork 下端口是**节点级** ✗，务必先看一眼 ✓）────────────────
 #
-#        加完**把 pod 级 sysctls 写回本清单** ✓（`spec.template.spec.securityContext.sysctls` ✓），
-#        并用这条命令验证它真的生效 ✓（比只看 Pod Running 可靠 ✓）：
+#   # 在会被调度到的每台节点上：
+#   ss -ltnp | grep -E ':(9095|11010|7890)\b'      # 有输出 ✗ → 换端口（改下面两处注释处 ✓）
 #
-#          kubectl run netcheck --rm -it --restart=Never --image=busybox \
-#            --overrides='{"spec":{"securityContext":{"sysctls":[{"name":"net.ipv4.ip_forward","value":"1"}]}}}' \
-#            -- sysctl net.ipv4.ip_forward        # 期望 = 1 ✓
+#   * `external-controller: 127.0.0.1:9095` ✓ —— 只绑回环 ✓；9095 被占就换一个 ✓（探针里的端口要同步 ✓）；
+#   * `listeners` 的 `11010` ✓ —— 对端 P2P 会连它 ✓（被占就换 ✓，并同步 `peers` 那侧的端口 ✓）；
+#   * `mixed-port: 0` ✓ —— **已显式关闭** ✓（网关不需要本地代理端口 ✓，省掉一个冲突面 ✓）。
 #
-#     **B) 不想动节点 → 用 `hostNetwork: true`** ✓（Pod 直接共享节点的网络命名空间 ✓）
-#        节点本身就是路由器 ✓（它为所有 Pod 转发 ✓）→ `ip_forward` 天然是 1 ✓✓；
-#        顺带还**绕开了 CNI 对"外来源地址"的处理** ✓✓。代价与注意 ✓：
-#          * 端口变成**节点级** ✗ → 把 `external-controller` 改成节点上没被占用的端口 ✓
-#            （如 `127.0.0.1:9095` ✓），同理留意 `listeners` 的 11010 与 `mixed-port` 7890 ✓；
-#          * 必须加 `dnsPolicy: ClusterFirstWithHostNet` ✓，否则集群 DNS 解析会失效 ✗；
-#          * TUN 会建在**节点**上 ✓（这本来就是网关要的 ✓），界面地址 = 配置里的 `ipv4` ✓。
-#
-#     **C) 两条都不行** ✗ → 这个集群跑不了 **TUN 网关** ✓；
-#        可以退到**零特权 native 方案**（用户态转发 ✓ 不需要 `ip_forward`/TUN/NET_ADMIN ✓，
-#        代价是没有 ICMP ✓、吞吐低一档 ✓）—— 见 `gateway/alt-native/` ✓。
 # ─────────────────────────────────────────────────────────────────────────────
 apiVersion: v1
 kind: ConfigMap
@@ -98,14 +92,14 @@ metadata:
   namespace: easytier
 data:
   config.yaml: |
-    mixed-port: 7890
+    mixed-port: 0                     # hostNetwork 下无需本地代理端口 ✓（0 = 关闭 ✓）
     allow-lan: true
     bind-address: 0.0.0.0
     mode: rule
     log-level: info
     ipv6: false
     # 只绑回环 ✓：exec 探针在容器内探它 ✓，Pod 之外一律访问不到 ✓
-    external-controller: 127.0.0.1:9090
+    external-controller: 127.0.0.1:9095        # 端口是**节点级**的 ✓（避开 9090 常见占用 ✓）
 
     proxies:
       - name: et-gateway
@@ -169,6 +163,10 @@ spec:
       labels:
         app: easytier-gateway
     spec:
+      # hostNetwork 方案 ✓：共享节点网络命名空间 → 用节点的 ip_forward ✓、绕开 CNI ✓
+      hostNetwork: true
+      # ✗ 必须一起加 ✓：否则容器用的是节点的 resolv.conf ✗ → **集群 DNS（CoreDNS ClusterIP）解析不了** ✗
+      dnsPolicy: ClusterFirstWithHostNet
       # ⚠️ **不要**在这里写 sysctls ✗✓（2026-10-03 真实事故 ✓）：
       #    `net.ipv4.ip_forward` 在**部分集群**里**不在 kubelet 的安全白名单**内 ✗ →
       #    Pod 会在 **admission 阶段**被拒 ✗（事件 `SysctlForbidden: forbidden sysctl … not allowlisted` ✓），
@@ -201,18 +199,18 @@ spec:
           # 启动探针：只负责"等它起来" ✓ —— 起来之前**不会**被 liveness 杀掉 ✓
           startupProbe:
             exec:
-              command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
+              command: ["wget", "-qO-", "http://127.0.0.1:9095/version"]
             periodSeconds: 10
             failureThreshold: 30        # 最多等 5 分钟 ✓（overlay 预热 + 集群调度 ✓）
           readinessProbe:
             exec:
-              command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
+              command: ["wget", "-qO-", "http://127.0.0.1:9095/version"]
             periodSeconds: 15
             failureThreshold: 4
           # liveness 放宽 ✓：这是**路由器** ✓ —— 一次瞬时探针失败就重启会让整网路由抖动 ✗
           livenessProbe:
             exec:
-              command: ["wget", "-qO-", "http://127.0.0.1:9090/version"]
+              command: ["wget", "-qO-", "http://127.0.0.1:9095/version"]
             periodSeconds: 30
             failureThreshold: 10        # 连续 5 分钟探测失败才重启 ✓
             timeoutSeconds: 5

@@ -755,6 +755,7 @@ kubectl -n default delete deploy easytier-gateway          # 最后才止血 ✓
 | `replicas > 1` 或 `RollingUpdate` ✗ | 同一 `ipv4`/`hostname` 两副本互踢 ✓ —— 实测表现就是**对端每秒刷 `peer_added/peer_removed`** ✗ | `replicas: 1` + `strategy: Recreate` ✓（硬要求 ✓）|
 | 用 `httpGet` 探针 ✗ | kubelet 从 Pod 外探 ✓，而 API 只绑 `127.0.0.1:9090` ✓ → **永远不 Ready** ✗ | 用 **exec 探针**在容器内探 loopback ✓ |
 | `restricted` 命名空间 ✗ | hostPath 与 NET_ADMIN 双双被拒 ✓ | 命名空间用 **baseline 或更宽松** ✓ |
+| **Pod 里 `ip_forward = 0`** ✗✓（实测两种集群都有 ✓）| 网关是**路由器** ✓；集群若不给 Pod 开转发 ✓ → 要么 Pod 被 **admission 拒**（`SysctlForbidden` ✓，表现为"无限重启"但**容器从未启动** ✓）要么起来了不转发 ✗ | 二选一 ✓：**A** 每台节点 kubelet 加 `--allowed-unsafe-sysctls=net.ipv4.ip_forward` ✓（再把 pod 级 `sysctls` 写回 ✓）；**B** `hostNetwork: true` ✓ + `dnsPolicy: ClusterFirstWithHostNet` ✓（**清单默认走 B** ✓，端口随之变为节点级 ✓：API 改 `9095` ✓、`mixed-port: 0` ✓）|
 | overlay 网段与集群 CIDR 重叠 ✗ | 部分 Pod 时通时不通 ✓，极难排查 ✓ | 先核对 `cluster-cidr` / `service-cluster-ip-range` ✓ |
 | 客户端只用一条规则 ✗ | 家里与集群混在一台网关上 ✓ | **两个出站 + 规则配对** ✓（见 §6.20 ✓）|
 
