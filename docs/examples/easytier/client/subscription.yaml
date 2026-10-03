@@ -37,6 +37,18 @@ proxies:
     # 隧道里没有到公网的路 ✗（表现为 502 ✓）。填**家侧网关的 overlay 地址**：
     # exit-nodes: ["10.144.0.2"]
     # interface-name: en0                      # 【可选·通常不要填】✗
+
+  # ⭐ 第二台网关（可选 ✓）：例如集群里也跑了一个网关（见 ../gateway/k8s.yaml ✓）
+  #    关键点 ✓：**每条出站各自带 exit-nodes** ✓ → 「拨哪条隧道就落在哪台网关」✓，互不干扰 ✓。
+  - name: et-k8s
+    type: easytier
+    network-name: private-overlay            # ← 同上，必须与家侧/会聚点一致 ✓
+    network-secret: "<与家侧一致>"
+    # ipv4: 留空 ✓（保持 DHCP ✓；手填容易与别的节点撞 ✗）
+    no-listener: true
+    peers: ["tcp://<会合点公网IP>:11010"]
+    udp: true
+    exit-nodes: ["<第二台网关的 overlay 地址，如 10.144.0.30>"]
     #   ↑ 仅当对方"能连上 overlay 但底层连不稳/连不上会合点"，且它自己也在跑 mihomo 的 TUN 时：
     #     填它自己的物理网卡 ✓（macOS `en0`、Linux 常见 `eth0`/`wlan0`）。填错会直接起不来 ✗。
 
@@ -57,6 +69,21 @@ rules:
   - IP-CIDR,10.0.16.0/24,🏠 内网
   # - DOMAIN-SUFFIX,example.lan,🏠 内网     # ← 配合上面的 hosts/dns 一起启用 ✓
 
+# ── 集群内部域名（可选 ✓，但**集群场景必需** ✗）：公网 DNS 查不到 *.cluster.local ✓，
+#    所以必须**显式指定**「问谁」✓ —— 出口节点只解决"包怎么走"✓，不解决"问谁"✗。
+#    把 <集群域名> 与 <CoreDNS ClusterIP> 换掉即可（取法见 ../gateway/k8s.yaml 头部 ✓）：
+#
+# dns:
+#   enable: true
+#   nameserver-policy:
+#     "+.<集群域名>": ["<CoreDNS ClusterIP>#et-k8s"]     # ← 亦可写成 "+.cluster.local" ✓
+#     "+.svc":        ["<CoreDNS ClusterIP>#et-k8s"]
+#
+# 并且要在 rules 里补一条（**fake-ip 模式下这条是决定性的** ✗✓ —— IP 规则匹配不到假 IP ✓）：
+#   - DOMAIN-SUFFIX,<集群域名>,et-k8s
+#   - IP-CIDR,<Pod CIDR>,et-k8s
+#   - IP-CIDR,<Service CIDR>,et-k8s
+#
 # 内网域名（可选 ✓）：按名字访问内网时，**取消注释**下面两块里的一块
 #
 # 位置 ✓：本 fork 的合并对 dns / hosts（以及 tun / profile）是**深合并**的
