@@ -721,6 +721,26 @@ docker compose up -d && docker compose ps # state/ 保留 → overlay 身份不�
   overlay 内**节点名**另有专用开关：`accept-dns: true` + `tld-dns-zone: <你的域>.`（末尾带点 ✓），
   它只负责 overlay 自己的名字 ✓，不管家里路由器的域名 ✗。
 
+#### 6.21.1 一次真实事故（2026-10-03）：两个值会把**整网**搞坏 ✗✓
+
+把 K8s 网关部署上去后出现"**无限重启 + 连别的网关节点都不通**" ✓。复盘出**两个叠加原因** ✓ + 一条**流程教训** ✓：
+
+| 原因 | 机制 | 正确做法 |
+| --- | --- | --- |
+| **静态地址取了低位** ✗（填了 `10.144.0.3`）| overlay 的 DHCP **从低位往后发** ✓（家侧固定 `.2` ✓）→ `.3` 很可能**正是客户端已持有的地址** ✓ → 两节点同址 → **互相驱逐** ✗ → 对端日志每秒刷 `peer_added/peer_removed` ✓，**整网路由抖动** ✗ | 静态地址取**高位** ✓（如 `.30` / `.100` ✓），远离 DHCP 池 ✓ |
+| **`proxy-networks: ["0.0.0.0/0"]`** ✗✓ | 等于向整个 overlay **公告一条默认路由** ✓ → 把**别的节点的转发**也拉向本网关 ✗ → 即使没有地址冲突，也会"其它网关不通" ✓ | 只填**本网关真能到的网段** ✓；不确定就写 `[]` ✓（`tun: true` 或 `enable-exit-node: true` 时照样会起 ✓）|
+| （清单缺口 ✗）缺 `enable-exit-node: true` | 客户端 `exit-nodes` 指向本节点时，落地流量**不被转发** ✗（家侧当初同样因此不通 ✓）| K8s 版必须与家侧**逐条对齐** ✓ |
+
+**流程教训** ✗✓（比上面两条更通用 ✓）：**先取证，再删** ✗ —— 本次先 `delete deploy` ✓ 才去抓 `describe`/`logs` ✓，
+结果证据全没了 ✗。正确顺序 ✓：
+```bash
+kubectl get pod -w                                   # 看它在重启 ✓
+kubectl describe pod -l app=easytier-gateway | tail -30   # 重启原因/退出码 ✓  ← 删除前抓 ✗
+kubectl logs -l app=easytier-gateway --previous --tail=50 # 上一次的日志 ✓   ← 删除前抓 ✗
+kubectl -n default delete deploy easytier-gateway          # 最后才止血 ✓
+```
+（若已删除 ✓：`kubectl get events` 仍可能保留约 1 小时 ✓；节点上的 `/var/log/pods/` 也可能还有 ✓。）
+
 ### 6.21 把网关放进 Kubernetes（2026-10-03）
 
 清单：[`examples/easytier/gateway/k8s.yaml`](examples/easytier/gateway/k8s.yaml) ✓ —— 目标是把**集群网段与集群域名**接到同一个 overlay ✓。
