@@ -479,7 +479,16 @@ func (e *EasyTier) resolveIPv4(ctx context.Context, host string) (netip.Addr, er
 	if easytier.IsMagicDNS(host, e.zone) {
 		return netip.Addr{}, fmt.Errorf("easytier: overlay hostname %q was not found", host)
 	}
-	ips, err := resolver.LookupIPv4WithResolver(ctx, host, resolver.ProxyServerHostResolver)
+	// FORK(easytier-dns): resolve the target with the kernel's DNS, not with the
+	// proxy-server resolver. This host is a dial target, not a proxy server address, and
+	// resolving it through ProxyServerHostResolver bypassed dns.nameserver-policy - so a
+	// domain routed into the overlay could not be resolved by a nameserver reachable only
+	// through that same overlay.
+	hostResolver := resolver.DefaultResolver
+	if hostResolver == nil {
+		hostResolver = resolver.ProxyServerHostResolver
+	}
+	ips, err := resolver.LookupIPv4WithResolver(ctx, host, hostResolver)
 	if err != nil {
 		return netip.Addr{}, err
 	}
