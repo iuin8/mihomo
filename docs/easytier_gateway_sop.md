@@ -757,6 +757,15 @@ rules:
 * **填域名会"响亮地失败"** ✓（不是静默 ✗）：实测实例**起不来** ✓，guest 报
   `start failed: create EasyTier instance: Error: failed to parse config TOML from WASI` ✓（内核按监督策略重试 ✓，日志里能直接看到 ✓）。
 * **为什么** ✓：`proxy-networks` 是**路由广告**（"这些 **IP 前缀**在我这边" ✓）—— overlay 是 L3 ✓，没有"某个域名归我"这种路由 ✗；**DNS 是另一层** ✓。
+* **通配符 `*` 也不行** ✗（2026-10-03 实测 ✓）：实例**起不来** ✓，报同一个 `failed to parse config TOML from WASI` ✓。
+  **等价写法是 `0.0.0.0/0`** ✓（能过 ✓，实测 ✓ —— 它就是 CIDR 意义上的"全都要" ✓）。
+* **但多网关时不要用 `0.0.0.0/0`** ✗✓：它等于**公告一条默认路由** ✓ → 两台网关（家侧 + 集群）都这么写就会出现**两条默认路由** ✓ →
+  客户端虽然按 rule 拨了 `et-k8s` ✓，**包最后还是可能从家侧出去** ✗（overlay 按路由代价选 ✓）——
+  这正是"DNS 与请求走不同路"的同类问题 ✓✓。
+  **规则分清两层** ✓：mihomo 的 rule 决定**拨哪个出站** ✓；进了隧道之后由 **overlay 的路由表**决定落地 ✓ →
+  每台网关只公告**自己真正能到的网段** ✓，才能保证"拨 et-k8s 就落在集群网关" ✓✓。
+  （`0.0.0.0/0` 真正对应的场景是"这台就是大家的公网出口" ✓ —— 那个用 `enable-exit-node` + 客户端的 `exit-nodes` 表达更准确 ✓，不必写进 `proxy-networks` ✓。）
+
 * **所以域名这样走** ✓✓：客户端 `dns.nameserver-policy` 把该域名交给**集群内的 DNS** ✓（`"+.cluster.local": ["<CoreDNS ClusterIP>#et-k8s"]` ✓）+ 一条 `DOMAIN-SUFFIX,cluster.local,et-k8s` 规则 ✓；
   **CIDR（Pod CIDR + Service CIDR）放在 `proxy-networks`** ✓ —— 域名解析出来的就是这两个网段里的地址 ✓，两层配合才通 ✓（`cluster.local` 的普通 Service 落在 Service CIDR ✓、headless/Pod 落在 Pod CIDR ✓，所以两个都要写 ✓）。
 
