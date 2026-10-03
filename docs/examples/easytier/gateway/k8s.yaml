@@ -132,11 +132,20 @@ spec:
       labels:
         app: easytier-gateway
     spec:
-      # baseline 及以上要求 ✓；restricted 命名空间会被拒 ✓（见文件头 ③）
+      # ⚠️ **不要**在这里写 sysctls ✗✓（2026-10-03 真实事故 ✓）：
+      #    `net.ipv4.ip_forward` 在**部分集群**里**不在 kubelet 的安全白名单**内 ✗ →
+      #    Pod 会在 **admission 阶段**被拒 ✗（事件 `SysctlForbidden: forbidden sysctl … not allowlisted` ✓），
+      #    表现为 **ReplicaSet 疯狂重建数百个 Pod**（看起来像"无限重启" ✓），
+      #    而且**容器从未启动** ✗ → `/var/log/pods/` 里什么都没有 ✓，极易误判 ✓。
+      #
+      # **正常情况不需要写** ✓：Pod 的 network namespace 里 `ip_forward` 通常**已经是 1** ✓（CNI/kubelet 设置 ✓）。
+      # 先确认 ✓：
+      #   kubectl run netcheck --rm -it --restart=Never --image=busybox -- sysctl net.ipv4.ip_forward
+      #   → 输出 `net.ipv4.ip_forward = 1` ✓ → 什么都不用做 ✓（本清单默认即如此 ✓）
+      #   → 输出 `= 0` ✗ → 需要集群管理员给 kubelet 加 `--allowed-unsafe-sysctls=net.ipv4.ip_forward` ✓
+      #     （容器内 `/proc/sys` 是只读的 ✓ → 无法在容器里自己 sysctl -w ✗）
       securityContext:
-        sysctls:
-          - name: net.ipv4.ip_forward
-            value: "1"
+        {}   # 保持为空 ✓（见上方说明）；namespace 需 baseline 或更宽松 ✓（见文件头 ③）
       containers:
         - name: mihomo
           image: ghcr.io/iuin8/mihomo:v1.19.32-fa.1001   # 钉版本 ✓；升级时改这里 ✓（不要用 latest ✗）
