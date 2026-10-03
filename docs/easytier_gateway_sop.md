@@ -836,7 +836,13 @@ EOF
 * **所以域名这样走** ✓✓：客户端 `dns.nameserver-policy` 把该域名交给**集群内的 DNS** ✓（`"+.cluster.local": ["<CoreDNS ClusterIP>#et-k8s"]` ✓）+ 一条 `DOMAIN-SUFFIX,cluster.local,et-k8s` 规则 ✓；
   **CIDR（Pod CIDR + Service CIDR）放在 `proxy-networks`** ✓ —— 域名解析出来的就是这两个网段里的地址 ✓，两层配合才通 ✓（`cluster.local` 的普通 Service 落在 Service CIDR ✓、headless/Pod 落在 Pod CIDR ✓，所以两个都要写 ✓）。
 
-**本次已做的校验** ✓（2026-10-03 实测 ✓）：清单解析 ✓、不变量断言（replicas/strategy/caps/sysctls/探针类型/挂载 ✓）、
+**⚠️ `-t` 通过 ≠ guest 接受配置** ✗✓（2026-10-03 实测 ✓）：`mihomo -t` 只校验 **mihomo 自己**的配置 ✓；
+guest 侧的 TOML 由**另一层**校验 ✓ —— 实测 `-t` 全绿 ✓ 而 guest 报
+`failed to parse config TOML from WASI` ✓（本次原因是 `peers` 里残留了 `<改这里…>` 占位符 ✓ → `invalid domain character` ✓）。
+**所以新配置必须再跑一次真实容器** ✓（用与 K8s 相同的挂载 ✓），并断言日志里出现这两行 ✓：
+`instance … running` ✓ 与（网关角色）`tun mode enabled on <你的 ipv4>` ✓。
+
+**本次已做的校验** ✓（2026-10-03 实测 ✓）：清单解析 ✓、不变量断言（replicas/strategy/hostNetwork/dnsPolicy/探针/挂载 ✓）、
 **用同一镜像在容器内跑 `-t` = successful** ✓（连同 `state-dir` 的路径安全检查一起验掉 ✓）、`kubectl apply --dry-run=client` ✓。
 **未做** ✗（本机没有集群 ✓）：真实调度、TUN 设备、CNI 对源地址的处理 ✓ —— 上线后按"客户端能否访问 `kubernetes.default.svc` 与某个 Pod"验收 ✓。
 
