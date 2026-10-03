@@ -693,3 +693,44 @@ docker compose down                      # 用旧文件停掉旧项目名的栈 
 # 再把新的 docker-compose.yml 与 gateway.yaml 覆盖进来
 docker compose up -d && docker compose ps # state/ 保留 → overlay 身份不变 ✓
 ```
+
+### 6.18 内网域名怎么走隧道 · 以及怎么确认走的是 P2P（2026-10-03 实测）
+
+**内网域名**：`rules` 里的 `IP-CIDR` 只认 IP ✗，按名字访问要补两件事之一：
+
+* **少量名字 → 静态映射** ✓（零依赖，先用这个）：
+  ```yaml
+  hosts:
+    nas.home.lan: 10.0.1.5
+  ```
+* **整个后缀 → 交给内网 DNS，并让查询也走隧道** ✓：
+  ```yaml
+  dns:
+    enable: true
+    respect-rules: true                     # 关键：DNS 查询按 rules 走 → 才会进 et-core ✓
+    nameserver-policy:
+      "+.home.lan": ["10.0.0.1#et-core"]    # 内网 DNS + 经 et-core 出站 ✓
+  rules:
+    - DOMAIN-SUFFIX,home.lan,🏠 内网        # 连接也要有规则，否则不走隧道 ✗
+  ```
+  依据：本 fork 的内核把这个出站注册成了 DNS 传输（`dns.RegisterEasyTierDnsClient` ✓），
+  且出站自身也能解析名字（`resolveIPv4` → "overlay hostname … was not found" ✓）。
+  overlay 内**节点名**另有专用开关：`accept-dns: true` + `tld-dns-zone: <你的域>.`（末尾带点 ✓），
+  它只负责 overlay 自己的名字 ✓，不管家里路由器的域名 ✗。
+
+**确认走 P2P**（实测：把两端跑起来，看 guest 的 debug 日志 ✓）：
+
+* **方案 A（内核内置 easytier）** ✓：把日志级别设成 **`log-level: debug`** ✓ —— 只有 debug 才打印
+  连接详情（info 级的 `peer_added` 只有一个数字 ID ✗）。然后找 `peer_connection_added`：
+  ```
+  PeerConnAdded(PeerConnInfo { … tunnel: Some(TunnelInfo {
+      tunnel_type: "tcp",
+      remote_addr: Some(Url { url: "tcp://10.99.0.9:53856" }),      ← 对端自己的地址 = 直连 ✓
+      resolved_remote_addr: … }), stats: Some(PeerConnStats { … latency_us, … }), loss_rate: 0.0 })
+  ```
+  判读：`remote_addr` 是**对端自己的地址** → 直连/P2P ✓；若是**中继节点**的地址 → 走中继 ✗。
+  另外日志里大量 `stun.*` / `stun-heyuan-v6.easytier.cn` 记录 = 正在**打洞尝试** ✓（实测两端各 36–40 条 ✓）。
+  ⚠️ **方案 A 用不了 `easytier-cli`** ✗：本 fork 的出站选项里**没有** `rpc-portal`（只有 `accept-dns` /
+  `tld-dns-zone` 两个 DNS 相关项 ✓），CLI 连不上 guest 的 RPC ✗。
+* **方案 B（native 容器）** ✓：官方镜像**自带** `easytier-cli` ✓（`peer` / `route` / `peer-center` / **`stun`** ✓），
+  在容器里直接跑即可 ✓：`docker exec easytier easytier-cli peer` ✓。
