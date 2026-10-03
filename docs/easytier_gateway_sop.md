@@ -6,6 +6,10 @@
 > 详细原理与实测数据见 [easytier_gateway.md](easytier_gateway.md)，
 > 验收标准见 [easytier_tun_spec.md](easytier_tun_spec.md)。
 
+> **关于章节编号** ✓：正文章节 0–4 是操作路径 ✓；**§5 已随退役内容（用户态网关）删除** ✗ ——
+> 但 §6 及其 20 个子节（§6.1–§6.20）被全文与其它文档交叉引用 ✓，改号会产生 20+ 处引用改动且零收益 ✗，
+> 故**保持 §6 编号不变** ✓。查内容请用 `grep -n '^### 6\.'` 或本页搜索 ✓。
+
 ## 0. 会合点（只做一次，约 5 分钟）
 
 **先说调研结论（2026-10-01，用 DoH 复核，绕开本机 DNS 劫持）**：
@@ -46,7 +50,7 @@ docker compose exec mihomo iptables -t nat -S POSTROUTING | tail -1
 > 唯一需要的是 `cap_add NET_ADMIN` + `/dev/net/tun` 与 `ip_forward=1` ✓（compose 已给 ✓）。
 > 家侧不需要任何端口映射，也不需要公网 IP —— 它靠出站连会合点。
 
-## 2. 本机 CVR 配置（约 5 分钟）
+## 1. 本机 CVR 配置（约 5 分钟）
 
 **先搞清用哪种并入方式——段名不一样：**
 
@@ -94,7 +98,7 @@ grep -A3 "🏠 内网" "$CFG" | head  # 期望看到 type: select 与 home-overl
 
 > 客户端**不需要换内核**：`easytier` 出站是 upstream 就有的，你现在的 alpha 内核即可。
 
-## 3. 验证（约 1 分钟）
+## 2. 验证（约 1 分钟）
 
 ```bash
 # ① TCP（换成一个你确定在跑的 LAN 服务，例如路由器 Web 界面 / NAS）
@@ -138,7 +142,7 @@ ping -c 3 <内网IP>
 > 💡 **服务返回 403 / 自动跳转不等于不通**：很多自建服务（面板、媒体库）访问 `/` 会 403 + JS 跳 `/login`。
 > 先看响应头与 `/login` 是否 200，再下结论（实测 `10.0.1.181:8080/` → 403 且跳 `/login`，而 `/login` → 200）。
 
-## 4. 排错速查
+## 3. 排错速查
 
 | 现象 | 原因 | 处置 |
 | --- | --- | --- |
@@ -158,7 +162,7 @@ ping -c 3 <内网IP>
 | 延迟测试报 error | 测速 URL 是公网地址，而 overlay 只承载家侧发布的网段（家侧不是互联网出口） | 用内网地址测，或忽略（`select` 分组不需要自动测速） |
 | **内核被反复重启**（GUI 日志 `service restarted the core (N restarts so far); last exit: … SIGKILL`，PID 一直变、TUN 时有时无） | **不是看门狗杀卡死的内核，而是内核自己崩了**（macOS 的代码签名校验把进程杀掉）。排查证据链：<br>① 崩溃报告：`ls -t /Library/Logs/DiagnosticReports/verge-mihomo-alpha-*.ips`（实测 27 份），内容为 `EXC_BAD_ACCESS` + `signal: SIGKILL (Code Signature Invalid)` + `termination: {namespace: CODESIGNING, indicator: Invalid Page}`；<br>② 报告里 `usedImages[].size` 等于该二进制的 **`__TEXT` 段 vmsize**（`otool -l <core>` 核对；实测 39780352 = `0x25f0000`），可据此确认"服务模式跑的内核与 sidecar 是同一构建"——**所以不是内核版本旧**；<br>③ 对照实验定位触发面：测机场节点 `{"delay":79}` 安然无恙；给 easytier 出站一个**不可达目标**（`http://10.99.99.99/`）也照样崩 → **与目标无关，是 easytier 的 WASI（wazero JIT）路径一启动就崩**；<br>④ 同一二进制在**用户态**跑 easytier 完全正常 → 差别只在"服务模式（root，由特权服务 approval/重签名后启动）"。<br>**机理**：服务模式会把内核复制进 `…/clash-verge-service/` 并重签名，但**没有 `com.apple.security.cs.allow-jit`**；easytier 是 mihomo 里唯一使用 JIT（wazero 编译器）的路径，JIT 生成的可执行页被判非法页 → SIGKILL。**排除 TUN 路由、关系统代理、腾端口都不会有效**（它们不是病根）。 | **先搞清 macOS 上"不装服务能不能开 TUN"**（源码结论，别凭 UI 猜）：<br>• `core/runstate/health.rs`：`tun_capable() = self.is_admin \|\| self.service_usable()`；<br>• `crates/tauri-plugin-clash-verge-sysinfo/src/lib.rs:113`：`is_binary_admin()` 在非 Windows 上就是 **`libc::geteuid() == 0`**；<br>• UI 里**没有**提权入口：`proxy-control-switches.tsx` 的 `handleTunToggle` 在 `!isTunModeAvailable` 时只弹 `tunNeedsService`，remedy 只有"安装服务/重装/切服务模式"。<br>→ 所以"管理员模式"= **整个 App 以 root 运行**（`sudo "/Applications/Clash Verge.app/Contents/MacOS/clash-verge"`，先退出已运行实例；之后首页出现「管理员模式」徽章，`home.json` 的 `adminMode`）。<br>**两条路**：<br>① **应急（立刻可用）**：以 root 启动 CVR → TUN 可用 → 内核由 App 直接 spawn（**不走服务、不重签名**）→ 不再触发那次 SIGKILL。代价：GUI 以 root 运行，配置/日志/缓存随之以 root 写入；<br>② **正解（不依赖 JIT）**：`easytier-go` 内部是 `wazero.NewRuntime(ctx)`（= 编译器/JIT，`internal/engine/host.go:68`）且**没有注入口子** → 在 mihomo fork 里 `replace` 一个补丁版（换成 `NewRuntimeConfigInterpreter()` 或加可配项），重建 darwin 内核替换 sidecar → **服务模式（重签名）也不会崩**，GUI 仍以普通用户运行。代价：WASI 走解释器（控制面变慢；TUN 模式下数据面走原生路径，影响有限）。<br>（另：实测把 GUI 生成的配置复制到临时目录、`tun.enable=false`、用户态跑 sidecar 内核，经混合端口访问家里 = **200 / 200（88ms）、内核存活、崩溃报告零新增**，可作为"非服务路径不崩"的基线证据） |
 
-## 5. 日常运维与回退
+## 4. 日常运维与回退
 
 ```bash
 # 升级内核/配置后重建
@@ -717,6 +721,32 @@ docker compose up -d && docker compose ps # state/ 保留 → overlay 身份不�
   且出站自身也能解析名字（`resolveIPv4` → "overlay hostname … was not found" ✓）。
   overlay 内**节点名**另有专用开关：`accept-dns: true` + `tld-dns-zone: <你的域>.`（末尾带点 ✓），
   它只负责 overlay 自己的名字 ✓，不管家里路由器的域名 ✗。
+
+### 6.20 多个出口怎么配才不割裂（2026-10-03 源码定案）
+
+**源码**（`open-source/easytier` → `easytier-core/src/peers/peer_manager.rs:2724 get_msg_dst_peer_ipv4` ✓）：
+目标不在 overlay 网段时，按 **`exit_nodes` 的书写顺序**取**第一个"存在"的节点** ✓（找到即 `break` ✓）——
+**不是**按延迟 ✗、**也不是**自动匹配"承载该目标的节点" ✗。所以多出口的语义 = **一条故障转移列表** ✓。
+
+**由此产生的结构性风险** ✓：`exit_nodes` 是**实例级全局**设置 ✗，而 **rule 是逐目标**的 ✓ —— 一旦网络里有多个出口 ✓，
+"规则指向 A 节点、出口却是 B 节点"的组合**完全可能** ✗，那正是"DNS 走一条路、请求走另一条"那类割裂的翻版 ✓。
+
+**唯一自然的解法** ✓✓：**一个出口一个出站** ✓
+
+```yaml
+proxies:
+  - {name: et-home, type: easytier, …, exit-nodes: ["10.144.0.2"]}   # 家侧出口 ✓
+  - {name: et-vps,  type: easytier, …, exit-nodes: ["<另一出口 IP>"]} # 另一出口 ✓
+rules:
+  - DOMAIN-SUFFIX,shushangyun.com,et-home   # 端口映射型服务必须家侧出口 ✓
+  - DOMAIN-SUFFIX,example.com,et-vps        # 其余公网走另一出口 ✓
+```
+
+→ **规则同时决定"谁承载"和"谁出口"** ✓ —— 割裂在**配置层**被排除 ✓，而不是靠运行时巧合 ✓。
+
+**顺带两条已验证的事实** ✓（避免以后重复推理 ✓）：
+* 家侧 LAN 网段**不依赖出口节点** ✓：靠 `proxy-networks` 公告 + foreign network 转发走通 ✓（实测：**还没配 exit-nodes 时** `10.0.0.1` / `10.0.16.1` 就已 200 ✓✓）。
+* `exit_nodes` 只能填 **IP** ✓（`Vec<IpAddr>` ✓）—— **没有 `auto`/`any`** ✗。
 
 ### 6.19 端口映射型内网服务：域名解析出公网 IP，但仍需走隧道（2026-10-03 实测）
 
