@@ -718,6 +718,33 @@ docker compose up -d && docker compose ps # state/ 保留 → overlay 身份不�
   overlay 内**节点名**另有专用开关：`accept-dns: true` + `tld-dns-zone: <你的域>.`（末尾带点 ✓），
   它只负责 overlay 自己的名字 ✓，不管家里路由器的域名 ✗。
 
+### 6.19 端口映射型内网服务：域名解析出公网 IP，但仍需走隧道（2026-10-03 实测）
+
+**现场**：内网服务经**端口映射**发布到公网 → 域名解析结果是**公网 IP** ✓（`dig` 看不到内网地址 ✓），
+但内容**只有到家侧才访问得到** ✓（公网映射不直接对外服务 ✓）。
+
+**实测（经真实 overlay ✓）**：
+```
+[DNS] siluhuilian-admin-test.shushangyun.com --> [183.62.24.58] A     ← 公网地址 ✓
+[TCP] dial home … error: dial tcp4 183.62.24.58:12880 …               ← 隧道里没有到公网的路 ✗
+curl -x 127.0.0.1:7899 → HTTP 502
+```
+
+**此时要的是"落地在家侧"，而不是"解析出内网地址"** ✓：
+
+* 家侧 `gateway.yaml`：`enable-exit-node: true` ✓（允许它替客户端把流量落地出去 ✓）
+* 客户端：`exit-nodes: ["<家侧 overlay 地址，如 10.144.0.2>"]` ✓ + 照常一条 `DOMAIN-SUFFIX` 规则 ✓
+
+→ 整条链：**rule 选路 ✓ → 家侧落地 ✓ → 经家侧本地网络（含路由器回环）到内网机器 ✓✓**，
+**DNS 与请求仍同一条隧道** ✓ —— 这就是"只配 rule + 家侧一个开关"的形态 ✓。
+
+⚠️ 与 §6.18 的分工：`nameserver-policy` 解决"**只有内网 DNS 能解析**"✓；
+本节解决"**解析没问题、但只在本地网络内通**"✓。按现场选一个 ✓，不必都上 ✗。
+
+**同一场景下我修掉的内核缺陷** ✓（提交 `6405aed0` ✓）：easytier 出站解析**拨号目标**时原用
+`ProxyServerHostResolver`（代理服务器专用 ✗）→ 绕过 `dns.nameserver-policy` ✗，于是"请求进隧道 ✓、
+解析在隧道外 ✗"。已改为**内核 DNS** ✓，实测日志确认解析改由 policy 路径完成 ✓。
+
 **合并的两个键策略**（`multi_merge.rs`，改这块前先读它 ✓）：
 
 | 类别 | 键 | 行为 |

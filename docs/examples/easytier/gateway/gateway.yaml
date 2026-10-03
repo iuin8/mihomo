@@ -36,6 +36,10 @@ proxies:
     state-dir: /root/.config/mihomo/easytier
     listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]   # 保留即可，无需端口映射
     peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]           # 家侧无公网时靠它会合（见 rendezvous/）
+    # 当出口节点 ✓：客户端把目标交给家侧落地，再由家侧经本地网络出去
+    # 场景：内网服务通过**端口映射**发布到公网（域名解析出公网 IP ✗），
+    # 此时只有"到了家侧再访问"才通 ✓ —— 客户端配 exit-nodes 指向本节点即可 ✓。
+    enable-exit-node: true
     proxy-networks: ["<改这里：家里网段，如 192.168.1.0/24>"]
     udp: true
     mtu: 1380                                # 同时作为 TUN 设备 MTU
