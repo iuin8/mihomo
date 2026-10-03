@@ -1,4 +1,7 @@
 # 运行时产物：overlay 节点身份（删了会在 overlay 里变成新节点）
-home/state/
+gateway/state/
 # 用 Dockerfile.prebuilt 时放这里的交叉编译产物
 home/mihomo-linux
+
+# gateway/state/ 是家侧的**运行态**（easytier 持久化的节点标识 machine_id ✓）
+# 不属于源码 ✓；删除它只会让节点换一个新标识（overlay 地址来自配置里的 ipv4 ✓ 不受影响 ✓）

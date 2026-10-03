@@ -56,7 +56,7 @@ services:
 
     volumes:
       - ./gateway.yaml:/root/.config/mihomo/config.yaml:ro
-      - ./state:/root/.config/mihomo/easytier          # overlay 节点身份，别删
+      - ./state:/root/.config/mihomo/easytier          # 节点标识持久化点：删了不会断（地址来自 ipv4 ✓），只会换一个新标识
 
     logging:
       driver: json-file
