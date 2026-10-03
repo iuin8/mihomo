@@ -56,10 +56,17 @@ services:
 
     volumes:
       - ./gateway.yaml:/root/.config/mihomo/config.yaml:ro
-      - ./state:/root/.config/mihomo/easytier          # 节点标识持久化点：删了不会断（地址来自 ipv4 ✓），只会换一个新标识
+      # 节点标识（machine_id）的持久化点 ✓ —— 用 Docker 托管卷，不落在仓库目录里 ✓（不需要用户看/改 ✓）
+      # · 名字**显式固定**：否则默认是 <project>_gateway-state ✗，改一次项目名就换卷 ✓（今天刚改过 ✗）
+      # · `docker compose down -v` / `docker volume prune` 会删掉它 ✗ → 只会换一个新标识 ✓，不会断连 ✓
+      - gateway-state:/root/.config/mihomo/easytier
 
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  gateway-state:
+    name: easytier-gateway-state        # 与 project 名解耦 ✓

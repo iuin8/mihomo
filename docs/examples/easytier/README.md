@@ -11,6 +11,21 @@
 | **公网节点**（会合点） | [`rendezvous/`](rendezvous/) | 有公网 IP 的机器上跑一个共享节点 ✓（家侧无公网时必需 ✓） |
 | 三方共用 | [`tools/`](tools/) | 探针与回声服务（排障用 ✓） |
 
+## 从旧版（bind 挂载 `./state`）迁移到托管卷 ✓
+
+**可选** ✓：不做也行 —— 只是会使节点换一个新标识 ✓（不断连 ✓、地址不变 ✓）。
+
+```bash
+cd <家侧目录>
+docker volume create easytier-gateway-state
+# 把旧目录内容搬进卷（含 machine_id 等 ✓）
+docker run --rm -v easytier-gateway-state:/dst -v "$PWD/state":/src alpine sh -c 'cp -a /src/. /dst/ && ls -l /dst'
+docker compose up -d --force-recreate     # 用新 compose（卷挂载）
+rm -rf state                              # 确认起来后再删旧目录
+```
+
+> ⚠️ `docker compose down -v` 或 `docker volume prune` 会删掉这个卷 ✗ → 只会换一个新标识 ✓，不会断连 ✓。
+
 ## 客户端 —— [`client/`](client/)
 
 | 文件 | 用途 |
@@ -29,7 +44,7 @@
 | [`gateway/docker-compose.build.yml`](gateway/docker-compose.build.yml) | 自编译覆盖：`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build` ✓ |
 | [`gateway/Dockerfile`](gateway/Dockerfile) / [`gateway/Dockerfile.prebuilt`](gateway/Dockerfile.prebuilt) | 多阶段构建 / 纯打包（用别处交叉编译好的二进制 ✓） |
 | [`gateway/gateway.yaml`](gateway/gateway.yaml) | 家侧配置（`tun: true` ✓、`prewarm: true` ✓ 服务端必需 ✓、`proxy-networks` ✓） |
-| `gateway/state/` | 运行时生成：节点标识持久化点 ✓ —— **删了不会断连** ✓（overlay 地址来自配置里的 `ipv4` ✓），只会换一个新标识 ✗ |
+| Docker 卷 `easytier-gateway-state` | 节点标识（`machine_id`）持久化点 ✓ —— **Docker 托管卷**（不落在仓库目录 ✓，不需要看/改 ✓）；**删了不会断连** ✓（地址来自配置里的 `ipv4` ✓），只会换一个新标识 ✗ |
 | [`gateway/alt-native/`](gateway/alt-native/) | **方案 B**：零特权 native 容器（无 TUN/无 iptables ✓；代价是无 ICMP、吞吐低一档 ✓） |
 
 ## 公网节点 —— [`rendezvous/`](rendezvous/)
