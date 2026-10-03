@@ -1,0 +1,63 @@
+# 客户端 profile（**双网关**：家侧 + 集群）—— 通用模板 ✓，复制后把 <…> 换成你自己的值
+#
+# 与 subscription.yaml 的区别 ✓：那份是**单网关**最小片段（并入订阅用）；
+# 本文件是一份**完整可独立导入**的 profile ✓（CVR：配置 → 新建/导入本地配置），
+# 适合"既有家里内网、又要访问集群内部域名"的场景 ✓。
+#
+# 两条关键设计 ✓（见 ../README.md 与 SOP §6.20/§6.21）：
+#   ① **每条出站各自带 exit-nodes** ✓ → 「拨哪条隧道就落在哪台网关」——落地节点由客户端决定 ✓；
+#      （`proxy-networks` 管的是 overlay 的**转发侧**路由 ✓，不参与这里的选择 ✓，所以留空也对 ✓）
+#   ② **集群内部域名必须显式指定解析器** ✗✓ —— 出口节点只管"包怎么走" ✓，不管"问谁" ✗：
+#      *.cluster.local 只存在于集群内 ✓，公网 DNS 查不到 ✓ → 必须把查询发给集群的 CoreDNS ✓。
+#
+# 取值方法 ✓（在集群任一节点上跑）：
+#   kubectl -n kube-system get svc kube-dns -o jsonpath='{.spec.clusterIP}'          # <CoreDNS ClusterIP>
+#   kubectl -n kube-system get cm coredns -o yaml | grep -m1 -oE 'kubernetes [a-z0-9.-]+'   # <集群域名>
+#   家侧/集群两台网关的 overlay 地址：见各自 gateway.yaml 里的 ipv4 ✓（**必须唯一** ✗）
+
+proxies:
+  # ── 家侧网关 ─────────────────────────────────────────────────────────────
+  - name: et-home
+    type: easytier
+    network-name: <网络名，须与家侧/会聚点一致>
+    network-secret: <强密钥>
+    no-listener: true                 # 客户端只需出站 ✓
+    peers: ["tcp://<会合点公网IP>:11010"]
+    udp: true
+    # 目标不在家侧网段、但**只有到家侧才通**时用 ✓（典型：内网服务端口映射到公网 ✓）
+    exit-nodes: ["<家侧网关的 overlay 地址，如 10.144.0.2>"]
+
+  # ── 集群网关 ─────────────────────────────────────────────────────────────
+  - name: et-k8s
+    type: easytier
+    network-name: <同上>
+    network-secret: <同上>
+    no-listener: true
+    peers: ["tcp://<会合点公网IP>:11010"]
+    udp: true
+    exit-nodes: ["<集群网关的 overlay 地址，如 10.144.0.30>"]
+
+# 代理页的卡片来自分组 ✓；第一个即**默认选中** ✓ —— 所以把要默认走的放第一位 ✓
+proxy-groups:
+  - name: 🔀 内网出口
+    type: select
+    proxies: [et-home, et-k8s, DIRECT]
+
+# DNS：**只写这份配置独有的两件事** ✓
+#   fake-ip / 公网 nameserver / filter 等属于**运行环境** ✓，交给 CVR 的「DNS 覆写」或内核默认 ✓ ——
+#   写进可分享的 profile 只会重复，还容易与 UI 打架 ✗。
+dns:
+  enable: true
+  nameserver-policy:
+    "+.<集群域名>": ["<CoreDNS ClusterIP>#et-k8s"]     # ← 集群 FQDN，如 +.cluster.local
+    "+.svc":        ["<CoreDNS ClusterIP>#et-k8s"]     # ← 兼顾短名 <svc>.<ns>.svc
+
+rules:
+  # 本片段在订阅合并时会被**前置**（优先于 MATCH ✓）
+  - IP-CIDR,<overlay 网段，如 10.144.0.0/24>,🔀 内网出口    # overlay 自己也要走隧道 ✓，否则落到 MATCH 直连 ✗
+  # 家里内网（**与本机所在网段重叠的那条不要写** ✗ —— 否则把本机局域网吸进隧道）
+  - IP-CIDR,<家里网段，如 192.168.1.0/24>,🔀 内网出口
+  # 集群：**域名规则是决定性的** ✗✓ —— fake-ip 模式下 IP 规则匹配不到假 IP ✓
+  - DOMAIN-SUFFIX,<集群域名>,et-k8s
+  - IP-CIDR,<Pod CIDR>,et-k8s
+  - IP-CIDR,<Service CIDR>,et-k8s

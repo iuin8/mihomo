@@ -12,6 +12,7 @@
 | 三方共用 | [`tools/`](tools/) | 探针与回声服务（排障用 ✓） |
 
 ## 客户端 —— [`client/`](client/)
+| [`client/subscription-k8s.yaml`](client/subscription-k8s.yaml) | **双网关完整 profile** ✓（家侧 + 集群）：可直接导入 CVR ✓；要点是**每条出站各自 `exit-nodes`** ✓ + **集群域名必须显式指定 CoreDNS** ✗✓（出口节点只管"包怎么走"✓，不管"问谁"✗）|
 
 | 文件 | 用途 |
 | --- | --- |
