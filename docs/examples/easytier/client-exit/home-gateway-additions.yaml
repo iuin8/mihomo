@@ -1,0 +1,22 @@
+# 家侧网关的**增量**片段（不要替换它原有配置 ✗，只做加法 ✓）
+# 目的：① 家侧能访问本机所在网段 ✓ ② 家侧能借本机出网 ✓
+
+proxies:
+  # ⭐ 新增：指向本机的"出口拨号线"
+  - name: et-mac
+    type: easytier
+    network-name: private-overlay
+    network-secret: "<与家侧一致>"
+    no-listener: true
+    peers: ["tcp://<会合点>:11010"]
+    udp: true
+    exit-nodes: ["<本机的 overlay 地址，如 10.144.0.6>"]   # 家侧拨出的非 overlay 目标 → 落到本机 ✓
+
+# 家侧网关**自身**的 easytier 出站里加一行 ✓（让"访问本机网段"的包进 overlay ✓）
+#   tun-routes: ["192.168.0.0/24"]
+
+rules:
+  # 保留家侧原有规则在前 ✓（内网网段 / cluster.local / 等 DIRECT ✓）
+  - GEOSITE,cn,DIRECT
+  - GEOIP,cn,DIRECT
+  - MATCH,et-mac          # 兜底：其余（海外）经本机 ✓

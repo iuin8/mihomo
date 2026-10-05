@@ -34,6 +34,15 @@
 | [`gateway/alt-native/`](gateway/alt-native/) | **方案 B**：零特权 native 容器（无 TUN/无 iptables ✓；代价是无 ICMP、吞吐低一档 ✓） |
 | [`gateway/k8s.yaml`](gateway/k8s.yaml) | **集群内网关**：把 **K8s 的网段与域名**接到同一个 overlay ✓（Pod CIDR / Service CIDR + CoreDNS ✓）。默认 **`hostNetwork: true`** 变体 ✓（不需要 kubelet 白名单 ✓、绕开 CNI ✓；代价是端口为节点级 ✓、必须配 `dnsPolicy: ClusterFirstWithHostNet` ✓）；`replicas: 1` + `Recreate` 是硬要求 ✗（同身份两副本会互踢 ✓）|
 
+## 双向 mesh（本机也当出口 / 也当被访问网段）—— [`client-exit/`](client-exit/)
+
+| 文件 | 作用 |
+| --- | --- |
+| [`client-exit/workstation-et-fa.yaml`](client-exit/workstation-et-fa.yaml) | **本机侧**出站全量版 ✓：`tun` + `ipv4` + `proxy-networks`（家侧可访问本机网段 ✓）+ `enable-exit-node`（家侧可借本机出网 ✓）|
+| [`client-exit/home-gateway-additions.yaml`](client-exit/home-gateway-additions.yaml) | **家侧**增量片段 ✓：新增 `et-mac` 出站 + `MATCH,et-mac` 兜底 + `tun-routes` 一行 ✓ |
+
+替换了旧做法「DDNS + HTTP 代理」✗（只能同局域网 ✓、承载不了 UDP ✗、多一跳嵌套 ✓）—— 详见该目录 README ✓。
+
 ## 公网节点 —— [`rendezvous/`](rendezvous/)
 
 | 文件 | 用途 |

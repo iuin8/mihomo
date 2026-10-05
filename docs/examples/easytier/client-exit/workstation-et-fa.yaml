@@ -1,0 +1,22 @@
+# 本机侧出站（全量版）：既能被家侧访问所在网段 ✓，也能当家的出口 ✓
+# 并入方式：与 client/subscription*.yaml 相同 —— 多订阅合并用原生段名 ✓ / Merge profile 用 prepend-proxies ✓
+proxies:
+  - name: et-fa
+    type: easytier
+    network-name: private-overlay
+    network-secret: "<与家侧一致>"
+
+    # ── 让家侧访问本机所在网段 ✓（要求 root/CAP_NET_ADMIN + 系统 ip forwarding ✓）
+    tun: true
+    ipv4: 10.144.0.6/24                     # TUN 模式必填 ✗✓，且全网唯一 ✓
+    proxy-networks: ["192.168.0.0/24"]      # 本机所在网段 ✓（不与家侧/集群/overlay 重叠 ✗）
+    tun-routes: []                          # 直连网段无需 pin ✓
+
+    # ── 让家侧借本机出网 ✓
+    enable-exit-node: true
+
+    # ── 原有：本机 → 家侧
+    no-listener: true
+    peers: ["tcp://<会合点>:11010"]
+    udp: true
+    exit-nodes: ["<家侧网关的 overlay 地址，如 10.144.0.2>"]
