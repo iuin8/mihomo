@@ -1,0 +1,57 @@
+# 端到端实验台：在本机用 Docker 复现「家侧网关 ↔ 移动客户端」的两种拓扑问题 ✓
+#
+# 设计要点 ✓：
+#   * **三段独立网段**，全部避开常见内网（不用 10.0/172.17/192.168 ✓），以免与真实环境混淆 ✓；
+#   * `lab-lan-client` = 模拟「客户端所在的局域网」（只有 client 与 lan-host 在里面 ✓）；
+#   * `lab-lan-home`   = 模拟「家侧局域网」（只有 gw 与 home-host 在里面 ✓）；
+#   * `lab-wan`        = 模拟 underlay（三个 easytier 节点都在这条上 ✓）；
+#   * 两端都用本仓库镜像（真实 fork 能力 ✓），不是官方镜像 ✓。
+name: easytier-lab
+
+networks:
+  lab-wan:      { ipam: { config: [{ subnet: 10.99.0.0/24 }] } }
+  lab-lan-home: { ipam: { config: [{ subnet: 10.99.1.0/24 }] } }
+  lab-lan-client: { ipam: { config: [{ subnet: 10.99.2.0/24 }] } }
+
+services:
+  # ── 会合点（家侧/客户端都连它 ✓）
+  rendezvous:
+    image: easytier/easytier:latest
+    container_name: lab-rendezvous
+    restart: unless-stopped
+    networks: [lab-wan]
+    command: ["--network-name", "lab-overlay", "--network-secret", "lab-secret-0123456789",
+              "--ipv4", "10.144.0.1", "--listeners", "tcp://0.0.0.0:11010", "udp://0.0.0.0:11010",
+              "--no-tun", "true"]
+
+  # ── 家侧网关（本仓库镜像 + TUN + 公告家里网段 ✓）
+  gw:
+    image: ghcr.io/iuin8/mihomo:latest
+    container_name: lab-gw
+    restart: unless-stopped
+    networks:
+      - lab-wan
+      - lab-lan-home
+    volumes: ["./gw.yaml:/root/.config/mihomo/config.yaml:ro"]
+
+  # ── 家侧局域网里的一台普通主机
+  home-host:
+    image: nginx:alpine
+    container_name: lab-home-host
+    networks: [lab-lan-home]
+
+  # ── 移动客户端（本仓库镜像 + TUN；模拟「本机」）
+  client:
+    image: ghcr.io/iuin8/mihomo:latest
+    container_name: lab-client
+    restart: unless-stopped
+    networks:
+      - lab-wan
+      - lab-lan-client
+    volumes: ["./client.yaml:/root/.config/mihomo/config.yaml:ro"]
+
+  # ── 客户端所在局域网里的一台普通主机（本次要访问的目标 ✓）
+  lan-host:
+    image: nginx:alpine
+    container_name: lab-lan-host
+    networks: [lab-lan-client]

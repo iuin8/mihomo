@@ -1,0 +1,35 @@
+# 家侧网关角色（对照 ../gateway/gateway.yaml ✓，只改必需项）
+mixed-port: 7890
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+proxies:
+  - name: et-gateway
+    type: easytier
+    network-name: lab-overlay
+    network-secret: lab-secret-0123456789
+    hostname: lab-gw
+    ipv4: 10.144.0.2/24
+    state-dir: /root/.config/mihomo/easytier
+    listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
+    peers: ["tcp://rendezvous:11010"]
+    enable-exit-node: true
+    proxy-networks: ["10.99.1.0/24"]      # ← 家里局域网 ✓
+    udp: true
+    mtu: 1380
+
+  # ⭐ 关键：一个「指向客户端」的出站 —— 它的 exit-nodes 让"非 overlay 目标"送到客户端 ✓
+  - name: et-to-client
+    type: easytier
+    network-name: lab-overlay
+    network-secret: lab-secret-0123456789
+    hostname: lab-gw-to-client
+    no-listener: true
+    peers: ["tcp://rendezvous:11010"]
+    udp: true
+    exit-nodes: ["10.144.0.3"]        # ← 客户端的 overlay 地址 ✓
+    prewarm: true
+rules:
+  - IP-CIDR,10.99.1.0/24,DIRECT
+  - IP-CIDR,10.99.2.0/24,et-to-client    # ⭐ 指向"带 exit-nodes 的出站"✓（指向 et-gateway 会落回本地 ✗）
+  - MATCH,DIRECT

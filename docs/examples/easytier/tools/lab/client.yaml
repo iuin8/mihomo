@@ -1,0 +1,23 @@
+# 移动客户端角色（对照 ../client-exit/workstation-et-fa.yaml ✓）
+mixed-port: 7891
+mode: rule
+log-level: info
+proxies:
+  - name: et-client
+    type: easytier
+    network-name: lab-overlay
+    network-secret: lab-secret-0123456789
+    hostname: lab-client
+    ipv4: 10.144.0.3/24
+    state-dir: /root/.config/mihomo/easytier
+    proxy-networks: []                    # ← 实验开关 A/B：要不要公告"本机所在网段"✓
+    enable-exit-node: true
+    peers: ["tcp://rendezvous:11010"]
+    udp: true
+    mtu: 1380
+    exit-nodes: ["10.144.0.2"]
+    # no-TUN 模式：不建 TUN ✓，由 guest 在用户态收发 ✓（Docker/macOS 可跑 ✓）
+    no-listener: true
+rules:
+  - IP-CIDR,10.99.1.0/24,et-client
+  - MATCH,DIRECT
