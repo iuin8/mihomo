@@ -50,5 +50,27 @@ proxies:
     # 需要"某个网段走内核直通"时才填，例如 tun-routes: ["192.168.1.0/24"]
     # 注意：本机所在网段与家里重叠时不要 pin，否则会抢本机局域网流量。
 
+  # ⭐ 出口拨号线：让家侧能"借某个客户端出网"✓（2026-10-07 实测补齐 ✓）
+  #   · 只有这个出站需要 exit-nodes ✓；规则里指向它的目标会**真的进 overlay** ✓
+  #   · 若指向没有 exit-nodes 的出站（如上面的网关本体）✗ → 拨号落回本地 ✓
+  #     实测报 `network is unreachable` ✓ —— 这个错误串就是判据 ✓
+  - name: et-client
+    type: easytier
+    network-name: "<改这里：与客户端一致>"
+    network-secret: "<改这里：与客户端一致>"
+    no-listener: true                 # 它只是拨号线，不需要自己的监听 ✓
+    udp: true
+    prewarm: true                     # 没有它实例不会被拉起 ✓ → overlay 里看不到 ✓（实测 ✓）
+    exit-nodes: ["<改这里：客户端的 overlay 地址，如 10.144.0.6>"]
+    peers: ["tcp://<改这里：会合点>:11010"]
+
+dns:
+  enable: true
+  # ⭐ 国外域名的解析也走客户端 ✓ —— 否则家侧（国内）DNS 会返回**被污染的 IP** ✗，
+  #    然后客户端照着假 IP 去连 → `i/o timeout` ✓（实测：google 被解析成 185.45.5.35 ✗）
+  #    这个 `#<出站名>` 写法与集群 DNS 那条完全一样 ✓（见 client/subscription.yaml ✓）
+  nameserver-policy:
+    "geosite:geolocation-!cn": ["https://1.1.1.1/dns-query#et-client"]
+
 rules:
   - MATCH,DIRECT

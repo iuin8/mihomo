@@ -60,6 +60,11 @@ services:
       # · 名字**显式固定**：否则默认是 <project>_gateway-state ✗，改一次项目名就换卷 ✓（今天刚改过 ✗）
       # · `docker compose down -v` / `docker volume prune` 会删掉它 ✗ → 只会换一个新标识 ✓，不会断连 ✓
       - gateway-state:/root/.config/mihomo/easytier
+      # Geo 数据（GeoIP/GeoSite）必须**持久化** ✗✓ —— 否则容器每次重建都要联网下载 ✓，
+      # 国内拉不回 GitHub ✗ → `can't download MMDB` → `fatal` 重启循环 ✓（2026-10-07 实测 ✓）
+      # 首次准备：把 release 里这两个文件放到 ./geoip/ ✓（经代理下最快 ✓）
+      - ./geoip/geoip.metadb:/root/.config/mihomo/geoip.metadb:ro
+      - ./geoip/GeoSite.dat:/root/.config/mihomo/GeoSite.dat:ro
 
     logging:
       driver: json-file
