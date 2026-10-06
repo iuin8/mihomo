@@ -1,118 +1,72 @@
-# 客户端订阅模板（内核内置 easytier 出站）—— **别人拿到就能直接用，不需要改任何东西** ✓
+# ═══════════════════════════════════════════════════════════════════════════
+# EasyTier 客户端订阅（通用模板 ✓ 可直接分享给别人 ✓）
 #
-# ⚠️ 本文件是**公开模板**：`network-secret` 是占位符 ✗。真正发出去的订阅文件 = 把这一处换成真密钥 ✓，
-#    其余一个字段都不用动 ✓（怎么托管见文件末尾）。
+# 用法 ✓：把 <...> 占位符换成你自己的值 ✓（网络名/密钥/会合点/网段 ✓），
+#         在 Clash Verge 里「导入 → 本地文件/URL」即可 ✓。
 #
-# 为什么别人不用改配置 ✓（这是设计过的，不是碰巧）：
-#   * `ipv4` **不写** → overlay 内置 **DHCP 自动分配**一个唯一地址 ✓✓
-#     （实现与测试见 mihomo 仓 component/easytier/toml.go: `DHCP || IPv4 为空 → dhcp = true`，
-#      对应用例 TestRenderTOMLDefaultsDHCPWhenIPv4Omitted ✓）。
-#     手填地址反而危险：两台机器填同一个会互相破坏 ✗（SOP §6.3 实测过）。
-#   * `hostname` / `instance-name` **不写** → 用对方自己的默认名 ✓，天然不重复 ✓。
-#   * `peers` / `rules` / 网络名 **大家本来就相同** ✓（都是来连同一个家 ✓）。
-#   * `interface-name` **故意不写** ✗：写 `en0` 会让 Linux 用户直接起不来 ✗，写 `eth0` 会让 macOS 用户起不来 ✗。
-#     只有"自己机器上也跑着 mihomo 的 TUN、导致底层连不上会合点"时才需要补 —— 见下方可选一行 ✓。
-#
-# 内核要求：`type: easytier` 是**上游能力** ✓，任何较新 mihomo 都支持 ✓。
-#   唯一例外：**macOS + 服务模式**（root/TUN）下 wazero 的 JIT 页会被系统判非法、内核被 CODESIGNING 杀掉 ✗，
-#   那种机器才需要本 fork 的内核（解释器运行时 ✓，见 SOP §6.4/§6.8/§6.9）。
-#   对方若用官方 CVR/内核：让它**别用特权服务**（用户态/侧载）即可 ✓，或换 Linux/Windows ✓。
-#
-# 并入方式（二选一，**段名不一样，别混** ✗）：
-#   A) 本 fork：把本文件当「订阅/本地配置」，与机场订阅一起**多订阅合并** → 用下面的原生段名 ✓
-#      （合并流水线只认 proxies / proxy-providers / rule-providers / proxy-groups / rules）
-#   B) 上游 CVR：拿它当 **Merge 类型 profile** → 段名换成 `prepend-proxies:` / `prepend-rules:` ✓
+# ⚠️ 三条关键规则（都已在下面写好 ✓）：
+#   ① 会合点必须 DIRECT ✗ —— 否则 underlay 被自己的 TUN 抓走 → overlay 永远建不起来 ✓
+#      （这是实测踩到的根因：TUN 开着 + route-exclude 为空 → 本机节点从未进网 ✓）
+#   ② overlay 网段也要 DIRECT ✗ —— 交给 easytier 自己的 TUN 处理 ✓，避免回环 ✓
+#   ③ 家侧/集群网段指向对应出站 ✓ —— 这才是"按目标选出口"的地方 ✓
+# ═══════════════════════════════════════════════════════════════════════════
+
+mixed-port: 7897
+mode: rule
+log-level: info
+
+dns:
+  enable: true
+  # 集群内域名走集群出站去问 CoreDNS ✓（不需要集群 DNS 的删掉这段 ✓）
+  nameserver-policy:
+    "+.cluster.local": ["<CoreDNS ClusterIP>#et-k8s"]
+    "+.svc": ["<CoreDNS ClusterIP>#et-k8s"]
 
 proxies:
-  - name: et-core
+  # ── 家侧（同时作为「出口节点」：家侧可以借本机出网 ✓）
+  - name: et-home
     type: easytier
-    network-name: private-overlay
-    network-secret: "<这里填真密钥再发出去>"    # ⚠️ 唯一的"共享凭据" ✓；别提交进公开仓库 ✗
-    # ipv4: 留空 = 自动 DHCP ✓（对方无需手填，也不会撞地址 ✓）
-    no-listener: true                          # 客户端只需出站
-    peers: ["tcp://129.204.8.61:11010"]        # 会合点（家侧无公网时靠它 ✓，见 ../rendezvous/）
-    udp: true                                  # 需要 UDP 走隧道就保留 ✓
-    # 出口节点（可选 ✓）：目标不在内网网段、但**只有到家侧才通**时用 ✓
-    # 典型现场：内网服务经**端口映射**发布到公网 → 域名解析出**公网 IP** ✓，
-    # 隧道里没有到公网的路 ✗（表现为 502 ✓）。填**家侧网关的 overlay 地址**：
-    # exit-nodes: ["10.144.0.2"]
-    # interface-name: en0                      # 【可选·通常不要填】✗
+    network-name: "<网络名，如 private-overlay>"
+    network-secret: "<强密钥，与家侧一致>"
+    peers: ["tcp://<会合点>:11010"]
+    udp: true
+    mtu: 1380
+    tun: true                          # ← 建宿主 TUN：让「家侧访问本机所在网段」成立 ✓（需 root ✓）
+    ipv4: "<本机的 overlay 地址，如 10.144.0.6/24>"   # TUN 模式必填且全网唯一 ✗✓
+    proxy-networks: ["<本机所在网段，如 192.168.0.0/24>"]  # ← 公告本机网段 ✓（家侧才找得到 ✓）
+    enable-exit-node: true             # ← 让家侧能借本机出网 ✓
+    exit-nodes: ["<家侧网关的 overlay 地址，如 10.144.0.2>"]  # 本机→家侧的非 overlay 目标落这里 ✓
+    prewarm: true                      # ← 没有它实例不会被拉起 ✗✓（实测：overlay 里看不到本机 ✓）
+    listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
 
-  # ⭐ 第二台网关（可选 ✓）：例如集群里也跑了一个网关（见 ../gateway/k8s.yaml ✓）
-  #    关键点 ✓：**每条出站各自带 exit-nodes** ✓ → 「拨哪条隧道就落在哪台网关」✓，互不干扰 ✓。
+  # ── Kubernetes（只用来访问集群内部 ✓）
   - name: et-k8s
     type: easytier
-    network-name: private-overlay            # ← 同上，必须与家侧/会聚点一致 ✓
-    network-secret: "<与家侧一致>"
-    # ipv4: 留空 ✓（保持 DHCP ✓；手填容易与别的节点撞 ✗）
-    no-listener: true
-    peers: ["tcp://<会合点公网IP>:11010"]
+    network-name: "<网络名>"
+    network-secret: "<强密钥>"
+    peers: ["tcp://<会合点>:11010"]
     udp: true
-    exit-nodes: ["<第二台网关的 overlay 地址，如 10.144.0.30>"]
-    #   ↑ 仅当对方"能连上 overlay 但底层连不稳/连不上会合点"，且它自己也在跑 mihomo 的 TUN 时：
-    #     填它自己的物理网卡 ✓（macOS `en0`、Linux 常见 `eth0`/`wlan0`）。填错会直接起不来 ✗。
+    mtu: 1380
+    no-listener: true
+    prewarm: true
+    exit-nodes: ["<集群网关的 overlay 地址，如 10.144.0.30>"]
 
-# 代理页的卡片来自「分组」而不是出站本身 —— 少了这段会以为配置没生效 ✗
 proxy-groups:
-  - name: 🏠 内网
+  - name: 🏠 家侧
     type: select
-    proxies: [et-core, DIRECT]      # 手动切换；不需要健康检查（避免被判死）
+    proxies: [et-home, DIRECT]
+  - name: ☸️ 集群
+    type: select
+    proxies: [et-k8s, DIRECT]
 
 rules:
-  # 本片段会被**前置插入**（multi_merge::merge_rules 用 insert(0, …)），因此优先于订阅里的 MATCH/GEOIP ✓。
-  # ⚠️ overlay 网段本身也要走隧道，否则会落到 MATCH 直连（表现为 502，极易误判"虚拟 IP 不可达"✗）
-  - IP-CIDR,10.144.0.0/24,🏠 内网
-  # 家里内网网段（**大家相同** ✓）。注意：与本机所在网段重叠的那条不要写 ✗
-  #   —— 例如本机在 10.0.0.0/24 时，别把 10.0.0.0/24 写进来，否则会把本机局域网流量吸进隧道 ✗
-  - IP-CIDR,10.0.0.0/24,🏠 内网
-  - IP-CIDR,10.0.1.0/24,🏠 内网
-  - IP-CIDR,10.0.16.0/24,🏠 内网
-  # - DOMAIN-SUFFIX,example.lan,🏠 内网     # ← 配合上面的 hosts/dns 一起启用 ✓
+  # ①② 必须先于一切 ✗✓ —— 否则 TUN 会把 overlay 自己的流量抓回 mihomo ✓
+  - IP-CIDR,<会合点 IP>/32,DIRECT,no-resolve
+  - IP-CIDR,<overlay 网段，如 10.144.0.0/24>,DIRECT,no-resolve
 
-# ── 集群内部域名（可选 ✓，但**集群场景必需** ✗）：公网 DNS 查不到 *.cluster.local ✓，
-#    所以必须**显式指定**「问谁」✓ —— 出口节点只解决"包怎么走"✓，不解决"问谁"✗。
-#    把 <集群域名> 与 <CoreDNS ClusterIP> 换掉即可（取法见 ../gateway/k8s.yaml 头部 ✓）：
-#
-# dns:
-#   enable: true
-#   nameserver-policy:
-#     "+.<集群域名>": ["<CoreDNS ClusterIP>#et-k8s"]     # ← 亦可写成 "+.cluster.local" ✓
-#     "+.svc":        ["<CoreDNS ClusterIP>#et-k8s"]
-#
-# 并且要在 rules 里补一条（**fake-ip 模式下这条是决定性的** ✗✓ —— IP 规则匹配不到假 IP ✓）：
-#   - DOMAIN-SUFFIX,<集群域名>,et-k8s
-#   - IP-CIDR,<Pod CIDR>,et-k8s
-#   - IP-CIDR,<Service CIDR>,et-k8s
-#
-# 内网域名（可选 ✓）：按名字访问内网时，**取消注释**下面两块里的一块
-#
-# 位置 ✓：本 fork 的合并对 dns / hosts（以及 tun / profile）是**深合并**的
-#    （multi_merge.rs: DEEP_MERGE_FIELDS = ["dns", "tun", "hosts", "profile"] ✓），
-#    所以写在**任何一个**被合并的 profile 里都会生效 ✓，不必放主 profile。
-#    其余顶层键（mixed-port / mode / log-level 之类 ✗）只取合并列表第一位那个 profile ✓。
-#
-# 做法 A（少量名字，零依赖 ✓ 推荐先用）：
-# hosts:
-#   nas.example.lan: 10.0.1.5
-#
-# 做法 B（整个后缀 → 交给内网 DNS，并让查询也经 et-core ✓）：
-# dns:
-#   enable: true
-#   nameserver-policy:
-#     "+.example.lan": ["10.0.0.1#et-core"]     # 内网 DNS 地址 + 经 et-core 出站 ✓
-#
-# 无论哪种，**都要**再加一条域名规则（否则连接不进隧道 ✗）——下面 rules 里已备好，取消注释即可 ✓。
+  # ③ 按目标选出口 ✓
+  - IP-CIDR,<家侧内网网段，如 10.0.0.0/24>,🏠 家侧
+  - IP-CIDR,<集群 Service/Pod 网段>,☸️ 集群
+  - DOMAIN-SUFFIX,cluster.local,☸️ 集群
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 发出去之前：把 `network-secret` 换成真值，然后按下面托管 ✓
-#
-# ① 托管方式（择一）：
-#    * **私有仓库 / 自建静态服务**（推荐 ✓）：把文件放上去，用它的 raw 直链；
-#      以后只改这一份、所有人重新载入即可 ✓（这才是"订阅"该有的样子 ✓）。
-#    * **secret gist**：能直接给 raw 直链 ✓，但只是"URL 难猜" ✗，不算真私有 ✓——能接受这个风险再用 ✓。
-#    * **直接发文件**：最省事 ✓，但每次更新都要重发 ✓。
-# ② 拿到的人只需三步：CVR → 订阅/配置 → 粘贴直链导入 ✓ → 选「🏠 内网」分组 ✓ → 访问家里网段 ✓。
-#    预期结果：内核日志出现 `[EasyTier](et-core) instance ... running` ✓；
-#    代理页能看到 et-core 并且有 IP（DHCP 自动分配的 ✓）。看不到 IP 就把日志发来 ✓。
-# ③ 密钥即凭据 ✗：**链接等于钥匙** ✓，只发给你信任的人 ✓；一旦外泄 → 在所有节点同时换掉
-#    `network-secret` 即可作废旧钥匙 ✓（家侧 config + 各客户端一起改 ✓）。
+  - MATCH,DIRECT

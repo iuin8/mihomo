@@ -824,6 +824,37 @@ EasyTier 用 **(hostname, instance-name)** 标识节点 ✓；`instance-name` mi
 所以"两条隧道都要能用"的正确写法是：**规则直接指向出站** ✓（`IP-CIDR,…,et-home` / `DOMAIN-SUFFIX,…,et-k8s` ✓），
 **分组只用于手动切换** ✓。
 
+**TUN 回环：客户端节点"看起来起了、其实根本没进网"** ✗✓（2026-10-07 实测根因 ✓，最隐蔽的一个 ✓）
+
+**症状** ✓：客户端（CVR 服务模式 ✓）里 easytier 实例 `running` ✓、TUN 设备也建了 ✓、`ping <家侧 overlay 地址>` **还通** ✓ ——
+但**家侧永远看不到这个节点** ✗，任何从家侧发起的访问都超时 ✓。
+
+**为什么 ping 会"通"** ✗✓：easytier 的 TUN 拥有整个 overlay 网段（`10.144.0.6/24` ✓）→
+本机 ping `10.144.0.2` 时包**直接进了 easytier 的 TUN** ✓，由 guest 自己应答 ✓ —— **这是假阳性，不能当作"在网里"的证据** ✗✓。
+
+**真正的根因** ✓✓：**mihomo 自己的 TUN** 是 `auto-route: true` 且 **`route-exclude-address` 为空** ✗ →
+它把**一切**流量吸进 mihomo ✓，**包括 overlay 自己的 `10.144.0.0/24` 与 easytier 去会合点的 underlay** ✗ →
+easytier 的握手流量被自己的 TUN 抓回去 ✓ → **隧道永远建不起来** ✓。
+
+**为什么以前能用** ✓：老配置里有 `tun.route-exclude-address: [10.0.0.0/8, 192.168.0.0/16, …]` ✓ → 顺带把 overlay 网段排除了 ✓。
+
+**通用修法（推荐 ✓，且能进订阅 ✓）** ✓✓：**用规则代替"排除路由"** ✓ —— TUN 抓走的流量**会先经过规则** ✓，
+所以只要把这两条放在**最前面** ✓：
+
+```yaml
+rules:
+  - IP-CIDR,<会合点 IP>/32,DIRECT,no-resolve        # underlay 必须直连 ✗ 否则被自己的 TUN 抓走 ✓
+  - IP-CIDR,<overlay 网段>/24,DIRECT,no-resolve     # overlay 自己的网段交给 easytier 的 TUN ✓
+  # …其余规则（家侧网段 → 出口出站 等）
+```
+
+**为什么不用 `route-exclude-address`** ✗✓：CVR 的 `constants.rs` 把它列为 **`tun::GUI_KEYS`** ✓
+（App 对话框保存的字段 ✓）→ **写进 profile 也会被 App 自身设置覆盖** ✗ → **不适合做"分享给别人的订阅"** ✗✓；
+而**规则是订阅的一部分** ✓✓，所以通用方案必须走规则 ✓。
+
+**判据（唯一可信的 ✓）** ✓✓：**旁观者节点表里必须出现客户端的 overlay 地址** ✓ ——
+`ping` ✗、`实例 running` ✗、`TUN 已建` ✗ 都不算证据 ✓✓。
+
 **诊断法：架一个"旁观者节点"读整张网** ✓✓（2026-10-03 实战有效 ✓）
 
 排查"某个出站/节点不通"时 ✓，最快的一步不是翻日志 ✗，而是**直接从 overlay 里看 peer 列表** ✓ —— 一条命令列出
