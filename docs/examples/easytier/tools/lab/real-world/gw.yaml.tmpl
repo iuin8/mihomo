@@ -1,0 +1,45 @@
+# 家侧网关模板（结构取自生产 home.yaml ✓，值全部占位 ✓）
+mixed-port: 7890
+allow-lan: true
+bind-address: '*'
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+proxies:
+  # ① 家侧网关本体：公告家里网段 ✓，供"本机→家侧"使用 ✓
+  - name: et-gateway
+    type: easytier
+    network-name: ${NETWORK_NAME}
+    network-secret: ${NETWORK_SECRET}
+    hostname: ${LAB_NAME}-gw
+    instance-name: ${LAB_NAME}-gw
+    ipv4: ${GW_IPV4}
+    state-dir: /root/.config/mihomo/easytier
+    listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
+    peers: ["tcp://${RENDEZVOUS_HOST}:${RENDEZVOUS_PORT}"]
+    enable-exit-node: true
+    proxy-networks: ["${HOME_LAN}"]
+    udp: true
+    mtu: 1380
+    tun: ${USE_TUN}
+    prewarm: true
+    tun-routes: []
+  # ② 家侧访问"客户端所在网段"的拨号线 ✗✓ —— **只有它带 exit-nodes** ✓
+  #    ⚠️ 规则必须指向它 ✗：指向 et-gateway 会落回本地（network is unreachable ✗）
+  - name: et-to-client
+    type: easytier
+    network-name: ${NETWORK_NAME}
+    network-secret: ${NETWORK_SECRET}
+    hostname: ${LAB_NAME}-gw-to-client
+    no-listener: true
+    peers: ["tcp://${RENDEZVOUS_HOST}:${RENDEZVOUS_PORT}"]
+    udp: true
+    # 拨号线不需要自己的 TUN，也不需要 prewarm ✓（它只是家侧的出站 ✓）
+    exit-nodes: ["${CLIENT_OVERLAY_IP}"]
+rules:
+  - IP-CIDR,${HOME_LAN},DIRECT
+  # ⭐ 必须早于任何 private/GEOIP 直连规则 ✗（该网段本身就是 RFC1918 ✓）
+  - IP-CIDR,${CLIENT_LAN},et-to-client,no-resolve
+  - GEOIP,private,DIRECT,no-resolve
+  - MATCH,DIRECT

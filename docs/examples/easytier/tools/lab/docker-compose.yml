@@ -32,7 +32,7 @@ services:
     networks:
       - lab-wan
       - lab-lan-home
-    volumes: ["./gw.yaml:/root/.config/mihomo/config.yaml:ro"]
+    volumes: ["${GW_CONFIG:-./gw.yaml}:/root/.config/mihomo/config.yaml:ro"]
 
   # ── 家侧局域网里的一台普通主机
   home-host:
@@ -48,7 +48,7 @@ services:
     networks:
       - lab-wan
       - lab-lan-client
-    volumes: ["./client.yaml:/root/.config/mihomo/config.yaml:ro"]
+    volumes: ["${CLIENT_CONFIG:-./client.yaml}:/root/.config/mihomo/config.yaml:ro"]
 
   # ── 客户端所在局域网里的一台普通主机（本次要访问的目标 ✓）
   lan-host:

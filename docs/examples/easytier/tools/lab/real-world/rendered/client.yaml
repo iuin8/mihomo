@@ -1,0 +1,28 @@
+# 移动客户端模板（结构取自生产 mac.yaml ✓）
+mixed-port: 7891
+mode: rule
+log-level: info
+proxies:
+  - name: et-client
+    type: easytier
+    network-name: lab-overlay
+    network-secret: lab-secret-please-change
+    hostname: etlab-client
+    ipv4: 10.144.0.6/24
+    state-dir: /root/.config/mihomo/easytier
+    tun: false
+    # 只做"被家侧访问"时**不需要**公告本机网段 ✓（exit-nodes 已覆盖拨号方向 ✓）；
+    # 若要"家侧局域网里的机器"也能访问本机网段 ✗ → 才需要打开下面这行 ✓
+    proxy-networks: []
+    tun-routes: []
+    enable-exit-node: true
+    peers: ["tcp://rendezvous:11010"]
+    udp: true
+    mtu: 1380
+    exit-nodes: ["10.144.0.2"]
+    no-listener: true
+rules:
+  - IP-CIDR,10.99.1.0/24,et-client,no-resolve
+  # ⭐ 本机侧同样要**早于**私有段直连 ✓ —— 否则送进来的流量会被本地规则抢走 ✗
+  - GEOIP,private,DIRECT,no-resolve
+  - MATCH,DIRECT
