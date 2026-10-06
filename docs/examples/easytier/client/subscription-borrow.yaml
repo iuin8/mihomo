@@ -1,0 +1,52 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 角色 A ·「借出口」—— 我要把本机 / 本局域网的**国外流量**，从朋友那台机器出去
+#
+# 傻瓜式用法 ✓：装好 Clash（Clash Verge 等）→ 导入这份 → 只改 3 个 <占位符> ✓
+#   <网络名> / <密钥> / <会合点>  ← **和朋友给你的那份完全一样** ✓（同一个 overlay ✓）
+#   <出口方的 overlay 地址>       ← 朋友告诉你一次 ✓（例如 10.144.0.6 ✓）
+#
+# 原理 ✓：只有**带 exit-nodes 的出站**才会把"非 overlay 目标"送去对端 ✓；
+#         指向别的出站（甚至本机网关本体）✗ → 拨号落回本地 ✓，实测报 `network is unreachable` ✓。
+# ═══════════════════════════════════════════════════════════════════════════
+
+mixed-port: 7890
+allow-lan: true          # 想让局域网其它机器也借这条线时打开 ✓（它们把本机当代理用 ✓）
+bind-address: '*'
+mode: rule
+log-level: info
+
+dns:
+  enable: true
+  # ⭐ 国外域名的解析也**经出口方**去做 ✓ —— 否则本侧（国内）DNS 返回**污染 IP** ✗，
+  #    出口方照着假 IP 去连 → `i/o timeout` ✓（实测：google 被解析成 185.45.5.35 ✗）
+  nameserver-policy:
+    "geosite:geolocation-!cn": ["https://1.1.1.1/dns-query#et-exit"]
+
+proxies:
+  - name: et-exit
+    type: easytier
+    network-name: "<网络名，如 private-overlay>"
+    network-secret: "<强密钥，与对方一致>"
+    peers: ["tcp://<会合点>:11010"]
+    udp: true
+    mtu: 1380
+    no-listener: true                       # 本机只做拨号，不需要被拨入 ✓
+    prewarm: true                           # 没有它实例不会被拉起 ✓ → overlay 里看不到本机 ✓（实测 ✓）
+    exit-nodes: ["<出口方的 overlay 地址，如 10.144.0.6>"]   # ⭐ 关键的一行 ✓
+
+proxy-groups:
+  - name: 🌍 走朋友的出口
+    type: select
+    proxies: [et-exit, DIRECT]
+
+rules:
+  # 回环防护 ✗✓：本侧 overlay 网段与会合点绝不能被本机自己的 TUN 抓走 ✓（否则隧道建不起来 ✓）
+  - IP-CIDR,<overlay 网段，如 10.144.0.0/24>,DIRECT,no-resolve
+  - IP-CIDR,<会合点 IP>/32,DIRECT,no-resolve
+
+  # 本侧局域网直连 ✓
+  - IP-CIDR,<本侧局域网，如 10.0.0.0/24>,DIRECT,no-resolve
+  # 国外走出口 ✓（国内直连 ✓ 按需替换成你的规则集 ✓）
+  - GEOSITE,cn,DIRECT
+  - GEOIP,cn,DIRECT
+  - MATCH,🌍 走朋友的出口

@@ -1,0 +1,43 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 角色 B ·「提供出口」—— 我这台机器当朋友们的出口（他们借我的线路出国）
+#
+# 傻瓜式用法 ✓：装好 Clash → 导入这份 → 改 4 个占位符 ✓
+#   <网络名> / <密钥> / <会合点>   ← 和朋友那份一样 ✓
+#   <我这台的 overlay 地址>        ← **必须固定且唯一** ✓（告诉朋友的就是它 ✓）
+#
+# ⚠️ 前提 ✓：本机 Clash 需要**服务模式/管理员**权限 ✓（要建 TUN ✓ + `enable-exit-node` ✓）
+# ⚠️ 本机所在网段**只有你想让朋友访问时**才写进 proxy-networks ✓（纯做出口可以不写 ✓）
+# ═══════════════════════════════════════════════════════════════════════════
+
+mixed-port: 7897
+mode: rule
+log-level: info
+
+proxies:
+  - name: et-me
+    type: easytier
+    network-name: "<网络名>"
+    network-secret: "<强密钥>"
+    peers: ["tcp://<会合点>:11010"]
+    udp: true
+    mtu: 1380
+    tun: true                               # ⭐ 让本机成为 L3 端点 ✓（也才能建 TUN 把流量交给内核 ✓）
+    ipv4: "<我这台的 overlay 地址，如 10.144.0.6/24>"   # ⭐ TUN 模式必填、**全网唯一** ✓（朋友要填这个地址 ✓）
+    enable-exit-node: true                  # ⭐ 允许别人把"出网流量"交给我 ✓
+    prewarm: true                           # ⭐ 没有它实例不会被拉起 ✓ → 别人看不到你 ✓（实测 ✓）
+    listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]
+    proxy-networks: []                      # ← 想让朋友访问本机所在局域网时，填 ["<本机网段>"] ✓
+    tun-routes: []
+
+proxy-groups:
+  - name: 🚀 默认
+    type: select
+    proxies: [DIRECT]
+
+rules:
+  # 回环防护 ✗✓：**必须最前** ✓ —— 否则本机自己的 TUN 会把 overlay 网段与会合点抓走 ✓
+  #（这就是"实例 running 却进不了网"的根因 ✓，实测 ✓）
+  - IP-CIDR,<overlay 网段，如 10.144.0.0/24>,DIRECT,no-resolve
+  - IP-CIDR,<会合点 IP>/32,DIRECT,no-resolve
+  - IP-CIDR,<本机所在网段，如 192.168.0.0/24>,DIRECT,no-resolve   # ⭐ 从 overlay 送进来的包也才不会被塞进代理 ✓
+  - MATCH,DIRECT
