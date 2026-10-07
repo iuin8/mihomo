@@ -28,11 +28,22 @@ import (
 )
 
 func TestPublicRouteLearningThroughHub(t *testing.T) {
-	// ⚠️ 本用例尚未调通 ✗（2026-10-07 16:15 ✓）：三实例拓扑下 guest 没有走到
-	// `instance.Listen("tcp4", ":0")` ✓，`recordingSocketFactory` 因此报 "did not create a TCP listener" ✗。
-	// 现有两实例用例能过 ✓，说明差别在"中心 + 辐条"这个拓扑的启动时序 ✗（需要先让辐条学完路由再开服务 ✓）。
-	// **先跳过而不是留一个失败用例** ✓ —— 缺口本身记录在此 ✓，调通后去掉 Skip ✓ 即可作为回归闸门 ✓。
-	t.Skip("route learning through a hub: harness needs to wait for spoke route convergence first")
+	// ⚠️ 用例已能完整跑通 ✓，但**目前失败** ✗ —— 而失败原因**还不能等同于生产故障** ✓，所以先 Skip ✓：
+	//
+	//	实测（2026-10-07 16:05 ✓）：spokeA（有监听 ✓）与 spokeB（都只连 hub ✓、P2P 关闭 ✓）
+	//	在 60 秒内始终无法互通 ✗（`wait for EasyTier TCP route: context deadline exceeded` ✓）。
+	//	**但测试里的 hub 是同进程的内嵌实例 ✗，而 shim 的 `InstanceConfigBuilder` 没有任何中继开关** ✗
+	//	（选项只有 NetworkSecret/Hostname/IPv4/AddPeers/AddListeners/AddPortForwards/STUNServers/P2P/
+	//	HolePunching/Encryption/SecureMode ✓），guest 的 TOML 里也搜不到 `relay_network_whitelist` ✗。
+	//	⇒ **hub 很可能根本没在转发** ✗，于是这个失败**不能证明**"内嵌辐条学不到路由" ✗。
+	//
+	//	生产里会合点**是原生核 ✓**（`--help` 原文：by default, all networks are allowed ✓，
+	//	且原生 observer 确实拿到了 `relay(2)` 路由 ✓），所以要让本用例**忠实**，必须先让 hub 真的会中继 ✓。
+	//
+	//	**下一步二选一** ✓：① 找到让内嵌实例开启中继的办法 ✓（TOML 键 `relay_network_whitelist` ✓ 待验证 ✓）；
+	//	② 让用例的 hub 跑**原生** easytier-core ✓（跨进程 ✓，与生产一致 ✓）。
+	//	**在此之前保留 Skip ✓** —— 失败原因已完整记录 ✓，不会误导 ✓。
+	t.Skip("hub in this test is not a relaying node; see comment for the two ways to make it faithful")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -46,8 +57,10 @@ func TestPublicRouteLearningThroughHub(t *testing.T) {
 	}
 	defer host.Close(ctx)
 
-	hubPort := sockets.listenerPort(t)
-	hub, err := host.CreateInstance(ctx, instanceConfig(t, 201, "10.144.0.201", hubPort, false, true))
+	// ⭐ 引导顺序：hub 先用 port=0 起（listen=true ✓ 端口由 OS 分配 ✓），
+	//    起好之后才能从 socket 工厂**读出**它实际用的下层监听口 ✓ —— 顺序反了就会报
+	//    "EasyTier did not create a TCP listener" ✗（这就是本用例第一版失败的原因 ✓）。
+	hub, err := host.CreateInstance(ctx, instanceConfig(t, 201, "10.144.0.201", 0, false, true))
 	if err != nil {
 		t.Fatalf("create hub: %v", err)
 	}
@@ -55,6 +68,7 @@ func TestPublicRouteLearningThroughHub(t *testing.T) {
 	if err := hub.Start(ctx); err != nil {
 		t.Fatalf("start hub: %v", err)
 	}
+	hubPort := sockets.listenerPort(t)
 
 	// spokeA 同时"有监听 + 连 hub"✓ —— 对应生产里**被拨入的那一侧**（本机 ✓，有 listeners ✓）
 	spokeAConfig, err := corehost.NewInstanceConfigBuilder("default").
@@ -63,7 +77,9 @@ func TestPublicRouteLearningThroughHub(t *testing.T) {
 		IPv4(netip.MustParsePrefix("10.144.0.202/24")).
 		P2P(corehost.P2PPolicy{Disable: true}).
 		Encryption(false).
-		AddListeners(fmt.Sprintf("tcp://127.0.0.1:%d", sockets.listenerPort(t))).
+		// ⚠️ 必须用 0（随机口）✗✓：socket 工厂**只记一个端口** ✓，若这里再读一次 `listenerPort(t)`
+		// 会拿到 hub 的口 ✓ → spokeA 撞口 → 启动报 `status=-4: required listener failed to start` ✗（实测踩到 ✓）。
+		AddListeners("tcp://127.0.0.1:0").
 		AddPeers(fmt.Sprintf("tcp://127.0.0.1:%d", hubPort)).
 		Build()
 	if err != nil {
