@@ -8,7 +8,33 @@
 
 > **关于章节编号** ✓：正文章节 0–4 是操作路径 ✓；**§5 已随退役内容（用户态网关）删除** ✗ ——
 > 但 §6 及其 20 个子节（§6.1–§6.20）被全文与其它文档交叉引用 ✓，改号会产生 20+ 处引用改动且零收益 ✗，
-> 故**保持 §6 编号不变** ✓。查内容请用 `grep -n '^### 6\.'` 或本页搜索 ✓。
+> 故**保持 §6 编号不变** ✓。查内容请用 `grep -n '^### 6.15 内嵌核排障：先打开 debug，再谈别的 ✓
+
+**故障现象** ✓：家侧（或任一侧）用 **mihomo 内嵌的 easytier 出站**时 ✓，
+节点进度只停在"连上会合点"✗，`et-mac` 之类的出口出站一律 `504` ✓，
+日志错误是 `network is unreachable` ✗ 或 `context canceled` ✗；
+**而同一台机器上跑原生 `easytier-core` 却能看到全部节点** ✓✓。
+
+**第一步永远是打开 debug** ✓ —— fork 已把 guest 的事件流接到 mihomo 日志 ✓（`adapter/outbound/easytier.go` ✓）：
+```yaml
+log-level: debug        # ← 关键的一行 ✓；为 info 时这些行不会出现 ✗
+```
+```bash
+docker logs --since 2m <容器> | grep -aE '\[EasyTier\]'
+```
+
+**判读** ✓：
+
+| 看到 | 含义 |
+| --- | --- |
+| 只有 `listener_added` / `connecting` / `peer_connection_added` / `peer_added`（1 条） | 只连上会合点 ✓，**没有任何路由公告** ✗ → 路由表为空 ✓ |
+| 出现 `route` / `peer_center` / 其他 peer 的 `peer_added` | 路由已学到 ✓，问题在别处 ✓ |
+| `ErrorNoOverlayRoute` / `ErrorPathNotReady` → `ENETUNREACH` | **guest 自报"没有 overlay 路由"** ✓（`internal/engine/dataplane.go:493` ✓）|
+
+**常用对照** ✓：`ET_CONSOLE_LOG_LEVEL` **无效** ✗（开关只在 mihomo 侧 ✓）；
+`stun.easytier.cn` 只有空 TXT 是常态 ✓（另有 `stun.225284.xyz` 正常 ✓），**不要据此判定 STUN 坏了** ✗。
+
+## 6\.'` 或本页搜索 ✓。
 
 ## 0. 会合点（只做一次，约 5 分钟）
 
