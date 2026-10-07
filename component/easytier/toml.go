@@ -16,17 +16,23 @@ type requiredFlag struct {
 
 // Config is the structured EasyTier outbound configuration rendered to TOML.
 type Config struct {
-	NetworkName         string
-	NetworkSecret       string
-	Hostname            string
-	IPv4                string
-	DHCP                bool
-	Peers               []string
-	Listeners           []string
-	NoListener          *bool
-	MappedListeners     []string
-	ExitNodes           []string
-	ProxyNetworks       []string
+	NetworkName     string
+	NetworkSecret   string
+	Hostname        string
+	IPv4            string
+	DHCP            bool
+	Peers           []string
+	Listeners       []string
+	NoListener      *bool
+	MappedListeners []string
+	ExitNodes       []string
+	ProxyNetworks   []string
+	// FORK(easytier-stun): 显式控制 STUN 列表 ✗✓（见 RenderTOML 里的默认行为说明 ✓）
+	STUNServers []string
+	// FORK(easytier-stun): nil = 用 fork 的安全默认（**关掉 v6 列表** ✓）；
+	// 指向空切片 = 显式关掉 v4；非空 = 替换 v4 列表 ✓
+	STUNServersV6       []string
+	STUNServersV6Set    bool
 	InstanceName        string
 	AcceptDNS           *bool
 	EnableExitNode      *bool
@@ -190,6 +196,19 @@ func (c Config) RenderTOML() (string, error) {
 	}
 	if len(c.ExitNodes) > 0 {
 		writeTOMLStringArrayField(&encoded, "exit_nodes", c.ExitNodes)
+	}
+	// FORK(easytier-stun): STUN 是 P2P 打洞的引导步骤 ✗✓ —— 实测（2026-10-07）内嵌核会
+	// 卡在解析 `stun-v6.easytier.cn` 上（拿到空 TXT ✓ 然后死循环重试 ✗），**永远走不到打洞** ✓，
+	// 表现为"节点只连着会合点、看不到任何其他节点" → 家侧无法经它访问其他节点 ✓（504 / network is unreachable ✓）。
+	// 所以这里**默认把 v6 列表显式置空** ✓（`stun_servers_v6 = []` ✓）让 guest 直接用 v4 ✓；
+	// 想换 STUN 就配 `stun-servers` / `stun-servers-v6` ✓（空数组 = 显式关闭 ✓）。
+	if c.STUNServersV6Set {
+		writeTOMLStringArrayField(&encoded, "stun_servers_v6", c.STUNServersV6)
+	} else {
+		writeTOMLStringArrayField(&encoded, "stun_servers_v6", nil)
+	}
+	if len(c.STUNServers) > 0 {
+		writeTOMLStringArrayField(&encoded, "stun_servers", c.STUNServers)
 	}
 	encoded.WriteByte('\n')
 	encoded.WriteString("[network_identity]\n")

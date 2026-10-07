@@ -61,17 +61,20 @@ type EasyTier struct {
 
 type EasyTierOption struct {
 	BasicOption
-	Name                string   `proxy:"name"`
-	NetworkName         string   `proxy:"network-name,omitempty"`
-	NetworkSecret       string   `proxy:"network-secret,omitempty"`
-	Hostname            string   `proxy:"hostname,omitempty"`
-	IPv4                string   `proxy:"ipv4,omitempty"`
-	DHCP                bool     `proxy:"dhcp,omitempty"`
-	Peers               []string `proxy:"peers,omitempty"`
-	Listeners           []string `proxy:"listeners,omitempty"`
-	NoListener          *bool    `proxy:"no-listener,omitempty"`
-	MappedListeners     []string `proxy:"mapped-listeners,omitempty"`
-	ExitNodes           []string `proxy:"exit-nodes,omitempty"`
+	Name            string   `proxy:"name"`
+	NetworkName     string   `proxy:"network-name,omitempty"`
+	NetworkSecret   string   `proxy:"network-secret,omitempty"`
+	Hostname        string   `proxy:"hostname,omitempty"`
+	IPv4            string   `proxy:"ipv4,omitempty"`
+	DHCP            bool     `proxy:"dhcp,omitempty"`
+	Peers           []string `proxy:"peers,omitempty"`
+	Listeners       []string `proxy:"listeners,omitempty"`
+	NoListener      *bool    `proxy:"no-listener,omitempty"`
+	MappedListeners []string `proxy:"mapped-listeners,omitempty"`
+	ExitNodes       []string `proxy:"exit-nodes,omitempty"`
+	// FORK(easytier-stun): 覆盖 STUN 列表 ✓ —— 留空则用 fork 默认（v6 关闭 ✓，见 component/easytier/toml.go）
+	STUNServers         []string `proxy:"stun-servers,omitempty"`
+	STUNServersV6       []string `proxy:"stun-servers-v6,omitempty"`
 	ProxyNetworks       []string `proxy:"proxy-networks,omitempty"`
 	InstanceName        string   `proxy:"instance-name,omitempty"`
 	StateDir            string   `proxy:"state-dir,omitempty"`
@@ -215,6 +218,9 @@ func (o EasyTierOption) structuredConfig() easytier.Config {
 		NoListener:          o.NoListener,
 		MappedListeners:     o.MappedListeners,
 		ExitNodes:           o.ExitNodes,
+		STUNServers:         o.STUNServers,
+		STUNServersV6:       o.STUNServersV6,
+		STUNServersV6Set:    o.STUNServersV6 != nil, // FORK(easytier-stun): 区分"没配"与"配成空" ✓
 		ProxyNetworks:       o.ProxyNetworks,
 		InstanceName:        instanceName,
 		AcceptDNS:           o.AcceptDNS,
