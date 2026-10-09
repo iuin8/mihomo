@@ -15,6 +15,7 @@ import (
 
 	"github.com/metacubex/mihomo/adapter/inbound"
 	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/easytier" // FORK(easytier-tun)
 	"github.com/metacubex/mihomo/component/iface"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
@@ -48,6 +49,8 @@ type Listener struct {
 
 	tunIf    tun.Tun
 	tunStack tun.Stack
+	// FORK(easytier-tun): 本入站登记的 TUN 注入口，Close 时清理
+	ingressSink easytier.IngressSink
 
 	networkUpdateMonitor    tun.NetworkUpdateMonitor
 	defaultInterfaceMonitor tun.DefaultInterfaceMonitor
@@ -481,6 +484,15 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 		err = E.Cause(err, "configure tun interface")
 		return
 	}
+	// FORK(easytier-tun): 把栈读的设备包一层，使 overlay 入向包能投喂进 mihomo 的栈
+	// （sing-tun 的栈没有注入口，只能从设备读；往 utun 写＝交给内核，不是喂栈）。
+	stackDevice := tun.Tun(tunIf)
+	ingressSink := easytier.IngressSink(nil)
+	if device, sink := easytier.WrapTunForIngress(tunIf); sink != nil {
+		stackDevice = device
+		ingressSink = sink
+		easytier.PublishIngressSink(sink)
+	}
 
 	l.dnsServerIp = dnsServerIp
 	// after tun.New sing-tun has set DNS to TUN interface
@@ -488,7 +500,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 
 	stackOptions := tun.StackOptions{
 		Context:                ctx,
-		Tun:                    tunIf,
+		Tun:                    stackDevice,
 		TunOptions:             tunOptions,
 		EndpointIndependentNat: options.EndpointIndependentNat,
 		UDPTimeout:             udpTimeout,
@@ -501,6 +513,7 @@ func New(options LC.Tun, tunnel C.Tunnel, additions ...inbound.Addition) (l *Lis
 		EnforceBindInterface:   EnforceBindInterface,
 	}
 	l.tunIf = tunIf
+	l.ingressSink = ingressSink
 
 	tunStack, err := tun.NewStack(strings.ToLower(options.Stack.String()), stackOptions)
 	if err != nil {
@@ -669,6 +682,7 @@ func parseRange[T constraints.Integer](uidRanges []ranges.Range[T], rangeList []
 
 func (l *Listener) Close() error {
 	l.closed = true
+	easytier.ClearIngressSink(l.ingressSink) // FORK(easytier-tun)
 	resolver.RemoveSystemDnsBlacklist(l.dnsServerIp...)
 	if l.autoRedirectOutputMark != 0 {
 		dialer.DefaultRoutingMark.CompareAndSwap(l.autoRedirectOutputMark, 0)

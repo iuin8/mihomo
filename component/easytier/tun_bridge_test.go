@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -107,7 +108,7 @@ func TestRunTunBridgeForwardsDeviceToPlane(t *testing.T) {
 
 	packetA := []byte{0x45, 0x00, 0x00, 0x3c, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00, 10, 0, 0, 1, 10, 0, 0, 2}
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
 
 	device.reads <- packetA
 	deadline := time.After(2 * time.Second)
@@ -142,10 +143,10 @@ func TestRunTunBridgeSkipsNonIPv4(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
 
-	device.reads <- []byte{0x08, 0x06, 0x00, 0x01}                    // 非 IPv4（ARP 风格）
-	device.reads <- []byte{0x00}                                      // 过短
+	device.reads <- []byte{0x08, 0x06, 0x00, 0x01}                                                                           // 非 IPv4（ARP 风格）
+	device.reads <- []byte{0x00}                                                                                             // 过短
 	device.reads <- []byte{0x45, 0x00, 0x00, 0x14, 0x00, 0x02, 0x00, 0x00, 0x40, 0x01, 0x00, 0x00, 10, 0, 0, 1, 10, 0, 0, 3} // 合法 IPv4
 
 	deadline := time.After(2 * time.Second)
@@ -170,7 +171,7 @@ func TestRunTunBridgeForwardsPlaneToDevice(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
 
 	packet := []byte{0x45, 0x00, 0x00, 0x14, 0x00, 0x03, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 10, 0, 0, 4, 10, 0, 0, 5}
 	plane.incoming <- packet
@@ -195,7 +196,11 @@ func TestRunTunBridgePropagatesDeviceError(t *testing.T) {
 	defer cancel()
 
 	select {
-	case err := <-func() chan error { ch := make(chan error, 1); go func() { ch <- runTunBridge(ctx, device, plane) }(); return ch }():
+	case err := <-func() chan error {
+		ch := make(chan error, 1)
+		go func() { ch <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
+		return ch
+	}():
 		if err == nil {
 			t.Fatal("expected the device error to surface")
 		}
@@ -209,7 +214,7 @@ func TestRunTunBridgeClosesDeviceOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
 	cancel()
 
 	select {
@@ -224,5 +229,177 @@ func TestRunTunBridgeClosesDeviceOnCancel(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("bridge did not exit")
+	}
+}
+
+// —— FORK(easytier-tun)：入向改道（overlay → 宿主 mihomo TUN 栈）的可测缝 ——
+
+type recordingWriter struct {
+	packets [][]byte
+}
+
+func (w *recordingWriter) Write(p []byte) (int, error) {
+	copied := make([]byte, len(p))
+	copy(copied, p)
+	w.packets = append(w.packets, copied)
+	return len(p), nil
+}
+
+type recordingSink struct{ packets [][]byte }
+
+func (s *recordingSink) Inject(packet []byte) bool {
+	copied := make([]byte, len(packet))
+	copy(copied, packet)
+	s.packets = append(s.packets, copied)
+	return true
+}
+
+func ipv4Packet(dst [4]byte) []byte {
+	packet := make([]byte, 20)
+	packet[0] = 0x45
+	packet[16], packet[17], packet[18], packet[19] = dst[0], dst[1], dst[2], dst[3]
+	return packet
+}
+
+func TestPacketDestInPrefix(t *testing.T) {
+	overlay := netip.MustParsePrefix("10.144.0.0/24")
+	if !packetDestInPrefix(ipv4Packet([4]byte{10, 144, 0, 6}), overlay) {
+		t.Fatal("overlay destination must be inside the prefix")
+	}
+	if packetDestInPrefix(ipv4Packet([4]byte{10, 144, 1, 6}), overlay) {
+		t.Fatal("non-overlay destination must be outside the prefix")
+	}
+	if packetDestInPrefix(ipv4Packet([4]byte{10, 144, 0, 6}), netip.Prefix{}) {
+		t.Fatal("invalid prefix must match nothing")
+	}
+}
+
+// 有宿主 TUN 注入口时：公网目标投喂进栈，本机 overlay 目标仍走本地 TUN。
+func TestIngressSinkPrefersHostTun(t *testing.T) {
+	sink := &recordingSink{}
+	PublishIngressSink(sink)
+	defer ClearIngressSink(sink)
+	device := &recordingWriter{}
+	// 生产的 Prefix 是**主机自己的地址**/前缀（CreateTunDevice 把它配到设备上），不是网络地址。
+	ingress := &ingressSink{device: device, local: netip.MustParsePrefix("10.144.0.6/24")}
+
+	if err := ingress.put(ipv4Packet([4]byte{1, 1, 1, 1})); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if len(sink.packets) != 1 || len(device.packets) != 0 {
+		t.Fatalf("public destination must go to the host TUN: sink=%d device=%d", len(sink.packets), len(device.packets))
+	}
+
+	// 目的地在本节点 overlay 网段内（含本机自己的地址）：仍交给设备 ——
+	// Linux 上这一步由内核完成投递 ✓；macOS 上走不通 ✗，原因见 SOP（出口节点需要 guest 内部终结代理口）。
+	if err := ingress.put(ipv4Packet([4]byte{10, 144, 0, 6})); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if len(sink.packets) != 1 || len(device.packets) != 1 {
+		t.Fatalf("overlay-local destination must stay on the local TUN: sink=%d device=%d", len(sink.packets), len(device.packets))
+	}
+
+	// 其它 overlay 节点（不是本机地址）：仍交给内核按 10.144/24 路由回隧道。
+	deviceBefore, sinkBefore := len(device.packets), len(sink.packets)
+	if err := ingress.put(ipv4Packet([4]byte{10, 144, 0, 1})); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if len(device.packets) != deviceBefore+1 || len(sink.packets) != sinkBefore {
+		t.Fatalf("packets for other overlay nodes must stay on the local TUN: device %d→%d sink %d→%d",
+			deviceBefore, len(device.packets), sinkBefore, len(sink.packets))
+	}
+}
+
+// 没有宿主 TUN（未启用 tun 入站）时退回本地 TUN，不丢包。
+func TestIngressSinkFallsBackWithoutHostTun(t *testing.T) {
+	device := &recordingWriter{}
+	ingress := &ingressSink{device: device}
+	if err := ingress.put(ipv4Packet([4]byte{1, 1, 1, 1})); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if len(device.packets) != 1 {
+		t.Fatalf("expected fallback to the local TUN, got %d", len(device.packets))
+	}
+}
+
+// 包装后的设备：注入的包要能被栈读到，真设备的包照旧透传。
+func TestWrapTunForIngressDeliversInjectedPackets(t *testing.T) {
+	raw := &recordingTun{incoming: make(chan []byte, 1)}
+	wrapped, sink := WrapTunForIngress(raw)
+	defer wrapped.Close()
+
+	injected := ipv4Packet([4]byte{1, 1, 1, 1})
+	if !sink.Inject(injected) {
+		t.Fatal("inject must succeed while the queue has room")
+	}
+	buffer := make([]byte, 64)
+	n, err := wrapped.Read(buffer)
+	if err != nil || n != len(injected) {
+		t.Fatalf("read injected: n=%d err=%v", n, err)
+	}
+
+	fromDevice := ipv4Packet([4]byte{8, 8, 8, 8})
+	raw.incoming <- fromDevice
+	n, err = wrapped.Read(buffer)
+	if err != nil || n != len(fromDevice) {
+		t.Fatalf("read from device: n=%d err=%v", n, err)
+	}
+}
+
+type recordingTun struct {
+	incoming chan []byte
+	closed   bool
+}
+
+func (t *recordingTun) Read(p []byte) (int, error) {
+	packet, ok := <-t.incoming
+	if !ok {
+		return 0, io.EOF
+	}
+	return copy(p, packet), nil
+}
+
+func (t *recordingTun) Write(p []byte) (int, error) { return len(p), nil }
+
+func (t *recordingTun) Close() error {
+	if !t.closed {
+		t.closed = true
+		close(t.incoming)
+	}
+	return nil
+}
+
+// 校验和判据的最小自检：构造一个真实合法的 IPv4/TCP SYN 逐字段校验，再故意改坏一字节。
+func TestChecksumValidation(t *testing.T) {
+	packet := ipv4Packet([4]byte{10, 144, 0, 6})
+	packet[9] = 6 // TCP
+	packet[12], packet[13], packet[14], packet[15] = 10, 144, 0, 1
+	packet = append(packet, 0x1f, 0x90, 0x01, 0xbb, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+		0x50, 0x02, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00)
+	packet[2], packet[3] = byte(len(packet)>>8), byte(len(packet))
+	packet[10], packet[11] = 0, 0
+	headerLength := int(packet[0]&0x0f) * 4
+	header := foldedChecksum(checksum(packet[:headerLength], 0))
+	packet[10], packet[11] = byte(header>>8), byte(header)
+
+	if !ipv4ChecksumValid(packet) {
+		t.Fatal("a correctly built IPv4 header must validate")
+	}
+	packet[10] ^= 0xff
+	if ipv4ChecksumValid(packet) {
+		t.Fatal("a corrupted IPv4 header must NOT validate")
+	}
+	packet[10] ^= 0xff
+
+	// TCP：先填一个正确校验和 → 必须通过；改坏一字节 → 必须失败。
+	segment := packet[headerLength:]
+	tcpHeader := foldedChecksum(checksum(segment, checksum(packet[12:20], uint32(6)+uint32(len(segment)))))
+	segment[16], segment[17] = byte(tcpHeader>>8), byte(tcpHeader)
+	if !l4ChecksumValid(packet) {
+		t.Fatal("a correctly built TCP checksum must validate")
+	}
+	segment[16] ^= 0xff
+	if l4ChecksumValid(packet) {
+		t.Fatal("a corrupted TCP checksum must NOT validate")
 	}
 }

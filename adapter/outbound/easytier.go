@@ -461,6 +461,18 @@ func (e *EasyTier) init() error {
 		return err
 	}
 	log.Infoln("[EasyTier](%s) instance %s running", e.Name(), instance.ID())
+	// FORK(easytier-tun): 节点自述一次（端口/公告信息），用于回答"某个被拨的端口该由谁监听"。
+	go func(diagCtx context.Context, diagInstance *corehost.Instance) {
+		time.Sleep(20 * time.Second)
+		if diagInstance == nil {
+			return
+		}
+		if info, err := diagInstance.ShowNodeInfo(diagCtx); err != nil {
+			log.Debugln("[EasyTier](%s) show node info failed: %v", e.Name(), err)
+		} else {
+			log.Debugln("[EasyTier](%s) node info: %+v", e.Name(), info)
+		}
+	}(e.ctx, instance)
 	// FORK(easytier-tun): 接上宿主 TUN 设备与实例包面（需要 root / CAP_NET_ADMIN）
 	if e.option.Tun {
 		bridge, err := easytier.StartTunBridge(e.ctx, easytier.TunDeviceOptions{
