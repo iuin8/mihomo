@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"strconv"
@@ -33,6 +34,8 @@ const (
 type Options struct {
 	Platform            platform.Services
 	PacketQueueCapacity int
+	// FORK(easytier-guestlog): sink for the guest's stdout/stderr (its tracing output).
+	LogWriter io.Writer
 }
 
 type EmbeddedCoreInfo struct {
@@ -77,6 +80,7 @@ func New(ctx context.Context, options Options) (*Host, error) {
 			Services:            mergeServices(options.Platform),
 			PacketQueueCapacity: options.PacketQueueCapacity,
 			Management:          manager.handle,
+			LogWriter:           options.LogWriter,
 		},
 	)
 	if err != nil {

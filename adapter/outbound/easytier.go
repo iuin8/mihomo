@@ -53,6 +53,8 @@ type EasyTier struct {
 	host       *corehost.Host
 	instance   *corehost.Instance
 	unregister func()
+	// FORK(easytier-guestlog): 转发 guest 的 stdout/stderr，Close 时冲刷残余
+	guestLog *easytier.GuestLogWriter
 	// FORK(easytier-tun): TUN 模式资源，见 docs/easytier_tun_spec.md
 	tunBridge *easytier.TunBridge
 	tunPrefix netip.Prefix
@@ -436,14 +438,19 @@ func (e *EasyTier) init() error {
 	if instanceName == "" {
 		instanceName = e.option.Name
 	}
+	// FORK(easytier-guestlog): hand the guest's stdout/stderr to mihomo's log. Without it the
+	// WASI module's tracing output goes to io.Discard and an embedded instance is a black box.
+	guestLog := easytier.NewGuestLogWriter(instanceName)
 	host, err := corehost.New(e.ctx, corehost.Options{
-		Platform: easytier.Services(e.dialer),
+		Platform:  easytier.Services(e.dialer),
+		LogWriter: guestLog,
 	})
 	if err != nil {
 		return err
 	}
 	e.mu.Lock()
 	e.host = host
+	e.guestLog = guestLog
 	e.mu.Unlock()
 
 	instance, err := host.CreateInstanceTOML(e.ctx, instanceName, instanceID, e.configTOML)
@@ -705,8 +712,10 @@ func (e *EasyTier) shutdown() error {
 	e.mu.Lock()
 	instance := e.instance
 	host := e.host
+	guestLog := e.guestLog
 	e.instance = nil
 	e.host = nil
+	e.guestLog = nil
 	e.mu.Unlock()
 	e.mu.Lock()
 	tunBridge := e.tunBridge
@@ -724,6 +733,10 @@ func (e *EasyTier) shutdown() error {
 		if hostErr := host.Close(ctx); err == nil {
 			err = hostErr
 		}
+	}
+	if guestLog != nil {
+		// FORK(easytier-guestlog): 冲刷最后一行（半行也要留证）
+		_ = guestLog.Close()
 	}
 	return err
 }
