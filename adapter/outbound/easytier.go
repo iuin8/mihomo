@@ -63,15 +63,17 @@ type EasyTier struct {
 
 type EasyTierOption struct {
 	BasicOption
-	Name            string   `proxy:"name"`
-	NetworkName     string   `proxy:"network-name,omitempty"`
-	NetworkSecret   string   `proxy:"network-secret,omitempty"`
-	Hostname        string   `proxy:"hostname,omitempty"`
-	IPv4            string   `proxy:"ipv4,omitempty"`
-	DHCP            bool     `proxy:"dhcp,omitempty"`
-	Peers           []string `proxy:"peers,omitempty"`
-	Listeners       []string `proxy:"listeners,omitempty"`
-	NoListener      *bool    `proxy:"no-listener,omitempty"`
+	Name          string   `proxy:"name"`
+	NetworkName   string   `proxy:"network-name,omitempty"`
+	NetworkSecret string   `proxy:"network-secret,omitempty"`
+	Hostname      string   `proxy:"hostname,omitempty"`
+	IPv4          string   `proxy:"ipv4,omitempty"`
+	DHCP          bool     `proxy:"dhcp,omitempty"`
+	Peers         []string `proxy:"peers,omitempty"`
+	Listeners     []string `proxy:"listeners,omitempty"`
+	NoListener    *bool    `proxy:"no-listener,omitempty"`
+	// FORK(easytier-logging): guest 内部日志级别（trace/debug/info/warn/error）✓
+	LogLevel        string   `proxy:"log-level,omitempty"`
 	MappedListeners []string `proxy:"mapped-listeners,omitempty"`
 	ExitNodes       []string `proxy:"exit-nodes,omitempty"`
 	// FORK(easytier-stun): 覆盖 STUN 列表 ✓ —— 留空则用 fork 默认（v6 关闭 ✓，见 component/easytier/toml.go）
@@ -218,6 +220,7 @@ func (o EasyTierOption) structuredConfig() easytier.Config {
 		Peers:               o.Peers,
 		Listeners:           o.Listeners,
 		NoListener:          o.NoListener,
+		LogLevel:            o.LogLevel,
 		MappedListeners:     o.MappedListeners,
 		ExitNodes:           o.ExitNodes,
 		STUNServers:         o.STUNServers,

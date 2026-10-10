@@ -46,10 +46,14 @@ type Config struct {
 	EnableQUICProxy     *bool
 	DisableQUICInput    *bool
 	MTU                 int
-	TLDDNSZone          string
-	SecureMode          *bool
-	LocalPrivateKey     string
-	LocalPublicKey      string
+	// FORK(easytier-logging): 内嵌 guest 的日志级别 ✓ —— 对应 TOML 的 [logging.console_logger] ✓。
+	// 上游修好"内嵌实例不初始化日志"（EasyTier#2653 / PR #2655）之前，写这段是**空操作** ✓；
+	// 修复落地后，这里就是唯一需要动的 fork 侧接线 ✓。
+	LogLevel        string
+	TLDDNSZone      string
+	SecureMode      *bool
+	LocalPrivateKey string
+	LocalPublicKey  string
 }
 
 // Peer is one EasyTier [[peer]] table after URI query parameters are extracted.
@@ -241,6 +245,11 @@ func (c Config) RenderTOML() (string, error) {
 	for _, network := range c.ProxyNetworks {
 		encoded.WriteString("\n[[proxy_network]]\n")
 		writeTOMLStringField(&encoded, "cidr", network)
+	}
+
+	if c.LogLevel != "" {
+		encoded.WriteString("\n[logging.console_logger]\n")
+		writeTOMLStringField(&encoded, "level", c.LogLevel)
 	}
 
 	encoded.WriteString("\n[flags]\n")

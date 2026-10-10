@@ -299,3 +299,25 @@ func TestParsePeerURIQuery(t *testing.T) {
 		t.Fatalf("other query: %+v", peer)
 	}
 }
+
+func TestRenderTOMLLoggingSection(t *testing.T) {
+	toml, err := Config{
+		NetworkName: "example",
+		Peers:       []string{"tcp://host:11010"},
+		LogLevel:    "trace",
+	}.RenderTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(toml, "[logging.console_logger]") || !strings.Contains(toml, `level = "trace"`) {
+		t.Fatalf("missing logging section:\n%s", toml)
+	}
+	// 不设级别时不能出现该段（否则等于给 guest 一个空的 logging 表 ✓）
+	plain, err := Config{NetworkName: "example", Peers: []string{"tcp://host:11010"}}.RenderTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "[logging.console_logger]") {
+		t.Fatalf("unexpected logging section:\n%s", plain)
+	}
+}
