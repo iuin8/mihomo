@@ -125,9 +125,11 @@ func runTunBridge(parent context.Context, device packetDevice, plane packetPlane
 // 由 mihomo 统一做路由 / 规则 / NAT —— 这是"本机给别人当网关"唯一在各平台都成立的路径；
 // 没有可用栈时退回写进本地 TUN 设备（Linux 上内核会转发 + 容器 NAT，macOS 上只够本机用）。
 //
-// 目的地在**本节点 overlay 网段内**的包不投喂：那是"访问本机自身服务"，投喂会让 mihomo
-// 反过来去拨同一个 overlay 地址，绕回 overlay。这类用法应交给 EasyTier 自身的子网代理
-// （proxy-networks，内部代理，不经过宿主路由栈）。
+// FORK(easytier-tun): 目的地是**本机自己**的包**要**投喂 —— 本机经远端出口的连接，
+// 回程包的目的地就是本机 overlay 地址（连接由本节点的数据面发起），不投喂它就永远完不成。
+//
+// 只有"目的地是**另一个** overlay 节点"的包才跳过：投喂那些会让 mihomo 反过来再拨同一个
+// overlay 地址、绕回 overlay —— 那类用法应交给 EasyTier 自身的子网代理（proxy-networks）。
 type ingressSink struct {
 	device    io.Writer    // 本地 TUN 设备（兜底）
 	local     netip.Prefix // 本节点 overlay 网段，可为零值
@@ -144,7 +146,7 @@ func (s *ingressSink) put(packet []byte) error {
 		log.Debugln("[EasyTier] overlay ingress: sink=%v local=%s total=%d injected=%d",
 			sink != nil, s.local, s.seen.Load(), s.injected.Load())
 	}
-	if sink != nil && !packetDestInPrefix(packet, s.local) {
+	if sink != nil && !packetDestIsOtherOverlayPeer(packet, s.local) {
 		if sink.Inject(packet) {
 			s.injected.Add(1)
 		} else {
@@ -242,13 +244,18 @@ func describeIPv4Packet(packet []byte) string {
 	return fmt.Sprintf("%s %s:%d -> %s:%d%s len=%d", protocol, source, sourcePort, destination, destinationPort, flags, len(packet))
 }
 
-// packetDestInPrefix 判断 IPv4 包的目的地址是否落在 prefix 内（prefix 为零值时恒 false）。
-func packetDestInPrefix(packet []byte, prefix netip.Prefix) bool {
+// packetDestIsOtherOverlayPeer 判断 IPv4 包的目的地址是否落在 prefix 内（prefix 为零值时恒 false）。
+// packetDestIsOtherOverlayPeer 判断目的地是否**落在本节点 overlay 网段、但不是本机自己**。
+// 这类包不投喂宿主栈（会绕回 overlay）；而目的地在网段内**且就是本机**的包必须投喂。
+func packetDestIsOtherOverlayPeer(packet []byte, prefix netip.Prefix) bool {
 	if !prefix.IsValid() || len(packet) < 20 {
 		return false
 	}
 	dst := netip.AddrFrom4([4]byte{packet[16], packet[17], packet[18], packet[19]})
-	return prefix.Contains(dst)
+	if !prefix.Contains(dst) {
+		return false
+	}
+	return dst != prefix.Addr().Unmap()
 }
 
 func copyDeviceToPlane(ctx context.Context, device io.Reader, plane packetPlane) error {
