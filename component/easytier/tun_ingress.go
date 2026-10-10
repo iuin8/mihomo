@@ -88,6 +88,7 @@ type injectableTunBase struct {
 	reads         chan tunReadResult
 	done          chan struct{}
 	closeOne      sync.Once
+	pumpAllowed   atomic.Bool // gvisor 路径下由真 endpoint 独占读 fd，pump 必须停
 	injectedCount atomic.Uint64
 	consumedCount atomic.Uint64
 	droppedCount  atomic.Uint64
@@ -101,6 +102,7 @@ func newInjectableTunBase(device tun.Tun) *injectableTunBase {
 		reads:    make(chan tunReadResult, ingressQueueSize),
 		done:     make(chan struct{}),
 	}
+	base.pumpAllowed.Store(true)
 	go base.pump()
 	go base.report()
 	log.Debugln("[EasyTier] host TUN wrapped for overlay ingress")
@@ -154,9 +156,19 @@ func (t *injectableTunBase) Dropped() uint64 {
 }
 
 // pump 把真设备的读搬到 reads，使 Read 能在两个来源之间 select。
+// stopPump 停掉"从真设备读"的协程：gvisor 路径下真 endpoint 才是 fd 的唯一读者。
+func (t *injectableTunBase) stopPump() {
+	if t.pumpAllowed.CompareAndSwap(true, false) {
+		log.Debugln("[EasyTier] ingress: real endpoint owns the TUN fd; pump stopped")
+	}
+}
+
 func (t *injectableTunBase) pump() {
 	defer close(t.reads)
 	for {
+		if !t.pumpAllowed.Load() {
+			return
+		}
 		buffer := ingressBufferPool.Get().(*[]byte)
 		length, err := t.Tun.Read(*buffer)
 		if err != nil {

@@ -263,18 +263,23 @@ func ipv4Packet(dst [4]byte) []byte {
 
 func TestPacketDestInPrefix(t *testing.T) {
 	overlay := netip.MustParsePrefix("10.144.0.0/24")
-	if !packetDestInPrefix(ipv4Packet([4]byte{10, 144, 0, 6}), overlay) {
+	if !packetDestIsOtherOverlayPeer(ipv4Packet([4]byte{10, 144, 0, 6}), overlay) {
 		t.Fatal("overlay destination must be inside the prefix")
 	}
-	if packetDestInPrefix(ipv4Packet([4]byte{10, 144, 1, 6}), overlay) {
+	if packetDestIsOtherOverlayPeer(ipv4Packet([4]byte{10, 144, 1, 6}), overlay) {
 		t.Fatal("non-overlay destination must be outside the prefix")
 	}
-	if packetDestInPrefix(ipv4Packet([4]byte{10, 144, 0, 6}), netip.Prefix{}) {
+	if packetDestIsOtherOverlayPeer(ipv4Packet([4]byte{10, 144, 0, 6}), netip.Prefix{}) {
 		t.Fatal("invalid prefix must match nothing")
 	}
 }
 
-// 有宿主 TUN 注入口时：公网目标投喂进栈，本机 overlay 目标仍走本地 TUN。
+// 有宿主 TUN 注入口时：公网目标与**本机自己**的 overlay 目标都投喂进栈；
+// 只有**其它** overlay 节点仍留在本地 TUN（投喂它们会让 mihomo 再拨一次、绕回 overlay）。
+//
+// 2026-10-10 实测修正：旧版本把"本机自己的 overlay 地址"也留在设备上，注释里记为
+// "macOS 上走不通"的已知限制 —— 那正是生产上"家侧经本机出口打公网 502/Timeout"的原因：
+// 本机经远端出口的连接，回程包目的地**就是本机 overlay 地址**，留在设备上＝永远不进 mihomo 的栈。
 func TestIngressSinkPrefersHostTun(t *testing.T) {
 	sink := &recordingSink{}
 	PublishIngressSink(sink)
@@ -290,13 +295,13 @@ func TestIngressSinkPrefersHostTun(t *testing.T) {
 		t.Fatalf("public destination must go to the host TUN: sink=%d device=%d", len(sink.packets), len(device.packets))
 	}
 
-	// 目的地在本节点 overlay 网段内（含本机自己的地址）：仍交给设备 ——
-	// Linux 上这一步由内核完成投递 ✓；macOS 上走不通 ✗，原因见 SOP（出口节点需要 guest 内部终结代理口）。
+	// 目的地就是本机自己（10.144.0.6 = local 的前缀地址）：必须投喂进栈 ——
+	// 本机经远端出口的连接，回程包就是这个形状。
 	if err := ingress.put(ipv4Packet([4]byte{10, 144, 0, 6})); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if len(sink.packets) != 1 || len(device.packets) != 1 {
-		t.Fatalf("overlay-local destination must stay on the local TUN: sink=%d device=%d", len(sink.packets), len(device.packets))
+	if len(sink.packets) != 2 || len(device.packets) != 0 {
+		t.Fatalf("packets for our own overlay address must be injected: sink=%d device=%d", len(sink.packets), len(device.packets))
 	}
 
 	// 其它 overlay 节点（不是本机地址）：仍交给内核按 10.144/24 路由回隧道。
