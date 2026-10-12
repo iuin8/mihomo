@@ -10,7 +10,6 @@ cd "$(dirname "$0")/.."
 
 module=github.com/easytier/easytier/easytier-go
 dest=third_party/easytier-go
-patch_file=third_party/easytier-go-interpreter.patch
 
 # replace 生效时 `go list -m` 拿不到版本，改从 require 行取（升级版本时改的是它）
 version=$(awk -v m="$module" '$1 == m { print $2; exit }' go.mod)
@@ -32,7 +31,20 @@ cp -R "$src" "$dest"
 chmod -R u+w "$dest"
 rm -rf "$dest/testdata"   # 仅该依赖自身的测试用，体积 9MB
 
-patch -p1 -d "$dest" < "$patch_file"
+# fork 对 easytier-go 的全部改动都放在这些补丁里；
+# 任何一处忘了写进补丁，下次重建依赖就会被静默冲掉。
+shopt -s nullglob
+patch_files=(third_party/easytier-go-*.patch)
+shopt -u nullglob
+if [ ${#patch_files[@]} -eq 0 ]; then
+  echo "third_party/easytier-go-*.patch 一个都没有 —— 拒绝重建（会把 fork 改动冲掉）" >&2
+  exit 1
+fi
+for patch_file in "${patch_files[@]}"; do
+  echo "套用 $(basename "$patch_file")"
+  # --no-backup-if-mismatch: 多个补丁可能碰同一文件，别在依赖树里留 .orig
+  patch -p1 --no-backup-if-mismatch -d "$dest" < "$patch_file"
+done
 
 # 断言补丁真的落地了，避免静默退化成 JIT
 grep -q 'NewRuntimeConfigInterpreter' "$dest/internal/engine/host.go" || {

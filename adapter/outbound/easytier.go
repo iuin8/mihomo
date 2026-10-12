@@ -471,6 +471,16 @@ func (e *EasyTier) init() error {
 		return err
 	}
 	log.Infoln("[EasyTier](%s) instance %s running", e.Name(), instance.ID())
+	// FORK(easytier-proxy-networks): proxy-networks 只写创建期 TOML 是不生效的 ——
+	// guest 的 TOML 反序列化路径不调用 add_proxy_cidr，只有它的 CLI 与 config-patch RPC
+	// 那条路才会，所以本节点公告不出去、对端学不到路由。实例起来后对账一次。
+	// 失败如实返回：静默不公告正是这个字段以前的病。
+	if err := easytier.ApplyProxyNetworks(e.ctx, instance, e.option.ProxyNetworks); err != nil {
+		return err
+	}
+	if len(e.option.ProxyNetworks) > 0 {
+		log.Infoln("[EasyTier](%s) proxy networks announced: %v", e.Name(), e.option.ProxyNetworks)
+	}
 	// FORK(easytier-tun): 节点自述一次（端口/公告信息），用于回答"某个被拨的端口该由谁监听"。
 	go func(diagCtx context.Context, diagInstance *corehost.Instance) {
 		time.Sleep(20 * time.Second)

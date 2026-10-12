@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	apiconfig "github.com/easytier/easytier/easytier-go/proto/api/config"
 	apiinstance "github.com/easytier/easytier/easytier-go/proto/api/instance"
 	"github.com/easytier/easytier/easytier-go/proto/common"
 	"google.golang.org/protobuf/proto"
@@ -46,6 +47,29 @@ func (instance *Instance) ListRoute(
 		return nil, err
 	}
 	return response.Routes, nil
+}
+
+// PatchConfig applies a configuration patch to this running instance.
+//
+// A network instance is created from a declarative description that the guest
+// owns, and some of the settings in it only take effect through the guest's
+// config-patch RPC rather than through its deserializer. Patching is the
+// supported way to reconcile those settings at runtime; the guest de-duplicates
+// per entry, so applying the same patch twice is a no-op.
+func (instance *Instance) PatchConfig(
+	ctx context.Context,
+	patch *apiconfig.InstanceConfigPatch,
+) error {
+	if patch == nil {
+		return fmt.Errorf("patch EasyTier config with nil patch")
+	}
+	response := new(apiconfig.PatchConfigResponse)
+	return instance.callRPCRequest(
+		ctx,
+		patchConfigMethod,
+		&apiconfig.PatchConfigRequest{Patch: patch},
+		response,
+	)
 }
 
 func (instance *Instance) listPeerResponse(

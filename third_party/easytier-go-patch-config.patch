@@ -1,0 +1,49 @@
+# FORK: 给 easytier-go 增加公开的 PatchConfig（运行时下发配置）。
+#
+# 背景：网络实例的创建期 TOML 里有些字段**不会**经反序列化生效，
+# 只有 guest 的 CLI / config-patch RPC 那条路才会（见 component/easytier/proxy_network.go）。
+# 把 PatchConfig 暴露成公开方法，宿主才能在实例起来后对账。
+#
+# 本补丁由 scripts 无关：套用方式见 third_party/setup-easytier-interpreter.sh
+diff --git a/internal/host/rpc.go b/internal/host/rpc.go
+index 40ac3722..8bdc6a92 100644
+--- a/internal/host/rpc.go
++++ b/internal/host/rpc.go
+@@ -5,6 +5,7 @@ import (
+ 	"fmt"
+ 	"time"
+ 
++	apiconfig "github.com/easytier/easytier/easytier-go/proto/api/config"
+ 	apiinstance "github.com/easytier/easytier/easytier-go/proto/api/instance"
+ 	"github.com/easytier/easytier/easytier-go/proto/common"
+ 	"google.golang.org/protobuf/proto"
+@@ -48,6 +49,29 @@ func (instance *Instance) ListRoute(
+ 	return response.Routes, nil
+ }
+ 
++// PatchConfig applies a configuration patch to this running instance.
++//
++// A network instance is created from a declarative description that the guest
++// owns, and some of the settings in it only take effect through the guest's
++// config-patch RPC rather than through its deserializer. Patching is the
++// supported way to reconcile those settings at runtime; the guest de-duplicates
++// per entry, so applying the same patch twice is a no-op.
++func (instance *Instance) PatchConfig(
++	ctx context.Context,
++	patch *apiconfig.InstanceConfigPatch,
++) error {
++	if patch == nil {
++		return fmt.Errorf("patch EasyTier config with nil patch")
++	}
++	response := new(apiconfig.PatchConfigResponse)
++	return instance.callRPCRequest(
++		ctx,
++		patchConfigMethod,
++		&apiconfig.PatchConfigRequest{Patch: patch},
++		response,
++	)
++}
++
+ func (instance *Instance) listPeerResponse(
+ 	ctx context.Context,
+ ) (*apiinstance.ListPeerResponse, error) {
