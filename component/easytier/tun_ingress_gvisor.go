@@ -19,6 +19,8 @@ import (
 	"github.com/metacubex/gvisor/pkg/tcpip/header"
 	"github.com/metacubex/gvisor/pkg/tcpip/stack"
 	tun "github.com/metacubex/sing-tun"
+
+	tcpip "github.com/metacubex/gvisor/pkg/tcpip"
 )
 
 // injectableTun 既是 tun.Tun（内嵌 base 透传 Read/Write/Close），又满足 GVisorTun。
@@ -119,6 +121,18 @@ func (e *injectableEndpoint) deliver(raw []byte) {
 		Payload:           buffer.MakeWithData(raw),
 		IsForwardedPacket: true, // 与本仓库其它注入点（stack_mixed.go）保持一致
 	})
+	// ★ 必须标出包是从哪个 NIC 进来的：sing-tun 建栈时用的是
+	//   `ipStack.CreateNICWithOptions(DefaultNIC, ep, opts)`，而 `DefaultNIC = tcpip.NICID(1)`。
+	//   PacketBuffer 的 NICID 默认是 0 ⇒ DeliverNetworkPacket 找不到对应 NIC ⇒ **静默丢弃**
+	//   （现象：injected=N consumed=N 却永远不成连接）。这里补上真 NIC 的 id。
+	pkt.NICID = tun.DefaultNIC
+	// 从真设备进来的包，sing-tun / gVisor 自己那条路径会带上的字段，注入时也要补齐：
+	// nic.DeliverNetworkPacket 之后会走 networkEndpoint.HandlePacket(pkt)，
+	// 而它按 pkt.NetworkProtocolNumber 选协议、按 NetworkPacketInfo 判方向（本机/转发）。
+	pkt.NetworkProtocolNumber = protocol
+	pkt.InputNICID = tun.DefaultNIC // 这个包是从哪个接口收上来的
+	pkt.PktType = tcpip.PacketHost  // 目标是本机 ⇒ host 包，不是转发包
+	pkt.NetworkPacketInfo = stack.NetworkPacketInfo{IsForwardedPacket: false}
 	dispatcher.DeliverNetworkPacket(protocol, pkt)
 	pkt.DecRef()
 }
