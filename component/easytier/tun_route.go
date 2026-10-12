@@ -53,6 +53,44 @@ func ensureOverlayRoute(prefix netip.Prefix, address netip.Addr) (func(), error)
 	}, nil
 }
 
+// ensurePinnedRoute 把 tun-routes 的前缀真的 pin 到设备接口上，返回清理函数。
+//
+// 为什么不能只靠 sing-tun 的 Inet4RouteAddress：那个字段只在 Linux 的 auto-route / redirect
+// 规则里被消费，而本 fork 用 AutoRoute=false（绝不抢默认路由），所以两条路都不走 ⇒ 字段等于没设。
+// 而 tun-routes 的语义是"这些前缀的包必须从这块设备出去"，两侧内核都不会自己派生（它们不在接口网段里）。
+func ensurePinnedRoute(prefix netip.Prefix, address netip.Addr) (func(), error) {
+	noop := func() {}
+	if !prefix.IsValid() || !address.IsValid() {
+		return noop, nil
+	}
+	name, err := findInterfaceByAddress(address)
+	if err != nil {
+		return noop, err
+	}
+	network := prefix.Masked().String()
+	var add, del []string
+	switch runtime.GOOS {
+	case "linux":
+		// replace：幂等，设备重建/重启后不会因"已存在"而失败。
+		add = []string{"ip", "route", "replace", network, "dev", name}
+		del = []string{"ip", "route", "del", network, "dev", name}
+	case "darwin":
+		add = []string{"route", "-n", "add", "-net", network, "-interface", name}
+		del = []string{"route", "-n", "delete", "-net", network, "-interface", name}
+	default:
+		return noop, nil
+	}
+	if output, err := exec.Command(add[0], add[1:]...).CombinedOutput(); err != nil {
+		return noop, fmt.Errorf("easytier: pin route %s via %s: %w (%s)", network, name, err, output)
+	}
+	log.Infoln("[EasyTier] pinned route %s installed on %s", network, name)
+	return func() {
+		if output, err := exec.Command(del[0], del[1:]...).CombinedOutput(); err != nil {
+			log.Debugln("[EasyTier] remove pinned route %s via %s failed: %v (%s)", network, name, err, output)
+		}
+	}, nil
+}
+
 // findInterfaceByAddress 轮询直到某块接口持有该地址。
 func findInterfaceByAddress(address netip.Addr) (string, error) {
 	deadline := time.Now().Add(overlayRouteAddressWait)

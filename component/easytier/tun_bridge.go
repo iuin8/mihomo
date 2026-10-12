@@ -8,8 +8,10 @@
 // 设备参数沿用 easytier-go 官方范例 examples/tun：宿主建设备、AutoRoute=false（绝不抢默认路由）、MTU 1380。
 //
 // 路由分两半（2026-10-09 实测 ✓）：
-//   - 出向：`Inet4RouteAddress` 只在 Linux 的 auto-route/redirect 规则里被消费，darwin 上毫无作用；
-//   - 回程：Linux 内核会因接口配了地址自动派生网段路由，macOS **不会** —— 必须由 tun_route.go 自己装。
+//   - 回程：Linux 内核会因接口配了地址自动派生网段路由，macOS **不会** —— 必须由 tun_route.go 自己装；
+//   - 出向（tun-routes）：**两侧内核都不会派生**（那些前缀不在接口网段里）⇒ 同样必须自己装
+//     （ensurePinnedRoute）。`Inet4RouteAddress` 在这里**不解决问题**：它只在 Linux 的
+//     auto-route/redirect 规则里被消费，而本 fork 用 AutoRoute=false，所以两条路都不走。
 //
 // 规格与验收标准见 docs/easytier_tun_spec.md。
 package easytier
@@ -87,7 +89,7 @@ func CreateTunDevice(options TunDeviceOptions) (packetDevice, error) {
 
 // runTunBridge 双向搬运裸 IP 包，直到 ctx 取消或任一侧出错。
 // ctx 取消时会关闭设备（TUN 的 Read 没有 ctx 参数，只能靠关闭唤醒）。
-func runTunBridge(parent context.Context, device packetDevice, plane packetPlane, local netip.Prefix) error {
+func runTunBridge(parent context.Context, device packetDevice, plane packetPlane, local netip.Prefix, pinned []netip.Prefix) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
@@ -95,6 +97,18 @@ func runTunBridge(parent context.Context, device packetDevice, plane packetPlane
 		// 装不上不阻断：Linux 不需要它，darwin 上缺了它只影响"回给 overlay 对端"的包。
 		log.Warnln("[EasyTier] overlay return route not installed: %v", err)
 	} else {
+		defer cleanup()
+	}
+	// FORK(easytier-tun): tun-routes 真的 pin 进设备 —— 此前只塞进 sing-tun 的
+	// Inet4RouteAddress，而那个字段在 AutoRoute=false 下没有任何消费者 ⇒ 等于没配（实测踩到）。
+	// 空列表时这里一次都不循环，行为与以前完全一致。
+	for _, prefix := range pinned {
+		cleanup, err := ensurePinnedRoute(prefix, local.Addr())
+		if err != nil {
+			// 装不上不阻断：packetPlane 的双向搬运仍然工作，只是该前缀不会走这块设备。
+			log.Warnln("[EasyTier] pinned route %s not installed: %v", prefix, err)
+			continue
+		}
 		defer cleanup()
 	}
 
@@ -328,7 +342,7 @@ func StartTunBridge(parent context.Context, options TunDeviceOptions, plane pack
 			time.Sleep(15 * time.Second)
 			log.Infoln("[EasyTier] ingress sink ready=%v local=%s", CurrentIngressSink() != nil, options.Prefix)
 		}()
-		bridge.err = runTunBridge(ctx, device, plane, options.Prefix)
+		bridge.err = runTunBridge(ctx, device, plane, options.Prefix, options.Routes)
 	}()
 	return bridge, nil
 }

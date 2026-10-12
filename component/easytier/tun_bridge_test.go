@@ -108,7 +108,7 @@ func TestRunTunBridgeForwardsDeviceToPlane(t *testing.T) {
 
 	packetA := []byte{0x45, 0x00, 0x00, 0x3c, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00, 10, 0, 0, 1, 10, 0, 0, 2}
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}, nil) }()
 
 	device.reads <- packetA
 	deadline := time.After(2 * time.Second)
@@ -143,7 +143,7 @@ func TestRunTunBridgeSkipsNonIPv4(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}, nil) }()
 
 	device.reads <- []byte{0x08, 0x06, 0x00, 0x01}                                                                           // 非 IPv4（ARP 风格）
 	device.reads <- []byte{0x00}                                                                                             // 过短
@@ -171,7 +171,7 @@ func TestRunTunBridgeForwardsPlaneToDevice(t *testing.T) {
 	defer cancel()
 
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}, nil) }()
 
 	packet := []byte{0x45, 0x00, 0x00, 0x14, 0x00, 0x03, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 10, 0, 0, 4, 10, 0, 0, 5}
 	plane.incoming <- packet
@@ -198,7 +198,7 @@ func TestRunTunBridgePropagatesDeviceError(t *testing.T) {
 	select {
 	case err := <-func() chan error {
 		ch := make(chan error, 1)
-		go func() { ch <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
+		go func() { ch <- runTunBridge(ctx, device, plane, netip.Prefix{}, nil) }()
 		return ch
 	}():
 		if err == nil {
@@ -214,7 +214,7 @@ func TestRunTunBridgeClosesDeviceOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
-	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}) }()
+	go func() { done <- runTunBridge(ctx, device, plane, netip.Prefix{}, nil) }()
 	cancel()
 
 	select {
