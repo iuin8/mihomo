@@ -10,6 +10,7 @@ import (
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/log"
 
 	"github.com/easytier/easytier/easytier-go/platform"
 	D "github.com/miekg/dns"
@@ -62,14 +63,28 @@ func (s SocketFactory) ListenTCP(ctx context.Context, options platform.TCPListen
 	reuse := options.Bind.ReusePort || options.Bind.ReuseAddr != nil && *options.Bind.ReuseAddr
 	listenOpts := []dialer.Option{dialer.WithAddrReuse(reuse)}
 	if direct, ok := s.Dialer.(dialer.Dialer); ok {
-		return dialer.Listen(ctx, network, address, append(listenOpts, dialer.WithOption(direct.Opt))...)
+		listener, err := dialer.Listen(ctx, network, address, append(listenOpts, dialer.WithOption(direct.Opt))...)
+		return logHostListener(network, address, options.Purpose, listener, err)
 	}
 	if externalTCPListen(options.Purpose) {
 		return nil, fmt.Errorf("easytier: TCP listeners are unavailable through a proxy or custom dialer")
 	}
 	// ProxyNAT, port leases, and hole-punch reservations must bind on the host
 	// even when peer traffic uses dialer-proxy.
-	return dialer.Listen(ctx, network, address, listenOpts...)
+	listener, err := dialer.Listen(ctx, network, address, listenOpts...)
+	return logHostListener(network, address, options.Purpose, listener, err)
+}
+
+// logHostListener 记录宿主侧 TCP 监听的结果 —— guest 的监听口（数据面会话、端口转发）
+// 都落在这里，而失败以前是**静默**的：只有在包永远等不到 ACK 时才看得出问题。
+// 另外，绑定在哪个地址上也必须留证：绑错地址（例如只绑物理网卡）时监听是"存在但收不到包"。
+func logHostListener(network, address string, purpose platform.TCPListenPurpose, listener net.Listener, err error) (net.Listener, error) {
+	if err != nil {
+		log.Warnln("[EasyTier] host TCP listener %s %q (purpose=%v) failed: %v", network, address, purpose, err)
+		return nil, err
+	}
+	log.Debugln("[EasyTier] host TCP listener %s %q (purpose=%v) -> bound %s", network, address, purpose, listener.Addr())
+	return listener, nil
 }
 
 func externalTCPListen(purpose platform.TCPListenPurpose) bool {

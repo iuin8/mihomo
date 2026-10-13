@@ -65,6 +65,9 @@ type TunDeviceOptions struct {
 
 // CreateTunDevice 创建 TUN 设备。需要 root 或 CAP_NET_ADMIN；失败时返回可读错误。
 func CreateTunDevice(options TunDeviceOptions) (packetDevice, error) {
+	// FORK(easytier-tun): 先清掉 exec 式重启继承来的陈旧 TUN fd（见 tun_stale_darwin.go）——
+	// 否则同一个 overlay 地址会被多张接口同时持有，macOS 上该地址直接变得不可用。
+	closeStaleOverlayTunFDs(options.Prefix.Addr())
 	mtu := options.MTU
 	if mtu <= 0 {
 		mtu = defaultTunMTU
@@ -188,13 +191,13 @@ func (s *ingressSink) put(packet []byte) error {
 			log.Debugln("[EasyTier] no host TUN ingress sink; overlay ingress goes to the local TUN device")
 		})
 	}
+	written, err := s.device.Write(packet)
 	if s.logged.Add(1) <= 20 {
-		// 兜底路径的包（前 20 个）：看清楚目的地，并核对校验和 ——
-		// 内核静默丢弃的最常见原因就是校验和不对（guest 可能按"网卡会补"的方式交包）。
-		log.Debugln("[EasyTier] overlay ingress -> local TUN: %s ip_sum=%v l4_sum=%v",
-			describeIPv4Packet(packet), ipv4ChecksumValid(packet), l4ChecksumValid(packet))
+		// 兜底路径的包（前 20 个）：目的地、校验和、以及**写设备的结果** ——
+		// 校验和不对与写入失败都会让包静默消失（内核丢 / 设备丢），必须分开留证。
+		log.Debugln("[EasyTier] overlay ingress -> local TUN: %s ip_sum=%v l4_sum=%v wrote=%d err=%v",
+			describeIPv4Packet(packet), ipv4ChecksumValid(packet), l4ChecksumValid(packet), written, err)
 	}
-	_, err := s.device.Write(packet)
 	return err
 }
 
@@ -369,6 +372,10 @@ func StartTunBridge(parent context.Context, options TunDeviceOptions, plane pack
 			log.Infoln("[EasyTier] ingress sink ready=%v local=%s", CurrentIngressSink() != nil, options.Prefix)
 		}()
 		bridge.err = runTunBridge(ctx, device, plane, options.Prefix, options.Routes)
+		if err := bridge.err; err != nil {
+			// FORK(easytier-tun): 桥停了就是 overlay 通路断了 —— 这条以前没有任何日志。
+			log.Warnln("[EasyTier] TUN bridge stopped: %v", err)
+		}
 	}()
 	return bridge, nil
 }
