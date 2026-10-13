@@ -88,6 +88,9 @@ func CreateTunDevice(options TunDeviceOptions) (packetDevice, error) {
 	if err != nil {
 		return nil, fmt.Errorf("easytier: create TUN %q failed (root or CAP_NET_ADMIN required): %w", name, err)
 	}
+	// FORK(easytier-tun): macOS 的 utun 要求每包带 4 字节地址族头 —— 裸读写会被内核整包丢弃 ✗✓。
+	// 详见 tun_packet_darwin.go（这是"fork 自建 TUN 在 macOS 上完全不通"的真正原因 ✓）。
+	return wrapPacketDevice(device), nil
 	return device, nil
 }
 
