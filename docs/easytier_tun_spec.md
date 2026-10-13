@@ -160,3 +160,45 @@ ICMP（AC7）需客户端侧有 TUN（例如 native 客户端），mihomo 的 SO
 
 1. Docker 只发布 TCP 端口（`-p x:y/tcp`）时 UDP 根本进不去 → 必须 `-p x:y/udp`；
 2. SOCKS5 的 UDP 中继地址可能是容器内网 IP → 用 `--relay <可路由地址>` 覆盖。
+
+## 9. 入向/出向接缝的判据（2026-10-13 两容器实验台实测修正 ✓✓）
+
+### 9.1 现象与定位过程（每一环都有读数）
+
+**借出口一侧永远拿不到 SYN-ACK**：`家侧 → 本机出口` 一律 504/超时。用两容器实验台
+（`et-exit` 出口节点 + `et-borrow` 借出口，同一 docker 网络、独立 overlay 网络名）逐层读出来的链条：
+
+| 层 | 读数 | 结论 |
+| --- | --- | --- |
+| 注入（fork） | `proto6 10.145.0.201:53560 -> 10.145.0.200:9090 flags=0x02 ip_sum=true l4_sum=true` + `inject ok=true` | 包合法、投喂成功 ✓ |
+| gVisor 计数器（反射取 `*stack.Stack` 读 `Stats()`） | `nicRx+1 ipRx+1 ipValid+1 ipDelivered+1 tcpValid+1` | 进栈、本机交付、TCP 层收到 ✓ |
+| sing-tun 转发器（临时给 `stack_gvisor_tcp.go` 加日志） | `HandlePacket` ✓ → `Forward ENTER` **之后再无输出** | ★ 卡在 `performHandshake`（`accept.go:317` `<-notifyCh`，等三次握手完成）✗ |
+| 原因 | 把 `accept_local=1`（用 `--sysctl net.ipv4.conf.default.accept_local=1` 注入，容器内 `/proc/sys` **只读**，直接 echo 会静默失败 ✓） | 立刻全通 ⇒ 卡点是内核丢了 SYN-ACK ✗ |
+
+**内核为什么丢**：出口栈的 SYN-ACK（源 = 本机 overlay 地址 `10.145.0.200`，配在 `easytier0` 上）
+被写进 **mihomo 自己的 TUN 设备**，内核从 `Meta` 口收到"源地址是本机地址"的包 ⇒
+`__fib_validate_source()` 判 martian 源丢弃（`accept_local=0` 是默认值）；macOS 上即使不判 martian，
+也还要 `net.inet.ip.forwarding=1` 才转发 ✗。⇒ **两个平台都不能依赖内核，这条缝必须自己接。**
+
+### 9.2 修正后的两条缝（`component/easytier/tun_egress*.go` + `tun_bridge.go`）
+
+| 方向 | 判据 | 为什么 |
+| --- | --- | --- |
+| 出向（宿主栈 → guest） | `dst ∈ overlay 网段 ∧ dst ≠ 本机` ⇒ **交回 guest**；其余 → 设备 | 对端的回包必须走 overlay；写设备会被内核丢（martian / 不转发）⇒ 对端永远收不到 SYN-ACK |
+| 入向（guest → 宿主） | `dst ∈ overlay 网段`（含本机）⇒ **设备**；不在网段内 ⇒ 投喂 mihomo 的栈 | 网段内的包属于**内核**：本机服务与 **EasyTier 自己的数据面监听口**都在宿主侧；投喂它们会让 mihomo 把数据面握手当新连接再拨一次（实测借出口 ⇒ 503），并让内核发起的 flow 收到 vswitch 回的 RST |
+
+出向的落点是 NIC 的 queueing discipline（`nic.writeRawPacket` 唯一出口缝，gVisor `stack/nic.go:433`）：
+darwin 上 sing-tun 已塞了 `fifo` qdisc（我们包在它外面 ✓），linux 上补等价实现 ✓ —— 平台无关。
+取包必须用 `pkt.AsSlices()`（整包），**不能**用 `NetworkHeader().Slice()`（它只有 20 字节 IP 头 ⇒ 截断）。
+
+### 9.3 实验室复验（`ip_forward=0` **且** `accept_local=0`，即 macOS 默认形态）
+
+| 判据 | 修正前 | 修正后 |
+| --- | --- | --- |
+| 对端 → 本机服务（`wget http://10.145.0.200:9090/version`） | 超时 ✗ | `{"meta":true,...}` ✓ |
+| 对端 → 经本机出网（`/proxies/et-exit-node/delay?url=http://223.5.5.5/`） | 503/504 ✗ | **`{"delay":31}`** ✓✓ |
+| 对端容器内仪器的自检（DIRECT delay） | ✓ | ✓ |
+
+**⇒ 全程零内核协助**（不需要 `ip_forward`、不需要 `accept_local`、不需要 MASQUERADE）——
+这正是"只装 clash 就能用"的要求。第 7 节"转发与 NAT"那一行的历史结论（家侧需
+`net.ipv4.ip_forward=1` + `MASQUERADE`）**只对 native 核成立**；WASI 核走本文这两条缝。

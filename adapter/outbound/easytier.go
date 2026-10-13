@@ -59,6 +59,8 @@ type EasyTier struct {
 	tunBridge *easytier.TunBridge
 	tunPrefix netip.Prefix
 	tunRoutes []netip.Prefix
+	// FORK(easytier-tun): 宿主 TUN 栈出向回 overlay 的出口（与 tun 模式无关，见 tun_egress.go）
+	overlayEgress easytier.OverlayEgress
 }
 
 type EasyTierOption struct {
@@ -265,6 +267,13 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 		}
 		if tunRoutes, err = easytier.TunRoutes(option.TunRoutes); err != nil {
 			return nil, err
+		}
+	} else if strings.TrimSpace(option.IPv4) != "" {
+		// FORK(easytier-tun): 不开宿主 TUN 也要知道本节点网段 —— 出向分流（把发往 overlay
+		// 对端的回包交回 guest，见 component/easytier/tun_egress.go）靠它判断归属。
+		// 这里是**尽力而为**：格式不合法（例如 DHCP 模式）就不分流，绝不因此让出站起不来。
+		if prefix, parseErr := easytier.TunPrefix(option.IPv4); parseErr == nil {
+			tunPrefix = prefix
 		}
 	}
 
@@ -493,6 +502,16 @@ func (e *EasyTier) init() error {
 			log.Debugln("[EasyTier](%s) node info: %+v", e.Name(), info)
 		}
 	}(e.ctx, instance)
+	// FORK(easytier-tun): 登记"经 overlay 送出"的出口 —— 宿主 mihomo 的 TUN 栈给 overlay
+	// 对端的回包必须交回 guest，写进 TUN 设备会被内核丢掉（Linux 判 martian 源 / macOS 需
+	// net.inet.ip.forwarding）。有了它，借出口一侧才可能收到 SYN-ACK。
+	if egress := easytier.NewPlaneEgress(e.ctx, instance, e.tunPrefix); egress != nil {
+		easytier.PublishOverlayEgress(egress)
+		e.mu.Lock()
+		e.overlayEgress = egress
+		e.mu.Unlock()
+		log.Infoln("[EasyTier](%s) overlay egress ready on %s", e.Name(), e.tunPrefix)
+	}
 	// FORK(easytier-tun): 接上宿主 TUN 设备与实例包面（需要 root / CAP_NET_ADMIN）
 	if e.option.Tun {
 		bridge, err := easytier.StartTunBridge(e.ctx, easytier.TunDeviceOptions{
@@ -733,8 +752,11 @@ func (e *EasyTier) shutdown() error {
 	e.mu.Lock()
 	tunBridge := e.tunBridge
 	e.tunBridge = nil
+	overlayEgress := e.overlayEgress
+	e.overlayEgress = nil
 	e.mu.Unlock()
-	// FORK(easytier-tun): 先停包面搬运并关设备，再关实例
+	// FORK(easytier-tun): 先撤出向出口（否则宿主栈会往已停的实例里塞包），再停包面搬运并关设备
+	easytier.ClearOverlayEgress(overlayEgress)
 	if tunBridge != nil {
 		_ = tunBridge.Close()
 	}

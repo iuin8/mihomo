@@ -135,15 +135,20 @@ func runTunBridge(parent context.Context, device packetDevice, plane packetPlane
 
 // ingressSink 把 overlay 入向包交给宿主。
 //
-// FORK(easytier-tun): 优先投喂宿主 mihomo 的 TUN 栈（栈没有注入口，故由 WrapTunForIngress 多路复用），
-// 由 mihomo 统一做路由 / 规则 / NAT —— 这是"本机给别人当网关"唯一在各平台都成立的路径；
-// 没有可用栈时退回写进本地 TUN 设备（Linux 上内核会转发 + 容器 NAT，macOS 上只够本机用）。
+// 判据（2026-10-13 两容器实验台实测修正 ✓，见 docs/easytier_tun_spec.md）：
 //
-// FORK(easytier-tun): 目的地是**本机自己**的包**要**投喂 —— 本机经远端出口的连接，
-// 回程包的目的地就是本机 overlay 地址（连接由本节点的数据面发起），不投喂它就永远完不成。
+//   - 目的地**落在本节点 overlay 网段**（含本机自己的地址）⇒ 写 TUN 设备，交给内核。
+//     这类包属于内核：本机服务（例如 sshd、mihomo 自己的控制器）与 **EasyTier 自己的数据面
+//     监听口**都在内核里 —— guest 把包交给宿主，正是因为那个 socket 在宿主侧。
+//     投喂它们进 mihomo 的栈是**错**的：mihomo 会当成新连接再拨一次同一个地址，把
+//     数据面握手搅掉（实测：借出口的 delay 请求 ⇒ 数据面 SYN 被 mihomo 截胡 ⇒ 503）；
+//     更糟的是内核发起的 flow（本机 → 对端）其回程包也会被投喂 ⇒ 栈里没有连接状态 ⇒ 回 RST。
 //
-// 只有"目的地是**另一个** overlay 节点"的包才跳过：投喂那些会让 mihomo 反过来再拨同一个
-// overlay 地址、绕回 overlay —— 那类用法应交给 EasyTier 自身的子网代理（proxy-networks）。
+//   - 目的地**不在** overlay 网段（公网 / 其它子网）⇒ 投喂宿主 mihomo 的 TUN 栈，
+//     由 mihomo 统一做路由 / 规则 / 出口 —— 这是"本机替对端出网"（exit / 子网代理）的包，
+//     也是唯一在各平台都成立的路径（macOS 上内核不转发，见 tun_egress.go 顶注）。
+//
+// 没有可用栈时一律退回写设备（与以前一致）。
 type ingressSink struct {
 	device    io.Writer    // 本地 TUN 设备（兜底）
 	local     netip.Prefix // 本节点 overlay 网段，可为零值
@@ -155,18 +160,28 @@ type ingressSink struct {
 
 func (s *ingressSink) put(packet []byte) error {
 	sink := CurrentIngressSink()
-	if s.seen.Add(1)%100 == 1 {
-		// 每 100 个包一条：sink 是否就位、本节点网段解析成什么、投喂了多少（排障用）。
-		log.Debugln("[EasyTier] overlay ingress: sink=%v local=%s total=%d injected=%d",
-			sink != nil, s.local, s.seen.Load(), s.injected.Load())
-	}
-	if sink != nil && !packetDestIsOtherOverlayPeer(packet, s.local) {
-		if sink.Inject(packet) {
+	total := s.seen.Add(1)
+	if sink != nil && !packetDestInOverlay(packet, s.local) {
+		injected := sink.Inject(packet)
+		if injected {
 			s.injected.Add(1)
-		} else {
+		}
+		// 计数必须在**决策之后**打印：这一行以前在 Inject 之前打印，于是首包永远显示
+		// injected=0，被读成"过滤器把包丢了"（实测误导过一次）——那次投喂到底成没成
+		// 根本没被记录。前 20 个包连校验和一起打：排障时一眼看出 guest 交来的包是否合法。
+		if total%100 == 1 || s.logged.Add(1) <= 20 {
+			log.Debugln("[EasyTier] overlay ingress: sink=true local=%s total=%d injected=%d now=%v %s ip_sum=%v l4_sum=%v",
+				s.local, total, s.injected.Load(), injected,
+				describeIPv4Packet(packet), ipv4ChecksumValid(packet), l4ChecksumValid(packet))
+		}
+		if !injected {
 			log.Debugln("[EasyTier] overlay ingress packet dropped: sink queue is full")
 		}
 		return nil
+	}
+	if total%100 == 1 {
+		log.Debugln("[EasyTier] overlay ingress: sink=%v local=%s total=%d injected=%d (no host stack sink)",
+			sink != nil, s.local, total, s.injected.Load())
 	}
 	if sink == nil {
 		s.localOnce.Do(func() {
@@ -258,11 +273,22 @@ func describeIPv4Packet(packet []byte) string {
 	return fmt.Sprintf("%s %s:%d -> %s:%d%s len=%d", protocol, source, sourcePort, destination, destinationPort, flags, len(packet))
 }
 
-// packetDestIsOtherOverlayPeer 判断 IPv4 包的目的地址是否落在 prefix 内（prefix 为零值时恒 false）。
+// packetDestInOverlay 判断目的地是否落在本节点 overlay 网段内（含本机自己的地址）。
+// prefix 为零值、包不是 IPv4 时一律 false。
+func packetDestInOverlay(packet []byte, prefix netip.Prefix) bool {
+	if !prefix.IsValid() || len(packet) < minIPv4PacketLen || packet[0]>>4 != 4 {
+		return false
+	}
+	dst := netip.AddrFrom4([4]byte{packet[16], packet[17], packet[18], packet[19]})
+	return prefix.Contains(dst)
+}
+
 // packetDestIsOtherOverlayPeer 判断目的地是否**落在本节点 overlay 网段、但不是本机自己**。
 // 这类包不投喂宿主栈（会绕回 overlay）；而目的地在网段内**且就是本机**的包必须投喂。
 func packetDestIsOtherOverlayPeer(packet []byte, prefix netip.Prefix) bool {
-	if !prefix.IsValid() || len(packet) < 20 {
+	// 版本 nibble 必须显式判：网段是 IPv4 的，而 helper 直接按 IPv4 偏移取地址 ——
+	// 不判版本的话，一个 IPv6 包的 16..20 字节会被误读成 IPv4 目的地址（可能命中网段 ⇒ 误分流）。
+	if !prefix.IsValid() || len(packet) < 20 || packet[0]>>4 != 4 {
 		return false
 	}
 	dst := netip.AddrFrom4([4]byte{packet[16], packet[17], packet[18], packet[19]})

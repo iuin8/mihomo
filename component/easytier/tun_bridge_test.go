@@ -266,20 +266,38 @@ func TestPacketDestInPrefix(t *testing.T) {
 	if !packetDestIsOtherOverlayPeer(ipv4Packet([4]byte{10, 144, 0, 6}), overlay) {
 		t.Fatal("overlay destination must be inside the prefix")
 	}
+	if packetDestInOverlay(ipv4Packet([4]byte{10, 144, 0, 6}), netip.MustParsePrefix("10.144.0.6/24")) != true {
+		t.Fatal("our own address must still count as inside the overlay prefix")
+	}
+	if packetDestInOverlay(ipv4Packet([4]byte{1, 1, 1, 1}), overlay) {
+		t.Fatal("public destination must be outside the overlay prefix")
+	}
+	ipv6In := ipv4Packet([4]byte{10, 144, 0, 6})
+	ipv6In[0] = 0x60
+	if packetDestInOverlay(ipv6In, overlay) {
+		t.Fatal("IPv6 packets must never be classified by the IPv4 helper")
+	}
 	if packetDestIsOtherOverlayPeer(ipv4Packet([4]byte{10, 144, 1, 6}), overlay) {
 		t.Fatal("non-overlay destination must be outside the prefix")
 	}
 	if packetDestIsOtherOverlayPeer(ipv4Packet([4]byte{10, 144, 0, 6}), netip.Prefix{}) {
 		t.Fatal("invalid prefix must match nothing")
 	}
+	// IPv6 包不能被按 IPv4 偏移误读：0x60 版本 nibble + 恰好长得像网段地址的字节。
+	ipv6 := ipv4Packet([4]byte{10, 144, 0, 6})
+	ipv6[0] = 0x60
+	if packetDestIsOtherOverlayPeer(ipv6, overlay) {
+		t.Fatal("IPv6 packets must never be classified by the IPv4 helper")
+	}
 }
 
-// 有宿主 TUN 注入口时：公网目标与**本机自己**的 overlay 目标都投喂进栈；
-// 只有**其它** overlay 节点仍留在本地 TUN（投喂它们会让 mihomo 再拨一次、绕回 overlay）。
+// 有宿主 TUN 注入口时：只有**目的地不在 overlay 网段**的包才投喂进栈。
 //
-// 2026-10-10 实测修正：旧版本把"本机自己的 overlay 地址"也留在设备上，注释里记为
-// "macOS 上走不通"的已知限制 —— 那正是生产上"家侧经本机出口打公网 502/Timeout"的原因：
-// 本机经远端出口的连接，回程包目的地**就是本机 overlay 地址**，留在设备上＝永远不进 mihomo 的栈。
+// 判据在 2026-10-13 用两容器实验台逐个钉过（见 docs/easytier_tun_spec.md）：
+//   - overlay 网段内的包（含本机自己的地址）属于内核 —— 本机服务与 **EasyTier 自己的
+//     数据面监听口**都是内核 socket；投喂它们会让 mihomo 拿数据面握手当新连接再拨一次
+//     （实测借出口 ⇒ 503），并让内核发起的 flow 收到 gVisor 回的 RST；
+//   - overlay 网段外的包（公网 / 其它子网）才是"本机替对端出网"，必须交给 mihomo 的栈。
 func TestIngressSinkPrefersHostTun(t *testing.T) {
 	sink := &recordingSink{}
 	PublishIngressSink(sink)
@@ -295,16 +313,16 @@ func TestIngressSinkPrefersHostTun(t *testing.T) {
 		t.Fatalf("public destination must go to the host TUN: sink=%d device=%d", len(sink.packets), len(device.packets))
 	}
 
-	// 目的地就是本机自己（10.144.0.6 = local 的前缀地址）：必须投喂进栈 ——
-	// 本机经远端出口的连接，回程包就是这个形状。
+	// 目的地就是本机自己（10.144.0.6 = local 的前缀地址）：留在本地 TUN ——
+	// 那个 socket 在内核侧（本机服务 / EasyTier 数据面监听口），mihomo 不该截胡。
 	if err := ingress.put(ipv4Packet([4]byte{10, 144, 0, 6})); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if len(sink.packets) != 2 || len(device.packets) != 0 {
-		t.Fatalf("packets for our own overlay address must be injected: sink=%d device=%d", len(sink.packets), len(device.packets))
+	if len(sink.packets) != 1 || len(device.packets) != 1 {
+		t.Fatalf("packets for our own overlay address must stay on the local TUN: sink=%d device=%d", len(sink.packets), len(device.packets))
 	}
 
-	// 其它 overlay 节点（不是本机地址）：仍交给内核按 10.144/24 路由回隧道。
+	// 其它 overlay 节点：同样留在本地 TUN（按 10.144/24 路由回隧道）。
 	deviceBefore, sinkBefore := len(device.packets), len(sink.packets)
 	if err := ingress.put(ipv4Packet([4]byte{10, 144, 0, 1})); err != nil {
 		t.Fatalf("put: %v", err)

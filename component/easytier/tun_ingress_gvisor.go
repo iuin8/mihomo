@@ -8,7 +8,13 @@
 //
 // 只内嵌 tun.Tun 接口的包装器断言必然失败，于是栈拒绝启动并报
 // "gVisor stack is unsupported on current platform"，TUN 被回写成关闭 ——
-// 表现为注入口已发布、包却永远没人读。所以这里把两个方法**原样透传**给真设备。
+// 表现为注入口已发布、包却永远没人读。所以这里把两个方法**原样透传**给真设备，
+// 并在 `NewEndpoint()` 里接上两条缝：
+//   - 入向：栈拿的是真设备 endpoint（fdbased，读 tun fd），它从不读我们的 Read，
+//     所以注入包由我们的 endpoint 额外投喂（见 tun_ingress.go）；同一个 fd 不能有两个
+//     读者，故停掉 pump；
+//   - 出向：目的地属于 overlay 对端的包不能写设备（内核会丢，见 tun_egress.go），
+//     改由 NIC 的 queueing discipline 分流交回 guest。
 package easytier
 
 import (
@@ -59,7 +65,12 @@ func (t *injectableTun) NewEndpoint() (stack.LinkEndpoint, stack.NICOptions, err
 	// gvisor 栈读的是这个 endpoint（真设备 fd），不会走 injectableTunBase.Read ——
 	// 所以入向要由我们的 endpoint 额外投喂，同时停掉 pump（同一个 fd 不能有两个读者）。
 	t.injectableTunBase.stopPump()
-	return &injectableEndpoint{LinkEndpoint: real, base: t.injectableTunBase}, opts, nil
+	endpoint := &injectableEndpoint{LinkEndpoint: real, base: t.injectableTunBase}
+	// 出向：替换 NIC 的 queueing discipline（`nic.writeRawPacket` 唯一的出口缝，
+	// gVisor `stack/nic.go:433`）。darwin 上 sing-tun 本来就有 fifo qdisc，我们包在它外面；
+	// linux 上没有，补一个等价实现。平台无关。
+	opts.QDisc = wrapQDiscForOverlay(opts.QDisc, endpoint)
+	return endpoint, opts, nil
 }
 
 // injectableEndpoint 包住真 endpoint：入向仍由真 endpoint 独占读（同一个 fd 不能有两个读者），
