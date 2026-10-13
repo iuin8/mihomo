@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -75,7 +76,7 @@ func CreateTunDevice(options TunDeviceOptions) (packetDevice, error) {
 	name := tun.CalculateInterfaceName(tunDeviceNamePrefix)
 	device, err := tun.New(tun.Options{
 		Name:              name,
-		Inet4Address:      []netip.Prefix{options.Prefix},
+		Inet4Address:      []netip.Prefix{tunAddressPrefix(options.Prefix)},
 		MTU:               uint32(mtu),
 		GSO:               false,
 		AutoRoute:         false, // 只装显式指定的前缀，绝不抢默认路由
@@ -96,8 +97,10 @@ func runTunBridge(parent context.Context, device packetDevice, plane packetPlane
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
+	// FORK(easytier-tun): 保留这条网段路由 —— **"本机内核 → overlay 对端"那条路仍然需要它** ✓
+	// （2026-10-13 验证：删掉它并不能修好 macOS 的本地交付 ✗，所以没有任何理由去掉 ✗✓）。
 	if cleanup, err := ensureOverlayRoute(local, local.Addr()); err != nil {
-		// 装不上不阻断：Linux 不需要它，darwin 上缺了它只影响"回给 overlay 对端"的包。
+		// 装不上不阻断：Linux 不需要它，darwin 上缺了它只影响"内核发往 overlay 对端"的包。
 		log.Warnln("[EasyTier] overlay return route not installed: %v", err)
 	} else {
 		defer cleanup()
@@ -159,6 +162,24 @@ type ingressSink struct {
 	seen      atomic.Uint64
 	injected  atomic.Uint64
 	logged    atomic.Uint64
+}
+
+// tunAddressPrefix 决定设备上配多大的地址前缀。
+//
+// FORK(easytier-tun): **darwin 上用 /32** —— 2026-10-13 实测（干净状态、单张持有者 ✓）：
+// 设备上配 /24 时 macOS 会派生 `10.144/24 → utun1025` 的 on-link 网段路由 ✗，于是**连本机自己
+// 的 overlay 地址都不再本地交付** ✗ —— `nc -v -z 10.144.0.6 <任意端口>`（本机自连 ✓、家侧拨入 ✓、
+// 连系统自带的 ControlCenter:7000 ✓）一律 `Operation timed out` ✓，而包既没进本地 socket ✓
+// 也没进隧道 ✓；同一台机器上 mihomo 自己的 TUN（`198.18.0.1/30`、**没有**网段路由 ✓）一切正常 ✓✓。
+//
+// /32 之后设备只持有**一个本机地址**、不派生网段路由 ✓ ⇒ 内核按正常本机地址做本地交付 ✓✓；
+// 对端网段的路由由 ensureOverlayRoute 自己装 ✓（darwin 本来就装 ✓，见 tun_route.go 的说明 ✓）。
+// 其它平台保持原前缀 ✓：Linux 依赖内核从接口地址派生网段路由 ✓（实测可用 ✓，别动它 ✗）。
+func tunAddressPrefix(prefix netip.Prefix) netip.Prefix {
+	if runtime.GOOS == "darwin" && prefix.IsValid() && prefix.Addr().Is4() {
+		return netip.PrefixFrom(prefix.Addr(), 32)
+	}
+	return prefix
 }
 
 func (s *ingressSink) put(packet []byte) error {
@@ -303,6 +324,7 @@ func packetDestIsOtherOverlayPeer(packet []byte, prefix netip.Prefix) bool {
 
 func copyDeviceToPlane(ctx context.Context, device io.Reader, plane packetPlane) error {
 	buffer := make([]byte, maxTunPacketSize)
+	var logged atomic.Uint64
 	for {
 		length, err := device.Read(buffer)
 		if err != nil {
@@ -313,6 +335,11 @@ func copyDeviceToPlane(ctx context.Context, device io.Reader, plane packetPlane)
 		}
 		if length == 0 || !isIPv4Packet(buffer[:length]) {
 			continue
+		}
+		if logged.Add(1) <= 20 {
+			// FORK(easytier-tun): 设备→guest 方向也必须可见 ✓ —— 缺了它就看不出"内核把包又送回隧道"
+			// 这类闭环（实测排查 2026-10-13 的 macOS 本地交付问题时正是盲区 ✗）。
+			log.Debugln("[EasyTier] TUN device -> overlay: %s", describeIPv4Packet(buffer[:length]))
 		}
 		if err := plane.SendPacket(ctx, buffer[:length]); err != nil {
 			if ctx.Err() != nil {
