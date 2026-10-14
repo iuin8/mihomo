@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/easytier"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
@@ -61,6 +62,8 @@ type EasyTier struct {
 	tunRoutes []netip.Prefix
 	// FORK(easytier-tun): 宿主 TUN 栈出向回 overlay 的出口（与 tun 模式无关，见 tun_egress.go）
 	overlayEgress easytier.OverlayEgress
+	// FORK(easytier-exit-egress): 替对端拨号用的出网口（尊重 dialer-proxy）
+	forwardDialer C.Dialer
 }
 
 type EasyTierOption struct {
@@ -307,7 +310,16 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 		ctx:        ctx,
 		cancel:     cancel,
 	}
-	outbound.dialer = option.NewDialer(outbound.DialOptions())
+	// FORK(easytier-exit-egress): 两个出网口 —— 隧道自身直连；**替对端拨号**（ProxyNAT）走 dialer-proxy。
+	// 父类 BasicOption.NewDialer 在 DialerProxy 为空时返回的就是普通 dialer，所以两种情况都对 ✓。
+	outbound.dialer = dialer.NewDialer(outbound.DialOptions()...)
+	log.Infoln("[EasyTier](%s) dialer-proxy=%q interface=%q", option.Name, option.DialerProxy, option.Interface)
+	if option.DialerProxy != "" {
+		outbound.forwardDialer = newLazyDialer(func() C.Dialer { return option.NewDialer(outbound.DialOptions()) })
+		log.Infoln("[EasyTier](%s) forward dialer armed (dialer-proxy=%s)", option.Name, option.DialerProxy)
+	} else {
+		log.Infoln("[EasyTier](%s) no dialer-proxy: forwarded dials stay direct", option.Name)
+	}
 	outbound.unregister = dns.RegisterEasyTierDnsClient(option.Name, easyTierDNSTransport{easytier: outbound})
 	if option.Prewarm {
 		// FORK(easytier-prewarm): 只调一次；阻塞在这个 goroutine 里等就绪，失败/中断都由上游 loop() 处理
@@ -454,7 +466,7 @@ func (e *EasyTier) init() error {
 	// WASI module's tracing output goes to io.Discard and an embedded instance is a black box.
 	guestLog := easytier.NewGuestLogWriter(instanceName)
 	host, err := corehost.New(e.ctx, corehost.Options{
-		Platform:  easytier.Services(e.dialer),
+		Platform:  easytier.ServicesWithForward(e.dialer, e.forwardDialer),
 		LogWriter: guestLog,
 	})
 	if err != nil {

@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -17,9 +19,25 @@ import (
 )
 
 // Services wraps a mihomo dialer as EasyTier platform capabilities.
-func Services(d C.Dialer) platform.Services {
+func Services(d C.Dialer) platform.Services { return ServicesWithForward(d, nil) }
+
+// ServicesWithForward 区分两个出网口（FORK(easytier-exit-egress) ✓）：
+//
+//   - d：隧道**自身**的流量（会合点、打洞、STUN 探测、数据面会话的连接、DNS 环境）—— 一律直连 ✓，
+//     绝不因为"代理不可用"把 overlay 一起拖死 ✗；
+//   - forward：**替 overlay 对端拨的内层连接** —— 也就是"家侧借本机出口"真正的出网口 ✓，
+//     它应当尊重 mihomo 的 `dialer-proxy` ✓。
+//
+// **判据是量出来的，不是猜的** ✓（2026-10-14 实验室，带 purpose 日志 ✓）：
+//
+//	借方:  purpose=5(STUNProbe) → *:3478      ／ purpose=3(Manual) → 出口:11110（数据面会话）
+//	出口:  purpose=5(STUNProbe) → *:3478      ／ **purpose=4(ProxyNAT) → 目标:端口  ← 替对端拨的那条**
+//
+// ⇒ 只有 `TCPConnectProxyNAT` 是"替对端拨号" ✓。先前误用 `TCPConnectDataPlane` ✗：
+// 它同时覆盖数据面**会话自身**的连接 ⇒ 一代理就把会话打死（实测：整条出站起不来/全部目标 503 ✗）。
+func ServicesWithForward(d, forward C.Dialer) platform.Services {
 	return platform.Services{
-		Sockets:     SocketFactory{Dialer: d},
+		Sockets:     SocketFactory{Dialer: d, ForwardDialer: forward},
 		DNS:         DNSResolver{},
 		Environment: ConnectorEnvironment{Dialer: d},
 	}
@@ -33,11 +51,38 @@ func Services(d C.Dialer) platform.Services {
 // dialer-proxy is set. FakeTCP is not supported.
 type SocketFactory struct {
 	Dialer C.Dialer
+	// ForwardDialer 只用于 `TCPConnectProxyNAT`（替对端转发的内层连接）；为 nil 时回落到 Dialer。
+	ForwardDialer C.Dialer
+}
+
+// connectDialer 按用途选出网口：**只有替对端拨号**（ProxyNAT）走 ForwardDialer ✓。
+func (s SocketFactory) connectDialer(purpose platform.TCPConnectPurpose) C.Dialer {
+	if purpose == platform.TCPConnectProxyNAT && s.ForwardDialer != nil {
+		return s.ForwardDialer
+	}
+	return s.Dialer
+}
+
+// connectPurposeLog 每个 purpose 只记前几条 —— 用来回答"谁在拨号"：
+// 出口替对端转发走哪个 purpose、隧道自身的连接又是哪个（2026-10-14 实测 ✓，见 user-visible 台账）。
+var connectPurposeLog sync.Map // platform.TCPConnectPurpose -> *atomic.Uint64
+
+func logConnectPurpose(purpose platform.TCPConnectPurpose, remote *net.TCPAddr) {
+	counter, _ := connectPurposeLog.LoadOrStore(purpose, new(atomic.Uint64))
+	if count := counter.(*atomic.Uint64).Add(1); count <= 10 {
+		log.Debugln("[EasyTier] host TCP connect purpose=%d -> %v (#%d)", purpose, remote, count)
+	}
 }
 
 func (s SocketFactory) ConnectTCP(ctx context.Context, options platform.TCPConnectOptions) (net.Conn, error) {
 	if options.Purpose == platform.TCPConnectFake {
 		return nil, fmt.Errorf("easytier: FakeTCP is not supported")
+	}
+	logConnectPurpose(options.Purpose, options.RemoteAddr)
+	// 明确记一条"这条走了哪个出网口、用的是哪个具体 dialer" ✓ —— 一句话定性 ✓。
+	if purpose := options.Purpose; purpose == platform.TCPConnectProxyNAT {
+		chosen := s.connectDialer(purpose)
+		log.Debugln("[EasyTier] connect purpose=%d -> dialer %T (forward=%T)", purpose, chosen, s.ForwardDialer)
 	}
 	if options.RemoteAddr == nil {
 		return nil, fmt.Errorf("easytier: TCP connect is missing a remote address")
