@@ -88,7 +88,17 @@ func (s SocketFactory) ConnectTCP(ctx context.Context, options platform.TCPConne
 		return nil, fmt.Errorf("easytier: TCP connect is missing a remote address")
 	}
 	network := tcpNetwork(options.Bind)
-	return s.Dialer.DialContext(ctx, network, options.RemoteAddr.String())
+	dialer := s.connectDialer(options.Purpose)
+	conn, err := dialer.DialContext(ctx, network, options.RemoteAddr.String())
+	if err == nil && options.Purpose == platform.TCPConnectProxyNAT {
+		// 替对端拨号这条链全程在用户态（不进 /connections、不过 TUN），只能靠自己记字节数判回程 ✓
+		conn = wrapConnWithStats(conn, fmt.Sprintf("purpose=%d", options.Purpose), options.RemoteAddr.String())
+	}
+	if err != nil {
+		// 记下"哪个出网口、什么错误" ✓ —— 排查"替对端拨号到底走没走代理"时，这一行就是判据 ✓
+		log.Debugln("[EasyTier] TCP connect purpose=%d -> %s via %T failed: %v", options.Purpose, options.RemoteAddr, dialer, err)
+	}
+	return conn, err
 }
 
 func (s SocketFactory) BindUDP(ctx context.Context, options platform.UDPBindOptions) (net.PacketConn, error) {
