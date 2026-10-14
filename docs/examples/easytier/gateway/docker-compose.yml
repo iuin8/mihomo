@@ -25,6 +25,11 @@ services:
     # 生产建议钉版本而不是 latest：GW_TAG=v1.19.32-fa.1001 docker compose up -d
     image: ghcr.io/iuin8/mihomo:${GW_TAG:-latest}
     container_name: mihomo-gateway
+    # 「合并路线」：宿主终端也走本机出口时必须 host 网络 —— 只有这样容器里的 mihomo
+    # 才看得到宿主的流量并接管它 ✓（bridge 模式下宿主的流量根本进不来 ✗）。
+    # 注意：host 模式下容器监听口 = 宿主端口（7890/9090/11110 ✓），起之前先确认没被占 ✓；
+    # 且 docker 不允许在 host 模式下设 net.ipv4.ip_forward 之类的 sysctls ✓（原 sysctls 段已删 ✓）。
+    network_mode: host
     restart: unless-stopped
 
     # 建 TUN 需要 NET_ADMIN + /dev/net/tun（网关模式唯一的两个硬性要求）
@@ -34,9 +39,6 @@ services:
       - /dev/net/tun:/dev/net/tun
 
     # 容器内 /proc/sys 只读，路由器需要的转发开关只能在这里注入
-    sysctls:
-      net.ipv4.ip_forward: 1
-
     # 最小权限收敛：容器内不需要再提权
     security_opt:
       - no-new-privileges:true
@@ -56,15 +58,15 @@ services:
 
     volumes:
       - ./gateway.yaml:/root/.config/mihomo/config.yaml:ro
+
+      # ← 改成你的 geoip 目录：Geo 数据必须持久化。否则重建容器时它会去 GitHub 拉 GeoIP/GeoSite，
+      #    国内网络拉不到 ⇒ fatal ⇒ 重启循环 ✗（实测踩过 ✓）。
+      - /data/docker/mihomo/geoip/geoip.metadb:/root/.config/mihomo/geoip.metadb:ro
+      - /data/docker/mihomo/geoip/GeoSite.dat:/root/.config/mihomo/GeoSite.dat:ro
       # 节点标识（machine_id）的持久化点 ✓ —— 用 Docker 托管卷，不落在仓库目录里 ✓（不需要用户看/改 ✓）
       # · 名字**显式固定**：否则默认是 <project>_gateway-state ✗，改一次项目名就换卷 ✓（今天刚改过 ✗）
       # · `docker compose down -v` / `docker volume prune` 会删掉它 ✗ → 只会换一个新标识 ✓，不会断连 ✓
       - gateway-state:/root/.config/mihomo/easytier
-      # Geo 数据（GeoIP/GeoSite）必须**持久化** ✗✓ —— 否则容器每次重建都要联网下载 ✓，
-      # 国内拉不回 GitHub ✗ → `can't download MMDB` → `fatal` 重启循环 ✓（2026-10-07 实测 ✓）
-      # 首次准备：把 release 里这两个文件放到 ./geoip/ ✓（经代理下最快 ✓）
-      - ./geoip/geoip.metadb:/root/.config/mihomo/geoip.metadb:ro
-      - ./geoip/GeoSite.dat:/root/.config/mihomo/GeoSite.dat:ro
 
     logging:
       driver: json-file

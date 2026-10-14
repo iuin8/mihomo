@@ -14,63 +14,86 @@
 # 两个硬性要求由 docker-compose.yml 满足（NET_ADMIN + /dev/net/tun、ip_forward=1）；
 # NAT 不需要 —— 实测 EasyTier 在 TUN 模式下自己会 SNAT（SOP §6.13）✓。
 # 你只需改下面标了「改这里」的几处，并保留 prewarm: true（家侧必需）。
+
+# ── 2026-10-14 补：宿主终端接管（"合并路线"）────────────────────────────────────
+# 目标：家侧**宿主机自己**的流量（终端 curl、浏览器…）也走本机出口。
+# 做法：容器改 network_mode: host（见 docker-compose.yml ✓）＋ 下面这段 tun。
+# 安全底线：route-exclude-address 里的私网段**绝不能省** ✓ —— 一旦把管理面
+# （ssh 来源网段）、内网、docker 网桥也接管，就会把自己的管理连接送进隧道 ✗。
+# 实测判据：宿主上 `ip -o link show | grep -c Meta` = 1 ✓、
+#          宿主 `curl https://www.google.com` = 200 ✓、另开一个 ssh 会话仍通 ✓。
 mixed-port: 7890
 allow-lan: true
 bind-address: 0.0.0.0
 mode: rule
 log-level: info
 ipv6: false
-# 只绑回环：容器内的健康检查用 127.0.0.1 探它，
-# 这样即使以后把容器接到别的网络、或临时加了 9090 端口映射，API 也不会裸露出去。
-# 需要在宿主机上直接调 API 调试时，改成 0.0.0.0:9090 并在 compose 里显式加端口映射。
 external-controller: 127.0.0.1:9090
-
+tun:
+  enable: true
+  stack: gvisor
+  auto-route: true
+  auto-detect-interface: true
+  route-exclude-address:
+    - 10.0.0.0/8
+    - 127.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
+  dns-hijack:
+    - any:53
 proxies:
-  - name: et-gateway
-    type: easytier
-    network-name: private-overlay
-    network-secret: "<改这里：与客户端一致的强密钥>"
-    hostname: "<改这里：本网关名，全网唯一>"
-    instance-name: "<改这里：同上>"
-    ipv4: 10.144.0.2/24          # TUN 模式必填，且必须是带前缀的 IPv4 CIDR
-    state-dir: /root/.config/mihomo/easytier
-    listeners: ["tcp://0.0.0.0:11010", "udp://0.0.0.0:11010"]   # 保留即可，无需端口映射
-    peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]           # 家侧无公网时靠它会合（见 rendezvous/）
-    # 当出口节点 ✓：客户端把目标交给家侧落地，再由家侧经本地网络出去
-    # 场景：内网服务通过**端口映射**发布到公网（域名解析出公网 IP ✗），
-    # 此时只有"到了家侧再访问"才通 ✓ —— 客户端配 exit-nodes 指向本节点即可 ✓。
-    enable-exit-node: true
-    proxy-networks: ["<改这里：家里网段，如 192.168.1.0/24>"]
-    udp: true
-    mtu: 1380                                # 同时作为 TUN 设备 MTU
-    tun: true                                # ← 本 fork 的能力：建 TUN + 接包面
-    prewarm: true                            # ← 服务端必需：家侧没有任何流量会用到这个出站，
-                                             #    不预启动就永远不会建实例、TUN 也不会出现（客户端连不进来）
-    tun-routes: []                           # 家侧是网关，内网直连，无需额外路由
-    # 需要"某个网段走内核直通"时才填，例如 tun-routes: ["192.168.1.0/24"]
-    # 注意：本机所在网段与家里重叠时不要 pin，否则会抢本机局域网流量。
-
-  # ⭐ 出口拨号线：让家侧能"借某个客户端出网"✓（2026-10-07 实测补齐 ✓）
-  #   · 只有这个出站需要 exit-nodes ✓；规则里指向它的目标会**真的进 overlay** ✓
-  #   · 若指向没有 exit-nodes 的出站（如上面的网关本体）✗ → 拨号落回本地 ✓
-  #     实测报 `network is unreachable` ✓ —— 这个错误串就是判据 ✓
-  - name: et-client
-    type: easytier
-    network-name: "<改这里：与客户端一致>"
-    network-secret: "<改这里：与客户端一致>"
-    no-listener: true                 # 它只是拨号线，不需要自己的监听 ✓
-    udp: true
-    prewarm: true                     # 没有它实例不会被拉起 ✓ → overlay 里看不到 ✓（实测 ✓）
-    exit-nodes: ["<改这里：客户端的 overlay 地址，如 10.144.0.6>"]
-    peers: ["tcp://<改这里：会合点>:11010"]
-
+- name: et-gateway
+  type: easytier
+  network-name: private-overlay
+  network-secret: "<改这里：与所有节点一致的网络密钥>"
+  hostname: ssy-fa-gw
+  instance-name: ssy-fa-gw
+  ipv4: 10.144.0.2/24
+  state-dir: /root/.config/mihomo/easytier
+  listeners:
+  - tcp://0.0.0.0:11110
+  - udp://0.0.0.0:11110
+  peers:
+  - tcp://<改这里：会合点公网IP或域名>:11010
+  enable-exit-node: true
+  proxy-networks: ["<改这里：要公告给别人的网段，如 192.168.1.0/24>"]
+  udp: true
+  mtu: 1380
+  tun: true
+  prewarm: true
+  tun-routes: []
+- name: et-mac
+  type: easytier
+  network-name: private-overlay
+  network-secret: "<改这里：与所有节点一致的网络密钥>"
+  no-listener: true
+  peers:
+  - tcp://<改这里：会合点公网IP或域名>:11010
+  udp: true
+  ipv4: 10.144.0.1/24
+  tun: true
+  tun-routes:
+  - 1.1.1.1/32
+  - 10.145.0.0/24
+  exit-nodes:
+  - 10.144.0.6
+  prewarm: true
 dns:
   enable: true
-  # ⭐ 国外域名的解析也走客户端 ✓ —— 否则家侧（国内）DNS 会返回**被污染的 IP** ✗，
-  #    然后客户端照着假 IP 去连 → `i/o timeout` ✓（实测：google 被解析成 185.45.5.35 ✗）
-  #    这个 `#<出站名>` 写法与集群 DNS 那条完全一样 ✓（见 client/subscription.yaml ✓）
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
   nameserver-policy:
-    "geosite:geolocation-!cn": ["https://1.1.1.1/dns-query#et-client"]
+    geosite:geolocation-!cn:
+    - https://1.1.1.1/dns-query#et-mac
+sniffer:
+  enable: true
 
 rules:
-  - MATCH,DIRECT
+- IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+- IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+- IP-CIDR,192.168.0.0/24,et-mac,no-resolve
+- GEOIP,private,DIRECT,no-resolve
+- GEOSITE,cn,DIRECT
+- GEOIP,cn,DIRECT
+- MATCH,et-mac
