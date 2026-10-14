@@ -56,7 +56,7 @@ type EasyTier struct {
 	unregister func()
 	// FORK(easytier-guestlog): 转发 guest 的 stdout/stderr，Close 时冲刷残余
 	guestLog *easytier.GuestLogWriter
-	// FORK(easytier-tun): TUN 模式资源，见 docs/easytier_tun_spec.md
+	// FORK(easytier-tun): TUN 模式资源，见 docs/easytier/tun-mode-spec.md
 	tunBridge *easytier.TunBridge
 	tunPrefix netip.Prefix
 	tunRoutes []netip.Prefix

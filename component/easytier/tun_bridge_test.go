@@ -293,7 +293,7 @@ func TestPacketDestInPrefix(t *testing.T) {
 
 // 有宿主 TUN 注入口时：只有**目的地不在 overlay 网段**的包才投喂进栈。
 //
-// 判据在 2026-10-13 用两容器实验台逐个钉过（见 docs/easytier_tun_spec.md）：
+// 判据在 2026-10-13 用两容器实验台逐个钉过（见 docs/easytier/tun-mode-spec.md）：
 //   - overlay 网段内的包（含本机自己的地址）属于内核 —— 本机服务与 **EasyTier 自己的
 //     数据面监听口**都是内核 socket；投喂它们会让 mihomo 拿数据面握手当新连接再拨一次
 //     （实测借出口 ⇒ 503），并让内核发起的 flow 收到 gVisor 回的 RST；

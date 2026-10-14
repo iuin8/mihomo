@@ -13,7 +13,7 @@
 //     （ensurePinnedRoute）。`Inet4RouteAddress` 在这里**不解决问题**：它只在 Linux 的
 //     auto-route/redirect 规则里被消费，而本 fork 用 AutoRoute=false，所以两条路都不走。
 //
-// 规格与验收标准见 docs/easytier_tun_spec.md。
+// 规格与验收标准见 docs/easytier/tun-mode-spec.md。
 package easytier
 
 import (
@@ -144,7 +144,7 @@ func runTunBridge(parent context.Context, device packetDevice, plane packetPlane
 
 // ingressSink 把 overlay 入向包交给宿主。
 //
-// 判据（2026-10-13 两容器实验台实测修正 ✓，见 docs/easytier_tun_spec.md）：
+// 判据（2026-10-13 两容器实验台实测修正 ✓，见 docs/easytier/tun-mode-spec.md）：
 //
 //   - 目的地**落在本节点 overlay 网段**（含本机自己的地址）⇒ 写 TUN 设备，交给内核。
 //     这类包属于内核：本机服务（例如 sshd、mihomo 自己的控制器）与 **EasyTier 自己的数据面

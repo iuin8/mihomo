@@ -1,8 +1,0 @@
-# 兜底：节点标识现在放在 Docker 卷里 ✓（见 gateway/docker-compose.yml ✓）
-# 这条只防"有人手建了目录/还在用旧版 bind 挂载"时把运行态提交进来 ✗
-gateway/state/
-# 用 Dockerfile.prebuilt 时放这里的交叉编译产物
-gateway/mihomo-linux
-
-# gateway/state/ 是家侧的**运行态**（easytier 持久化的节点标识 machine_id ✓）
-# 不属于源码 ✓；删除它只会让节点换一个新标识（overlay 地址来自配置里的 ipv4 ✓ 不受影响 ✓）

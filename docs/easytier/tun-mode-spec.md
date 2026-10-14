@@ -30,7 +30,7 @@ mihomo 内嵌的 EasyTier 核（WASI）**永远强制 `no_tun = true`**（`compo
 
 **Out of scope（v1，明确不做）**
 - 运行期动态增删路由（跟随规则集 / peer 广告）。理由：mihomo 自己对 TUN 路由表也是"建时确定、
-  配置变更时重建"（见 `docs/easytier_gateway.md` 与 `listener/sing_tun/server.go`）。
+  配置变更时重建"（见 本目录 `README.md` 与 `listener/sing_tun/server.go`）。
 - 客户端侧自动路由管理（B 方案的动态部分）。
 - Windows 专项验证（sing-tun 支持 wintun，但本版本不承诺）。
 - DNS：不写代码，复用 `et://` + `nameserver-policy`（见第 6 节）。
@@ -124,7 +124,7 @@ dns:
 | 权限 | TUN 需 root/CAP_NET_ADMIN | 文档说明；家侧容器需 `NET_ADMIN` + `/dev/net/tun` |
 | 转发与 NAT | TUN 模式让家侧成为真路由器：内网主机看到的是 overlay 源地址，回包必须能被 NAT 回 | 家侧需 `net.ipv4.ip_forward=1`（容器用 `--sysctl` 注入，`/proc/sys` 在容器内只读）+ `MASQUERADE` |
 | 平台 | macOS utun / Linux tun | sing-tun 已覆盖；本机 macOS + 容器 Linux 双端实测 |
-| 与 mihomo TUN 共存 | 两块 TUN | 见 `docs/easytier_gateway.md`：建时确定 + 最长前缀匹配，不抢默认路由 |
+| 与 mihomo TUN 共存 | 两块 TUN | 见本目录 `README.md`：建时确定 + 最长前缀匹配，不抢默认路由 |
 | 上游冲突 | `toml.go` 未改；`easytier.go` +46 行、stub +3 行，均带 `// FORK:` | 新增代码集中在 `component/easytier/tun_*.go` |
 
 ## 8. E2E 实测结果（2026-10-01，Docker 实验室）
@@ -145,11 +145,8 @@ dns:
 
 ```bash
 # 目标侧（内网另一台机器上跑）：
-python3 docs/examples/easytier/tools/udp-echo-server.py --bind 0.0.0.0 --port 18001
 
 # 本机侧：TCP + UDP 一次跑完（UDP 走 SOCKS5 UDP ASSOCIATE；Docker/端口映射场景要带 --relay）
-bash docs/examples/easytier/tools/probe.sh 127.0.0.1:7891 172.32.0.2 18000 18001 /big.bin
-python3 docs/examples/easytier/tools/socks5-udp-probe.py \
     --socks 127.0.0.1:7891 --relay 127.0.0.1:7891 --target 172.32.0.2 --port 18001 --payload tun-e2e
 ```
 

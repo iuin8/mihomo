@@ -1,8 +1,12 @@
 # syntax=docker/dockerfile:1
-# 家侧网关镜像：编译本 fork 的内核（含 TUN 模式）+ 预装 iptables（NAT 自动化用）
+# 镜像构建定义：编译本 fork 的内核（含 TUN 模式）+ 预装 iptables
 #
-# 构建上下文必须是 mihomo 仓库根目录——docker-compose.yml 已经写好（build.context: ../../..），
-# 所以你只需要 `docker compose up -d`，不需要手动 build。
+# 三个角色共用这一个镜像（ghcr.io/iuin8/mihomo）—— 上游内核会静默忽略 tun: true ✗，
+# 所以家侧/出口都**必须**用本 fork 构建的镜像/内核 ✓。
+#
+# 构建上下文 = 仓库根目录 ✓（CI 里就是 `context: .` + `file: docs/easytier/Dockerfile` ✓）
+# 本地手动构建：
+#   docker build -f docs/easytier/Dockerfile --build-arg MIHOMO_VERSION=dev -t mihomo-fork .
 #
 # ⚠️ 国内网络：Go 官方代理 proxy.golang.org 在国内会 i/o timeout，所以默认走 goproxy.cn。
 #    换源（任何可用代理都行）：

@@ -1,0 +1,49 @@
+# ── 本机(出口节点)侧:把这份并入你的 Clash 配置 ────────────────────────────────────
+# 作用:① 你所在网段的机器能被家侧访问 ✓  ② 家侧借你的网络出网 ✓（含"替对端拨号走你的代理"✓）
+#
+# 并入方式（任选其一 ✓）：
+#   · CVR 的「扩展配置 / Merge」项  → 用 prepend-proxies / append-rules ✓（推荐 ✓，可随订阅一起分享 ✓）
+#   · 直接编辑你的 profile          → 与现有 proxies / rules 合并 ✓
+#
+# ⚠️ 内核要求:必须是本 fork 构建的（上游内核会**静默忽略** tun: true，配置校验还照样通过 ✗）
+#    本机内核路径(macOS 服务模式):/Library/Application Support/clash-verge-service/cores/verge-mihomo-alpha
+proxies:
+  - name: et-fa                                  # 名字随意 ✓，家侧/规则里引用的就是它 ✓
+    type: easytier
+    network-name: private-overlay                # ← 改这里：与另外两侧完全一致 ✓
+    network-secret: "<改这里：与另外两侧一致的强密钥>"   # ← 强烈建议对外分享时单独一套 ✓
+
+    # ① 让家侧能访问**你所在网段**（需要 root / CAP_NET_ADMIN ✓，以及系统转发 ✓）
+    tun: true
+    ipv4: <改这里：本机在 overlay 里的地址，如 10.144.0.6/24>   # TUN 模式必填，且全网唯一 ✓
+    proxy-networks: ["<改这里：本机所在网段，如 192.168.0.0/24>"]   # 不与家侧/集群/overlay 重叠 ✗
+    tun-routes: []                                # 直连网段无需 pin ✓
+
+    # ② 让家侧借本机出网：家侧的包到家侧网关 → 由你落地出网 ✓
+    enable-exit-node: true
+
+    # ③ 家侧的对外解析要经你（否则会被国内 DNS 投毒 ✗ ⇒ 国外目标全 503 ✗）
+    #    这一段配合下方 dns.nameserver-policy 使用 ✓（详见 README 的"判据"一节 ✓）
+
+    # ④ 替对端拨号要走**本机自己的代理组**（关键 ✓）
+    #    出口替家侧拨号时走的是 mihomo 的 dialer（不是规则引擎 ✗）⇒ 不写这行就是**裸直连** ✗
+    #    ⇒ 国内目标通 ✓、国外目标被墙 ✗（实测过的老症状 ✓）
+    dialer-proxy: "<改这里：你的代理组名，如 🔰 选择节点>"
+
+    # ⑤ 与家侧互联
+    peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]
+    udp: true
+    exit-nodes: ["<改这里：家侧网关在 overlay 里的地址，如 10.144.0.2>"]
+    no-listener: true
+
+# ⑥ 出口替对端解析时必须经代理 DoH ✓（放在 profile 里 ⇒ 重新生成配置也不丢 ✓）
+dns:
+  nameserver-policy:
+    # `#名字` 的含义是"**经这个出站**去解析" ✓ —— 出口侧要经**自己的代理组** ✓
+    # （写成 #et-fa 就错了 ✗：那等于让 DoH 绕回 overlay 自己 ✗）
+    geosite:geolocation-!cn:
+      - https://1.1.1.1/dns-query#<改这里：你的代理组名，如 🔰 选择节点>
+      - https://8.8.8.8/dns-query#<改这里：同上>
+
+rules:
+  - IP-CIDR,<改这里：家侧内网网段，如 192.168.1.0/24>,et-fa,no-resolve

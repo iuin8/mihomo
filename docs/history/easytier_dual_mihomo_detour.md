@@ -2,7 +2,7 @@
 
 > **状态：废弃，不要用于生产。** 本文件只保留"为什么当时那样做、为什么放弃、证据在哪"，
 > 可执行的配置示例已从仓库删除，需要时用下面的提交引用取回。
-> 现行方案见 [easytier_tun_spec.md](../easytier_tun_spec.md) 与
+> 现行方案见 [easytier/tun-mode-spec.md](../easytier/tun-mode-spec.md) 与
 > [easytier_home_gateway.md](../easytier_home_gateway.md)（家侧 mihomo 开 TUN 模式）。
 
 ## 当时的背景
@@ -34,7 +34,7 @@
 **家侧 mihomo 开 TUN 模式**（本 fork 新增 `tun: true`）：宿主用 sing-tun 建一块真 TUN，
 用 `SendPacket`/`ReceivePacket` 搬运裸 IP 包，家侧因此成为真正的 L3 网关。同一拓扑实测：
 TCP 20MB 校验一致（34.5–42.5 MB/s）、UDP 40 包 0% 丢包、`ping` 内网机器 3/3 通。
-规格与验收标准见 [easytier_tun_spec.md](../easytier_tun_spec.md)。
+规格与验收标准见 [easytier/tun-mode-spec.md](../easytier/tun-mode-spec.md)。
 
 ## 提交引用（取回历史实现）
 

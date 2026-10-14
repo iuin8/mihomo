@@ -2,7 +2,7 @@
 
 // FORK(easytier-tun): 清理"上一个内核进程留下的"同名 TUN 设备 fd。
 //
-// 为什么必须有它（2026-10-13 实测 ✓，判据见 docs/easytier_tun_spec.md §10）：
+// 为什么必须有它（2026-10-13 实测 ✓，判据见 docs/easytier/tun-mode-spec.md §10）：
 // mihomo 的 `POST /restart` 走 `syscall.Exec` —— 进程镜像被替换，但**已打开的 fd 不会关闭**
 // （`hub/route/restart.go` 直接 exec，没有先关 outbound）。于是每次那样重启，旧的 utun 都
 // **继续存活并继续占着同一个 overlay 地址**。macOS 上该地址被多张接口同时持有后，本地投递

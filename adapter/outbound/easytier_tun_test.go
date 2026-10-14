@@ -10,7 +10,7 @@ import (
 )
 
 // TDD（红）：TUN 模式在出站构造阶段就要快速失败（配置错误不要拖到运行时），
-// 并且要把 no_tun 渲染成 false。规格见 docs/easytier_tun_spec.md 的 AC2/AC3。
+// 并且要把 no_tun 渲染成 false。规格见 docs/easytier/tun-mode-spec.md 的 AC2/AC3。
 func TestNewEasyTierTunRequiresIPv4CIDR(t *testing.T) {
 	C.SetHomeDir(t.TempDir())
 

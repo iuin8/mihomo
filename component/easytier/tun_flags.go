@@ -4,7 +4,7 @@
 // 本文件不修改 toml.go：ApplyTunFlags 复用上游的规范化算法（创建 [flags] 段、
 // 覆盖 no_tun/bind_device、处理带引号键与段注释），只把 no_tun 的取值翻过来。
 //
-// 规格与验收标准见 docs/easytier_tun_spec.md。
+// 规格与验收标准见 docs/easytier/tun-mode-spec.md。
 package easytier
 
 import (

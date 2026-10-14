@@ -1,6 +1,6 @@
 // FORK(easytier-tun): 把宿主 mihomo 栈发往 overlay 对端的包交回 EasyTier。
 //
-// 为什么必须这样（2026-10-13 两容器实验台实测 ✓，判据见 docs/easytier_tun_spec.md）：
+// 为什么必须这样（2026-10-13 两容器实验台实测 ✓，判据见 docs/easytier/tun-mode-spec.md）：
 // 宿主 TUN 栈给 overlay 对端的回包**不能**写进 TUN 设备 ——
 //   - Linux：源地址属于本机（例如 10.145.0.200 配在 easytier0 上），从 Meta 口进来的包
 //     会被 `__fib_validate_source` 判为 martian 源直接丢弃（`accept_local` 默认 0），

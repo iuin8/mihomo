@@ -5,7 +5,7 @@
 # 本 fork 让宿主建一块真 TUN 并把包面接上，家侧因此成为真正的 L3 网关：TCP/UDP/ICMP 一视同仁。
 #
 # 实测（2026-10-01）：TCP 20MB 校验一致（34.5–42.5 MB/s）、UDP 40 包 0 丢包、ping 内网机器 3/3 通。
-# 规格与验收标准见 ../../../easytier_tun_spec.md；部署步骤见 ../../../easytier_gateway_sop.md
+# 规格与验收标准见 ../tun-mode-spec.md；部署步骤与判据见 ./README.md
 #
 # ⚠️ 内核必须是本 fork 构建的：上游内核会**静默忽略** tun: true（配置校验还照样通过），
 #    结果就是又回到 no-TUN——表现为代理子网 TCP 不通、ICMP 不可用，且没有任何报错提示。
