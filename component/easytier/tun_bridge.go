@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/metacubex/mihomo/log"
 
@@ -395,11 +394,6 @@ func StartTunBridge(parent context.Context, options TunDeviceOptions, plane pack
 	bridge := &TunBridge{device: device, cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(bridge.done)
-		go func() {
-			// 延迟自检：启动瞬间宿主 TUN 可能还没建好，15 秒后再报一次真实状态（Info 级，便于排障）。
-			time.Sleep(15 * time.Second)
-			log.Infoln("[EasyTier] ingress sink ready=%v local=%s", CurrentIngressSink() != nil, options.Prefix)
-		}()
 		bridge.err = runTunBridge(ctx, device, plane, options.Prefix, options.Routes)
 		if err := bridge.err; err != nil {
 			// FORK(easytier-tun): 桥停了就是 overlay 通路断了 —— 这条以前没有任何日志。

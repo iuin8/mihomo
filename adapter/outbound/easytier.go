@@ -501,18 +501,6 @@ func (e *EasyTier) init() error {
 	if len(e.option.ProxyNetworks) > 0 {
 		log.Infoln("[EasyTier](%s) proxy networks announced: %v", e.Name(), e.option.ProxyNetworks)
 	}
-	// FORK(easytier-tun): 节点自述一次（端口/公告信息），用于回答"某个被拨的端口该由谁监听"。
-	go func(diagCtx context.Context, diagInstance *corehost.Instance) {
-		time.Sleep(20 * time.Second)
-		if diagInstance == nil {
-			return
-		}
-		if info, err := diagInstance.ShowNodeInfo(diagCtx); err != nil {
-			log.Debugln("[EasyTier](%s) show node info failed: %v", e.Name(), err)
-		} else {
-			log.Debugln("[EasyTier](%s) node info: %+v", e.Name(), info)
-		}
-	}(e.ctx, instance)
 	// FORK(easytier-tun): 登记"经 overlay 送出"的出口 —— 宿主 mihomo 的 TUN 栈给 overlay
 	// 对端的回包必须交回 guest，写进 TUN 设备会被内核丢掉（Linux 判 martian 源 / macOS 需
 	// net.inet.ip.forwarding）。有了它，借出口一侧才可能收到 SYN-ACK。
