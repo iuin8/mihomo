@@ -66,11 +66,12 @@ func (s SocketFactory) ListenTCP(ctx context.Context, options platform.TCPListen
 		listener, err := dialer.Listen(ctx, network, address, append(listenOpts, dialer.WithOption(direct.Opt))...)
 		return logHostListener(network, address, options.Purpose, listener, err)
 	}
-	if externalTCPListen(options.Purpose) {
-		return nil, fmt.Errorf("easytier: TCP listeners are unavailable through a proxy or custom dialer")
-	}
-	// ProxyNAT, port leases, and hole-punch reservations must bind on the host
-	// even when peer traffic uses dialer-proxy.
+	// FORK(easytier-tun): **监听口永远绑在宿主上，与出站用哪个 dialer 无关** ✗✓。
+	// 原来这里对 externalTCPListen 的用途直接报错 —— 而 dialer-proxy 一设，出站 dialer 就变成
+	// proxydialer（不满足 dialer.Dialer），于是**整条出站起不来** ✗：
+	//   `[EasyTier](x) start failed: … status=-4: required listener failed to start`（实测 ✓）
+	// 这正是本函数下面那句注释的原意（"ProxyNAT、端口租约、打洞预留必须绑在宿主上，
+	// 即使对端流量走 dialer-proxy" ✓）—— 监听口不需要出站 dialer，也不该受它影响 ✓。
 	listener, err := dialer.Listen(ctx, network, address, listenOpts...)
 	return logHostListener(network, address, options.Purpose, listener, err)
 }

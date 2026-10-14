@@ -77,22 +77,25 @@ func (forbiddenDialer) ListenPacket(context.Context, string, string, netip.AddrP
 	panic("unexpected proxy socket")
 }
 
-func TestListenTCPInternalAllowedThroughProxyDialer(t *testing.T) {
+// 契约：**监听口一律绑在宿主上，与出站 dialer 是什么无关** ✓✓（forbiddenDialer 一旦被用到会 panic ✓）。
+//
+// 旧契约让"经 proxy/custom dialer 的 external 监听"直接失败 ✗ —— 而给 easytier 出站配上
+// dialer-proxy 后，出站 dialer 就变成 proxydialer ⇒ 整条出站起不来，实测报
+// `status=-4: required listener failed to start`，出口功能直接消失 ✗。监听口不需要出站 dialer ✓。
+func TestListenTCPBindsOnHostRegardlessOfOutboundDialer(t *testing.T) {
 	factory := SocketFactory{Dialer: forbiddenDialer{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	listener, err := factory.ListenTCP(ctx, platform.TCPListenOptions{
-		Bind:    platform.TCPBindOptions{LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}},
-		Purpose: platform.TCPListenProxyNAT,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	if _, err := factory.ListenTCP(ctx, platform.TCPListenOptions{
-		Bind:    platform.TCPBindOptions{LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}},
-		Purpose: platform.TCPListenDirect,
-	}); err == nil {
-		t.Fatal("external listener through proxy must fail")
+	for _, purpose := range []platform.TCPListenPurpose{
+		platform.TCPListenProxyNAT, platform.TCPListenDirect, platform.TCPListenManual,
+	} {
+		listener, err := factory.ListenTCP(ctx, platform.TCPListenOptions{
+			Bind:    platform.TCPBindOptions{LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)}},
+			Purpose: purpose,
+		})
+		if err != nil {
+			t.Fatalf("purpose %v must bind on the host, got %v", purpose, err)
+		}
+		listener.Close()
 	}
 }
