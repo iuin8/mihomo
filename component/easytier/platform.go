@@ -76,10 +76,9 @@ func (s SocketFactory) ConnectTCP(ctx context.Context, options platform.TCPConne
 		return nil, fmt.Errorf("easytier: FakeTCP is not supported")
 	}
 	logConnectPurpose(options.Purpose, options.RemoteAddr)
-	// 明确记一条"这条走了哪个出网口、用的是哪个具体 dialer" ✓ —— 一句话定性 ✓。
+	// 一句话定性：这条走的是"替对端拨号"的口、还是隧道自身的直连口 ✓。
 	if purpose := options.Purpose; purpose == platform.TCPConnectProxyNAT {
-		chosen := s.connectDialer(purpose)
-		log.Debugln("[EasyTier] connect purpose=%d -> dialer %T (forward=%T)", purpose, chosen, s.ForwardDialer)
+		log.Debugln("[EasyTier] connect purpose=%d -> forward dialer=%t", purpose, s.ForwardDialer != nil)
 	}
 	if options.RemoteAddr == nil {
 		return nil, fmt.Errorf("easytier: TCP connect is missing a remote address")
