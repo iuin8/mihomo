@@ -91,7 +91,6 @@ func CreateTunDevice(options TunDeviceOptions) (packetDevice, error) {
 	// FORK(easytier-tun): macOS 的 utun 要求每包带 4 字节地址族头 —— 裸读写会被内核整包丢弃 ✗✓。
 	// 详见 tun_packet_darwin.go（这是"fork 自建 TUN 在 macOS 上完全不通"的真正原因 ✓）。
 	return wrapPacketDevice(device), nil
-	return device, nil
 }
 
 // runTunBridge 双向搬运裸 IP 包，直到 ctx 取消或任一侧出错。

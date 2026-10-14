@@ -113,14 +113,6 @@ func (e *planeEgress) SendToOverlay(packet []byte) bool {
 	return true
 }
 
-// Sent 返回成功交回 overlay 的包数（排障用）。
-func (e *planeEgress) Sent() uint64 {
-	if e == nil {
-		return 0
-	}
-	return e.sent.Load()
-}
-
 // String 便于日志与测试断言。
 func (e *planeEgress) String() string {
 	if e == nil {

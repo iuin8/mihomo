@@ -315,10 +315,9 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 	outbound.dialer = dialer.NewDialer(outbound.DialOptions()...)
 	log.Infoln("[EasyTier](%s) dialer-proxy=%q interface=%q", option.Name, option.DialerProxy, option.Interface)
 	if option.DialerProxy != "" {
-		outbound.forwardDialer = newLazyDialer(func() C.Dialer { return option.NewDialer(outbound.DialOptions()) })
-		log.Infoln("[EasyTier](%s) forward dialer armed (dialer-proxy=%s)", option.Name, option.DialerProxy)
-	} else {
-		log.Infoln("[EasyTier](%s) no dialer-proxy: forwarded dials stay direct", option.Name)
+		// 替对端拨号走这个口（尊重 dialer-proxy）；没配时留 nil ⇒ 与未配置该选项时行为完全一致 ✓
+		outbound.forwardDialer = option.NewDialer(outbound.DialOptions())
+		log.Infoln("[EasyTier](%s) forwarded dials go through dialer-proxy %q", option.Name, option.DialerProxy)
 	}
 	outbound.unregister = dns.RegisterEasyTierDnsClient(option.Name, easyTierDNSTransport{easytier: outbound})
 	if option.Prewarm {

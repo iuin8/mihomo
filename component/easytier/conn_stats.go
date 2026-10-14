@@ -11,7 +11,8 @@
 //	read=0        ⇒ 目标/节点那一侧根本没把数据送回来 ✗（问题在出口的上游 ✓）
 //	read>0        ⇒ 本机拿到了回程数据 ✓ ⇒ 卡在"交给 guest / 数据面会话"这一段 ✗（问题在本 fork 与 shim ✓）
 //
-// 只记前若干条连接 ✓，避免刷日志 ✓。
+// 这是**排查用具** ✓：默认 Debug 级别、且只记前若干条连接 ✓ ⇒ 生产里不刷屏 ✗，
+// 需要时把内核日志开到 debug 就能看到每条转发连接的来去字节数 ✓。
 package easytier
 
 import (
@@ -23,7 +24,7 @@ import (
 	"github.com/metacubex/mihomo/log"
 )
 
-const connectStatsLogLimit = 500
+const connectStatsLogLimit = 20
 
 var connectStatsLogged atomic.Uint64
 
@@ -59,7 +60,7 @@ func (c *countingConn) report() {
 		if read > 0 {
 			verdict = "reply reached the host (look downstream: shim/guest/session)"
 		}
-		log.Infoln("[EasyTier] forwarded conn %s -> %s: wrote=%d read=%d in %s; %s",
+		log.Debugln("[EasyTier] forwarded conn %s -> %s: wrote=%d read=%d in %s; %s",
 			c.purpose, c.remote, written, read, time.Since(c.startedAt).Round(time.Millisecond), verdict)
 	})
 }

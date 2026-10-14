@@ -18,9 +18,6 @@ import (
 	D "github.com/miekg/dns"
 )
 
-// Services wraps a mihomo dialer as EasyTier platform capabilities.
-func Services(d C.Dialer) platform.Services { return ServicesWithForward(d, nil) }
-
 // ServicesWithForward 区分两个出网口（FORK(easytier-exit-egress) ✓）：
 //
 //   - d：隧道**自身**的流量（会合点、打洞、STUN 探测、数据面会话的连接、DNS 环境）—— 一律直连 ✓，

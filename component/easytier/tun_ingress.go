@@ -147,14 +147,6 @@ func (t *injectableTunBase) Inject(packet []byte) bool {
 	}
 }
 
-// Dropped 返回因队列满被丢弃的注入包数（排障用）。
-func (t *injectableTunBase) Dropped() uint64 {
-	if t == nil {
-		return 0
-	}
-	return t.droppedCount.Load()
-}
-
 // pump 把真设备的读搬到 reads，使 Read 能在两个来源之间 select。
 // stopPump 停掉"从真设备读"的协程：gvisor 路径下真 endpoint 才是 fd 的唯一读者。
 func (t *injectableTunBase) stopPump() {
