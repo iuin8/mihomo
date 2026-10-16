@@ -151,3 +151,41 @@ func TestRouteInterfaceForParses(t *testing.T) {
 		t.Fatalf("期望 utun1025/true，实际 %q/%v", name, ok)
 	}
 }
+
+// recordRunnerFailingAddFor 与 recordRunner 相同，但**只让指向 failInterface 的那条 add 失败**，
+// 用来构造"夺回失败"的场景。
+func recordRunnerFailingAddFor(t *testing.T, getOutput string, failInterface string) *[]string {
+	t.Helper()
+	calls := &[]string{}
+	previous := routeRunner
+	t.Cleanup(func() { routeRunner = previous })
+	routeRunner = func(args ...string) ([]byte, error) {
+		*calls = append(*calls, strings.Join(args, " "))
+		if len(args) >= 3 && args[2] == "get" {
+			return []byte(getOutput), nil
+		}
+		if len(args) >= 3 && args[2] == "add" && strings.Contains(strings.Join(args, " "), "-interface "+failInterface) {
+			return []byte("add net 10.144.0.0: gateway " + failInterface + ": File exists"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}
+	return calls
+}
+
+// 夺回失败时（新设备还没起来等）必须把**原来那条**恢复回去，绝不留下"删了没装回来"的空窗 ✗✓。
+func TestTakeOverDarwinRouteRestoresPreviousOwnerOnFailure(t *testing.T) {
+	calls := recordRunnerFailingAddFor(t, "interface: utun1025\n", "utun1026")
+
+	err := takeOverDarwinRoute("10.144.0.0/24", "utun1026")
+	if err == nil {
+		t.Fatal("夺回失败必须回报错误给调用方（它据此记 Warn）")
+	}
+	joined := strings.Join(*calls, " | ")
+	if len(*calls) != 4 ||
+		!strings.Contains((*calls)[0], "get") ||
+		!strings.Contains((*calls)[1], "delete") ||
+		!strings.Contains((*calls)[2], "-interface utun1026") ||
+		!strings.Contains((*calls)[3], "-interface utun1025") {
+		t.Fatalf("期望 get→delete→add(新失败)→add(恢复旧)，实际: %s", joined)
+	}
+}

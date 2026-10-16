@@ -59,17 +59,34 @@ func routeInterfaceFor(network string) (string, bool) {
 // 已有路由时**直接失败**，而调用方只记一句 Warn 就继续 ⇒ 旧设备消失后路由仍然指着它，
 // overlay 回程流量进黑洞（实测:`10.144/24 → utun1025` 指着已停用节点的设备，家侧借网一直 Timeout ✗）。
 // ⇒ 现在先查它指向谁:不是本设备就删掉再装；已经是本设备就什么都不做（幂等 ✓）。
+//
+// 作用域（回答"会不会误删有用的路由" ✗✓）:`network` 只可能是**本节点自己的 overlay 网段**
+// （ensureOverlayRoute 传 prefix.Masked()）或**调用方在 tun-routes 里显式 pin 的前缀** ——
+// 这两类路由按定义就该由本设备承载，绝不会碰到默认路由或其它网段 ✓。
+// 唯一的竞争情形是"同一台机器上还有另一个 easytier 节点" ✗（两者都声明同一 overlay 网段）⇒
+// 后启动者接管，这正是 SOP 里"一机一节点"的原因 ✓。
+//
+// 失败安全:先删后装之间存在空窗 ⇒ **add 失败时必须把原来那条恢复回去** ✗✓，
+// 绝不留下"删了却没装回来"的状态（那条恢复不回也只是 Warn，不会覆盖原始错误 ✓）。
 func takeOverDarwinRoute(network, name string) error {
-	if current, ok := routeInterfaceFor(network); ok {
-		if current == name {
+	previous, held := routeInterfaceFor(network)
+	if held {
+		if previous == name {
 			return nil // 已经对了:幂等，别做多余动作
 		}
-		log.Warnln("[EasyTier] route %s is held by %s, taking it over for %s", network, current, name)
+		log.Warnln("[EasyTier] route %s is held by %s, taking it over for %s", network, previous, name)
 		if output, err := routeRunner("route", "-n", "delete", "-net", network); err != nil {
 			log.Warnln("[EasyTier] delete stale route %s failed: %v (%s)", network, err, output)
 		}
 	}
 	if output, err := routeRunner("route", "-n", "add", "-net", network, "-interface", name); err != nil {
+		if held && previous != name {
+			if restoreOutput, restoreErr := routeRunner("route", "-n", "add", "-net", network, "-interface", previous); restoreErr != nil {
+				log.Warnln("[EasyTier] restore route %s via %s failed: %v (%s)", network, previous, restoreErr, restoreOutput)
+			} else {
+				log.Warnln("[EasyTier] restored route %s via %s after a failed takeover", network, previous)
+			}
+		}
 		return fmt.Errorf("route %s via %s: %w (%s)", network, name, err, output)
 	}
 	return nil
