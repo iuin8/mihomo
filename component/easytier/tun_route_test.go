@@ -172,8 +172,10 @@ func recordRunnerFailingAddFor(t *testing.T, getOutput string, failInterface str
 	return calls
 }
 
-// 夺回失败时（新设备还没起来等）必须把**原来那条**恢复回去，绝不留下"删了没装回来"的空窗 ✗✓。
-func TestTakeOverDarwinRouteRestoresPreviousOwnerOnFailure(t *testing.T) {
+// 夺回失败时**不做恢复** ✗✓ —— 原来的 owner 按构造是同一个 mihomo 里另一个 easytier 节点
+// （或上一代设备）留下的路由，恢复它就是把"路由指向非本节点设备"这个 bug 装回去 ✗。
+// 该用例把这个决定钉住:失败后序列只到 add(新,失败) 为止，不得再动内核路由表。
+func TestTakeOverDarwinRouteDoesNotRestoreOnFailure(t *testing.T) {
 	calls := recordRunnerFailingAddFor(t, "interface: utun1025\n", "utun1026")
 
 	err := takeOverDarwinRoute("10.144.0.0/24", "utun1026")
@@ -181,11 +183,10 @@ func TestTakeOverDarwinRouteRestoresPreviousOwnerOnFailure(t *testing.T) {
 		t.Fatal("夺回失败必须回报错误给调用方（它据此记 Warn）")
 	}
 	joined := strings.Join(*calls, " | ")
-	if len(*calls) != 4 ||
+	if len(*calls) != 3 ||
 		!strings.Contains((*calls)[0], "get") ||
 		!strings.Contains((*calls)[1], "delete") ||
-		!strings.Contains((*calls)[2], "-interface utun1026") ||
-		!strings.Contains((*calls)[3], "-interface utun1025") {
-		t.Fatalf("期望 get→delete→add(新失败)→add(恢复旧)，实际: %s", joined)
+		!strings.Contains((*calls)[2], "-interface utun1026") {
+		t.Fatalf("期望 get→delete→add(新,失败) 即止，实际: %s", joined)
 	}
 }

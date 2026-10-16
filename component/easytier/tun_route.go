@@ -66,11 +66,12 @@ func routeInterfaceFor(network string) (string, bool) {
 // 唯一的竞争情形是"同一台机器上还有另一个 easytier 节点" ✗（两者都声明同一 overlay 网段）⇒
 // 后启动者接管，这正是 SOP 里"一机一节点"的原因 ✓。
 //
-// 失败安全:先删后装之间存在空窗 ⇒ **add 失败时必须把原来那条恢复回去** ✗✓，
-// 绝不留下"删了却没装回来"的状态（那条恢复不回也只是 Warn，不会覆盖原始错误 ✓）。
+// 失败安全:**不做"恢复原来那条"** ✗✓。这里的 previous 按构造一定是**同一个 mihomo 里的另一个
+// easytier 节点**(或上一个世代的设备)留下的 —— 恢复它等于把"路由指向非本节点设备"这个 bug
+// 重新装回去 ✗(线上实测过:那条路由指着已停用节点的 utun1025 ✗)。所以失败时只上报错误,
+// 让调用方记 Warn;路由的缺位由本节点**下一次 start** 重新安装来收敛 ✓。
 func takeOverDarwinRoute(network, name string) error {
-	previous, held := routeInterfaceFor(network)
-	if held {
+	if previous, held := routeInterfaceFor(network); held {
 		if previous == name {
 			return nil // 已经对了:幂等，别做多余动作
 		}
@@ -80,13 +81,6 @@ func takeOverDarwinRoute(network, name string) error {
 		}
 	}
 	if output, err := routeRunner("route", "-n", "add", "-net", network, "-interface", name); err != nil {
-		if held && previous != name {
-			if restoreOutput, restoreErr := routeRunner("route", "-n", "add", "-net", network, "-interface", previous); restoreErr != nil {
-				log.Warnln("[EasyTier] restore route %s via %s failed: %v (%s)", network, previous, restoreErr, restoreOutput)
-			} else {
-				log.Warnln("[EasyTier] restored route %s via %s after a failed takeover", network, previous)
-			}
-		}
 		return fmt.Errorf("route %s via %s: %w (%s)", network, name, err, output)
 	}
 	return nil
