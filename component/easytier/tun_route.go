@@ -19,6 +19,7 @@ import (
 	"net/netip"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/metacubex/mihomo/log"
@@ -29,6 +30,50 @@ const overlayRouteAddressPoll = 100 * time.Millisecond
 // overlayRouteAddressWait 是等待设备地址就绪的上限（设备刚创建时地址可能还没配上）。
 // 变量而非常量：测试要把它缩短到毫秒级。
 var overlayRouteAddressWait = 3 * time.Second
+
+// routeRunner 是执行 route(8) 的唯一入口。做成变量是为了让测试能模拟
+// "该网段已有路由、但指向别的接口"这一场景（真实环境里需要 root 才能复现）。
+var routeRunner = func(args ...string) ([]byte, error) {
+	return exec.Command(args[0], args[1:]...).CombinedOutput()
+}
+
+// routeInterfaceFor 查询某网段当前由哪块接口承载；第二个返回值为 false 表示当前没有该网段的路由。
+func routeInterfaceFor(network string) (string, bool) {
+	output, err := routeRunner("route", "-n", "get", "-net", network)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if name, ok := strings.CutPrefix(strings.TrimSpace(line), "interface:"); ok {
+			if name = strings.TrimSpace(name); name != "" {
+				return name, true
+			}
+		}
+	}
+	return "", false
+}
+
+// takeOverDarwinRoute 保证 network 由 name 这块接口承载。
+//
+// FORK(easytier-tun, 2026-10-16):**这里以前是 bug 的所在地** ✗✓。darwin 的 `route add` 在该网段
+// 已有路由时**直接失败**，而调用方只记一句 Warn 就继续 ⇒ 旧设备消失后路由仍然指着它，
+// overlay 回程流量进黑洞（实测:`10.144/24 → utun1025` 指着已停用节点的设备，家侧借网一直 Timeout ✗）。
+// ⇒ 现在先查它指向谁:不是本设备就删掉再装；已经是本设备就什么都不做（幂等 ✓）。
+func takeOverDarwinRoute(network, name string) error {
+	if current, ok := routeInterfaceFor(network); ok {
+		if current == name {
+			return nil // 已经对了:幂等，别做多余动作
+		}
+		log.Warnln("[EasyTier] route %s is held by %s, taking it over for %s", network, current, name)
+		if output, err := routeRunner("route", "-n", "delete", "-net", network); err != nil {
+			log.Warnln("[EasyTier] delete stale route %s failed: %v (%s)", network, err, output)
+		}
+	}
+	if output, err := routeRunner("route", "-n", "add", "-net", network, "-interface", name); err != nil {
+		return fmt.Errorf("route %s via %s: %w (%s)", network, name, err, output)
+	}
+	return nil
+}
 
 // ensureOverlayRoute 在 darwin 上把 overlay 网段 pin 到设备所在接口，返回清理函数。
 // 其他平台（Linux 自动派生）不做任何事，也不应干预内核的路由管理。
@@ -42,12 +87,12 @@ func ensureOverlayRoute(prefix netip.Prefix, address netip.Addr) (func(), error)
 		return noop, err
 	}
 	network := prefix.Masked().String()
-	if output, err := exec.Command("route", "-n", "add", "-net", network, "-interface", name).CombinedOutput(); err != nil {
-		return noop, fmt.Errorf("easytier: add overlay route %s via %s: %w (%s)", network, name, err, output)
+	if err := takeOverDarwinRoute(network, name); err != nil {
+		return noop, fmt.Errorf("easytier: add overlay route %s via %s: %w", network, name, err)
 	}
 	log.Infoln("[EasyTier] overlay route %s installed on %s (return path for overlay peers)", network, name)
 	return func() {
-		if output, err := exec.Command("route", "-n", "delete", "-net", network, "-interface", name).CombinedOutput(); err != nil {
+		if output, err := routeRunner("route", "-n", "delete", "-net", network, "-interface", name); err != nil {
 			log.Debugln("[EasyTier] remove overlay route %s via %s failed: %v (%s)", network, name, err, output)
 		}
 	}, nil
@@ -68,24 +113,26 @@ func ensurePinnedRoute(prefix netip.Prefix, address netip.Addr) (func(), error) 
 		return noop, err
 	}
 	network := prefix.Masked().String()
-	var add, del []string
+	var del []string
 	switch runtime.GOOS {
 	case "linux":
-		// replace：幂等，设备重建/重启后不会因"已存在"而失败。
-		add = []string{"ip", "route", "replace", network, "dev", name}
+		// replace:幂等，设备重建/重启后不会因"已存在"而失败。
+		if output, err := routeRunner("ip", "route", "replace", network, "dev", name); err != nil {
+			return noop, fmt.Errorf("easytier: pin route %s via %s: %w (%s)", network, name, err, output)
+		}
 		del = []string{"ip", "route", "del", network, "dev", name}
 	case "darwin":
-		add = []string{"route", "-n", "add", "-net", network, "-interface", name}
+		// 同 ensureOverlayRoute:已有路由如果指着别的接口，必须夺回来（否则 pin 形同虚设 ✗）。
+		if err := takeOverDarwinRoute(network, name); err != nil {
+			return noop, fmt.Errorf("easytier: pin route %s via %s: %w", network, name, err)
+		}
 		del = []string{"route", "-n", "delete", "-net", network, "-interface", name}
 	default:
 		return noop, nil
 	}
-	if output, err := exec.Command(add[0], add[1:]...).CombinedOutput(); err != nil {
-		return noop, fmt.Errorf("easytier: pin route %s via %s: %w (%s)", network, name, err, output)
-	}
 	log.Infoln("[EasyTier] pinned route %s installed on %s", network, name)
 	return func() {
-		if output, err := exec.Command(del[0], del[1:]...).CombinedOutput(); err != nil {
+		if output, err := routeRunner(del...); err != nil {
 			log.Debugln("[EasyTier] remove pinned route %s via %s failed: %v (%s)", network, name, err, output)
 		}
 	}, nil
