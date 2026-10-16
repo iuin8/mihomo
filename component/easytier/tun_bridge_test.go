@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"net/netip"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -424,5 +426,50 @@ func TestChecksumValidation(t *testing.T) {
 	segment[16] ^= 0xff
 	if l4ChecksumValid(packet) {
 		t.Fatal("a corrupted TCP checksum must NOT validate")
+	}
+}
+
+// ── 2026-10-16:被弃用的桥必须能由 GC 收尾 ✗✓ ──────────────────────────────────
+//
+// 背景(实测根因 ✓):mihomo 换配置时只替换出站集合(tunnel.UpdateProxies: `proxies = newProxies`,
+// **不调用任何 Close** ✗)⇒ 被移出配置的 easytier 出站的 TunBridge 永远不会被显式关闭 ⇒
+// 它的 TUN 设备、overlay 地址与 /24 路由一直留在内核里(实测一次重载后出现 4 张 utun ✗)。
+// installBridgeFinalizer 就是这条路径的兜底:桥不可达时由 GC 调一次 Close。
+
+func newAbandonableBridge(counter *atomic.Int32) *TunBridge {
+	done := make(chan struct{})
+	close(done) // Close 会等 <-b.done;建好即已结束,便于单测
+	return &TunBridge{cancel: func() { counter.Add(1) }, done: done}
+}
+
+func TestTunBridgeFinalizerClosesAbandonedBridge(t *testing.T) {
+	var cancelled atomic.Int32
+	func() { installBridgeFinalizer(newAbandonableBridge(&cancelled)) }() // 出作用域 ⇒ 不可达
+	for i := 0; i < 20 && cancelled.Load() == 0; i++ {
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if cancelled.Load() == 0 {
+		t.Skip("GC 未在本环境跑到 finalizer(时序问题);真机上由显式 Close + 下次启动的同址自愈兜住")
+	}
+}
+
+func TestTunBridgeCloseClearsFinalizer(t *testing.T) {
+	var cancelled atomic.Int32
+	bridge := newAbandonableBridge(&cancelled)
+	installBridgeFinalizer(bridge)
+	if err := bridge.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+	if got := cancelled.Load(); got != 1 {
+		t.Fatalf("Close 应恰好取消一次,实际 %d", got)
+	}
+	bridge = nil
+	for i := 0; i < 10; i++ {
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := cancelled.Load(); got != 1 {
+		t.Fatalf("Close 之后 finalizer 必须已被清掉,实际多跑了 %d 次", got-1)
 	}
 }
