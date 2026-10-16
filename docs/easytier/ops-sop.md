@@ -1,0 +1,99 @@
+# 运维 SOP(全自动改配置 + 重建内核)
+
+> 目标:**改配置这件事不需要人点 GUI**;需要 root 的动作收敛到一个**极窄的特权助手**里;
+> **先回滚,再查因**。适用于服务模式(macOS / Linux 上把内核交给特权服务托管)的部署。
+
+## 0. 为什么需要它
+
+服务模式下的内核**不读** `clash-verge.yaml`(那是 GUI 的生成物 ✓),它读的是服务托管的运行时目录:
+
+```text
+-runtime: <服务数据目录>/users/<uid>/runtime     ← 配置文件在这里,root-only ✗
+```
+
+该目录**用户不可写**,而且内核的配置重载 API 只接受**这个目录内**的路径
+(实测报错:`path is not subpath of home directory or SAFE_PATHS`)。GUI(如 Clash Verge Rev)背后的
+特权服务有 `stage-runtime` / `start` / `stop` 命令,但它们的鉴权依赖 **GUI 每会话生成的 token**
+(服务端只存 hash),**外部无法伪造** —— 这是**该有的安全边界**,不要绕。
+
+⇒ 因此"自动化"的正确形态是:一次性安装一个**只做一件事**的 root helper + 一条 sudoers 白名单。
+
+## 1. 一次性安装(只需一次管理员授权)
+
+两个文件:一个 `sh` 脚本(`stage|restart|status|rollback` 四个子命令,**不接受自由参数**)+ 一条白名单规则。
+
+```bash
+sudo install -d -o root -g wheel -m 755 /usr/local/libexec/clash-group
+sudo install -o root -g wheel -m 755 et-apply /usr/local/libexec/clash-group/et-apply
+sudo visudo -c -f sudoers          # ★ 先校验,再落盘(防坏规则弄坏 sudo)
+sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
+```
+
+白名单(**枚举子命令,不用通配符**):
+
+```text
+<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply stage
+<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply restart
+<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply status
+<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply rollback
+```
+
+脚本必须满足四条(**缺一条就不要装**):
+
+1. **root 属主、模式 755、用户不可写** ✓(否则用户改脚本 = 提权 ✗);
+2. **落盘前用内核自己的二进制校验**:`<core> -t -d <runtime> -f <candidate>` ✓(坏配置直接丢弃 ✗);
+3. **改动前自动备份** + **重启后不健康自动回滚** ✓;
+4. **审计日志**(如 `/var/log/clash-group-et-apply.log`)+ 日志/输出不含秘密 ✓。
+
+> 权限面说明:配置来源文件由普通用户提供 ⇒ 与 GUI 自身的权限**等价**(GUI 本来就让该用户 stage 配置),
+> 所以没有**新增**权限面;但不要把这个 helper 扩成"任意命令" ✗。
+
+## 2. 日常操作
+
+```bash
+<放配置>   cp <完整配置>.yaml <状态目录>/et-apply/config.yaml
+<生效>     sudo -n et-apply stage && sudo -n et-apply restart
+<看状态>   sudo -n et-apply status
+<回滚>     sudo -n et-apply rollback
+```
+
+**"完整配置"从哪来**:GUI 的生成物(订阅 + 所有 Merge/本地 profile 的合并结果)。
+只改自己的 profile 时,也可以在其副本上改。
+
+## 3. 测试纪律(血换的,违反就会得出错误结论)
+
+```text
+顺序:重载/重建 → 明确切到目标节点 → **回读确认选中** → 才测
+页面级:用真浏览器自动化(不要用探测 API 代替页面的成功)
+链路级:注意"有没有系统代理"—— 系统代理关闭时,**没有"直连",只有"经 TUN",两者别混叫**
+地面真相:内核的 /connections(rule / chains / up / down 字节计数)
+```
+
+| 仪器 | 判定 |
+| --- | --- |
+| `/connections` 的 up/down 字节计数 | ✅ 可信 |
+| 经 TUN 的 `curl`(= 浏览器同路) | ✅ 可信 |
+| 真浏览器自动化 | ✅ 页面级唯一可信 |
+| `/proxies/<**组**>/delay` | ❌ **不走该组选中的出站** ⇒ 结论无效 |
+| `/proxies/<节点>` 的 `alive` 字段 | ❌ 常为陈旧读数 ⇒ 要**实测** |
+| 用 ICMP ping 判连通 | ❌ 隧道/代理场景不可信(一律用 TCP) |
+
+## 4. 已知故障模式
+
+| 症状 | 原因 | 处置 |
+| --- | --- | --- |
+| 内网域名超时 | 分流组被重置到错误项 ✗ / 该域名被 fake-ip 换成假地址 ✗ | 组里第一项放正确默认 ✓;把业务域名加入 `dns.fake-ip-filter` ✓ |
+| **借出口(对端借本机上网)超时** | **TUN 设备代际残留**:重载后旧设备未回收,`/24` 路由仍指向旧设备 ✗ | `et-apply restart`(整进程重建)⇒ 设备回到一代 ✓ |
+| 内网流量被送去机场 | 内网规则指向了一个带 `dialer-proxy` 的**出口**节点 ✗ | 出口节点**不得**放进分流组 ✓ |
+| 一台机器加第二个节点后借网断 | 两个节点**抢同一段 overlay 路由** ✗ | **一机一节点** ✓ |
+| 重载后行为突变 | 重载会重置选择器 ✗ | 组内第一项 = 正确默认值 ✓ |
+| 手工改 runtime 后又变回去 | GUI 的"重载配置"会用它的合并结果覆盖 ✓(正常) | 要长期生效 ⇒ 改 **profile 源文件** ✓ |
+
+## 5. 回滚入口
+
+```text
+本机 runtime : et-apply rollback(恢复最近一次备份 ✓)
+内核二进制   : <cores 目录>(换核流程见 service-mode-sigkill.md ✓)
+对端网关     : 部署目录的备份 ⇒ docker compose -p <项目> up -d --force-recreate <服务>
+对端宿主终端 : ip -o link show | grep Meta 应为空 ✓、default via <原网关> ✓
+```

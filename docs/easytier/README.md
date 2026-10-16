@@ -75,3 +75,4 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com/   ⇒ 期望 200
 
 详细到每个角色的步骤，见各自目录里的 `README.md` ✓。设计与验收规格见 [`tun-mode-spec.md`](tun-mode-spec.md) ✓；
 macOS 服务模式下内核被 SIGKILL 的那个坑见 [`service-mode-sigkill.md`](service-mode-sigkill.md) ✓。
+- 想**全自动改配置/重建内核**、或排查"借出口超时"?看 [`ops-sop.md`](ops-sop.md)(特权助手 + 测试纪律 + 故障模式表 ✓)
