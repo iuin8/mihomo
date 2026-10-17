@@ -415,7 +415,11 @@ func installBridgeFinalizer(bridge *TunBridge) {
 	if bridge == nil {
 		return
 	}
-	runtime.SetFinalizer(bridge, func(b *TunBridge) { _ = b.Close() })
+	runtime.SetFinalizer(bridge, func(b *TunBridge) {
+		// 现场可见：这条只在"调用方再也不会 Close"时出现（例如被移出配置的出站）✓
+		log.Debugln("[EasyTier] TUN bridge finalized: abandoned by a config reload, device closed")
+		_ = b.Close()
+	})
 }
 
 // Close 停止搬运并关闭设备；幂等，可重复调用。

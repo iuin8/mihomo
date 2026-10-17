@@ -20,7 +20,8 @@
 
 ## 1. 一次性安装(只需一次管理员授权)
 
-两个文件:一个 `sh` 脚本(`stage|restart|status|rollback` 四个子命令,**不接受自由参数**)+ 一条白名单规则。
+两个文件:一个 `sh` 脚本(`stage|restart|status|rollback|core-upgrade|core-rollback` **六个子命令**,
+**不接受自由参数**)+ 一条白名单规则。
 
 ```bash
 sudo install -d -o root -g wheel -m 755 /usr/local/libexec/clash-group
@@ -36,14 +37,24 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 <用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply restart
 <用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply status
 <用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply rollback
+<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply core-upgrade
+<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply core-rollback
 ```
+
+> ⚠️ **不要把"零参数约束"`""` 加到规则末尾** ✗ —— 实测某些 sudo 版本上它**不匹配**(`sudo -l` 会列出规则,
+> 但真正调用时仍要密码)。这里的安全性不靠参数约束:helper **只认 `$1` 的六个固定词**、忽略其余参数、
+> 所有路径与 URL 写死、**不接受任何"用户指定的文件/URL"** ⇒ 传参改变不了它能做什么 ✓。
 
 脚本必须满足四条(**缺一条就不要装**):
 
 1. **root 属主、模式 755、用户不可写** ✓(否则用户改脚本 = 提权 ✗);
 2. **落盘前用内核自己的二进制校验**:`<core> -t -d <runtime> -f <candidate>` ✓(坏配置直接丢弃 ✗);
 3. **改动前自动备份** + **重启后不健康自动回滚** ✓;
-4. **审计日志**(如 `/var/log/clash-group-et-apply.log`)+ 日志/输出不含秘密 ✓。
+4. **审计日志**(如 `/var/log/clash-group-et-apply.log`)+ 日志/输出不含秘密 ✓;
+5. **内核升级路径必须自我校验 + 自动回滚** ✓:从**固定发布通道**取版本 ⇒ 用发布方给出的 **sha256 摘要**校验 ⇒
+   让候选二进制**自证版本**(`-v`)⇒ 用**当前生产配置**跑一遍解析(`-t -d <runtime> -f <config>`)⇒
+   备份旧核 ⇒ 原子替换 ⇒ ad-hoc 重签(`codesign --force --sign - --timestamp=none`,**绝不加** `--options runtime` ✗)⇒
+   重启并**按版本回读核对**(不是"进程活着"就算 ✓)⇒ 任一步失败**自动回滚旧核** ✓。
 
 > 权限面说明:配置来源文件由普通用户提供 ⇒ 与 GUI 自身的权限**等价**(GUI 本来就让该用户 stage 配置),
 > 所以没有**新增**权限面;但不要把这个 helper 扩成"任意命令" ✗。
@@ -55,7 +66,14 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 <生效>     sudo -n et-apply stage && sudo -n et-apply restart
 <看状态>   sudo -n et-apply status
 <回滚>     sudo -n et-apply rollback
+
+# 内核（全自动,无需人工授权/无需点界面）
+<升级内核> sudo -n et-apply core-upgrade     # 取最新发布 → 校验 → 备份 → 装 → 重签 → 重启 → 按版本核对
+<回滚内核> sudo -n et-apply core-rollback    # 回到上一个自动备份的内核
 ```
+
+> 说明:内核升级**不需要**经过 GUI ✗ —— helper 直接在文件/进程层完成(换二进制 + 重建内核进程)✓,
+> 因此不依赖辅助功能权限,也不依赖任何界面操作 ✓。
 
 **"完整配置"从哪来**:GUI 的生成物(订阅 + 所有 Merge/本地 profile 的合并结果)。
 只改自己的 profile 时,也可以在其副本上改。
@@ -83,7 +101,7 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 | 症状 | 原因 | 处置 |
 | --- | --- | --- |
 | 内网域名超时 | 分流组被重置到错误项 ✗ / 该域名被 fake-ip 换成假地址 ✗ | 组里第一项放正确默认 ✓;把业务域名加入 `dns.fake-ip-filter` ✓ |
-| **借出口(对端借本机上网)超时** | **TUN 设备代际残留**:重载后旧设备未回收,`/24` 路由仍指向旧设备 ✗ | `et-apply restart`(整进程重建)⇒ 设备回到一代 ✓ |
+| **借出口(对端借本机上网)超时** | **TUN 设备代际残留**:重载后旧设备未回收,`/24` 路由仍指向旧设备 ✗ | 急用:`et-apply restart`(整进程重建)✓;**根因已在源码侧修复**(路由夺回 ✓ + 桥 finalizer ✓)⇒ 正常重载不再留残留 ✓ |
 | 内网流量被送去机场 | 内网规则指向了一个带 `dialer-proxy` 的**出口**节点 ✗ | 出口节点**不得**放进分流组 ✓ |
 | 一台机器加第二个节点后借网断 | 两个节点**抢同一段 overlay 路由** ✗ | **一机一节点** ✓ |
 | 重载后行为突变 | 重载会重置选择器 ✗ | 组内第一项 = 正确默认值 ✓ |
@@ -93,7 +111,7 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 
 ```text
 本机 runtime : et-apply rollback(恢复最近一次备份 ✓)
-内核二进制   : <cores 目录>(换核流程见 service-mode-sigkill.md ✓)
+内核二进制   : `et-apply core-rollback`(自动备份回滚 ✓);手工兜底见 service-mode-sigkill.md ✓
 对端网关     : 部署目录的备份 ⇒ docker compose -p <项目> up -d --force-recreate <服务>
 对端宿主终端 : ip -o link show | grep Meta 应为空 ✓、default via <原网关> ✓
 ```
