@@ -53,6 +53,20 @@
 
 > 三类都落到**同一个入口分组** ⇒ 终端与浏览器**自动**生效，无需给任何客户端单独配代理 ✓。
 
+
+## 分享给别人（订阅化 ✓ 模板化 ✓）
+
+```text
+① 复制 docs/easytier/client/mihomo-profile.template.yaml → my-profile.yaml
+② 填值（或一键渲染,推荐 ✓）:
+   sh docs/easytier/client/render.sh        # 缺任一变量会**拒绝输出** ✗;输出前会校验 YAML ✓
+③ 导入:Clash Verge Rev → 订阅 → 导入**本地文件**（或把这个文件放进静态托管,作为**订阅 URL** 分享 ✓）
+④ 切换:分组 <内网分组名> —— 现场选 DIRECT ✓ / 离网选入口节点 ✓（终端与浏览器自动生效 ✓）
+⑤ 交付前自检:sh docs/easytier/check-templates.sh   # 不得有明文 secret / 公网 IP ✗
+```
+
+> ⚠️ 模板含 overlay 入网资格 ⇒ 对外分享建议**单独一套网络 + 单独 secret** ✓。
+
 ## 三条不可省的判据（少一条就会出现"看着通、其实没通"✗）
 
 1. **出口侧 `dialer-proxy` 必须写** ✓ —— 出口替家侧拨号时走的是 mihomo 的 **dialer**（不是规则引擎 ✗），
