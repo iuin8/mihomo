@@ -1,0 +1,50 @@
+# ============================================================================
+# 「内网接入」订阅模板(可直接被 Clash Verge Rev 导入 ✓)
+#   ★ 用法:复制成 my-profile.yaml,把全部占位符替换成你自己的值(或用同目录 render.sh ✓)
+#   ★ 安全:本文件含 overlay 入网资格 ⇒ **分享 = 给出入网资格** ✗;对外分享请另建一套网络与 secret ✓
+#   ★ 角色:这是一个**入口节点(不带 tun)** ✓ —— 与出口节点(带 tun)天然共存 ✓
+# ============================================================================
+proxies:
+  # 入口节点:只负责"把内网目标送进 overlay",由家侧网关代拨/代转 ✓
+  - name: <LAN_NODE, 入口节点名, 如 et-home>
+    type: easytier
+    network-name: <NET_NAME, overlay 网络名>
+    network-secret: <NET_SECRET, overlay secret>
+    no-listener: true                 # ✓ 不监听端口
+    tun: false                        # ✓ 关键:不建设备 ⇒ 不抢 overlay /24 路由 ⇒ 与出口节点共存
+    # 不写静态 ipv4 ⇒ dhcp 自动取唯一地址 ✓(多台机器共用同一模板也不会撞地址)
+    peers:
+      - tcp://<RENDEZVOUS, 会合点地址>:11010
+    udp: true
+    exit-nodes:
+      - <EXIT_ADDR, 家侧网关的 overlay 地址>      # 家侧"公告内网"的角色节点
+
+proxy-groups:
+  # 唯一的"自动"开关:现场选 DIRECT ✓ / 离网选入口节点 ✓
+  - name: <GROUP, 内网分组名, 如 内网入口>
+    type: select
+    proxies:
+      - DIRECT
+      - <LAN_NODE, 入口节点名, 如 et-home>
+
+rules:
+  # overlay 自身网段必须直连(交给 easytier 自己的设备/路由 ✓)
+  - IP-CIDR,<OVERLAY, overlay 网段, 如 10.144.0.0/24>,DIRECT,no-resolve
+  # C 类:内网 CIDR ⇒ 全部进内网分组 ✓
+  - IP-CIDR,<HOME_CIDR, 家侧内网网段, 如 192.168.1.0/24>,<GROUP, 内网分组名, 如 内网入口>
+  - IP-CIDR,<CORP_CIDR, 公司内网网段, 如 10.0.0.0/8>,<GROUP, 内网分组名, 如 内网入口>
+  # 域名分流:公网域名→内网 IP 的(split-horizon)与纯内网域名都要按**域名**分流 ✓
+  - DOMAIN-SUFFIX,<CORP_DOMAIN, 内网域名, 如 corp.example.com>,<GROUP, 内网分组名, 如 内网入口>
+  - DOMAIN-SUFFIX,<CLUSTER_DOMAIN, 集群内域名, 如 cluster.local>,<LAN_NODE, 入口节点名, 如 et-home>
+  # 其余走你自己的订阅规则(把本段拷进你现有 profile 时,这两条要放在它的规则之前 ✓)
+  - MATCH,DIRECT
+
+dns:
+  enable: true
+  # ★ A 类(公网域名→内网 IP):必须绕开 fake-ip,否则拿到 198.18.x.x ✗ 必失败 ✗
+  fake-ip-filter:
+    - "+.<CORP_DOMAIN, 内网域名, 如 corp.example.com>"
+  nameserver-policy:
+    # ★ B 类(纯内网域名):必须问内网 DNS,且经入口节点解析 ✓
+    "+.<CLUSTER_DOMAIN, 集群内域名, 如 cluster.local>":
+      - <DNS, 内网 DNS, 如 10.96.0.10>#<LAN_NODE, 入口节点名, 如 et-home>
