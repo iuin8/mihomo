@@ -65,3 +65,20 @@ cp /tmp/backup-*/docker-compose.yml /tmp/backup-*/gateway.yaml .
 docker compose -p easytier-gateway up -d --force-recreate mihomo
 ip -o link show | grep Meta || echo "TUN 已消失 ✓"    # 确认回滚到位 ✓
 ```
+
+## ★ 镜像必须固定版本（不可用 `latest`）
+
+家侧运行的内核**必须是我们 fork 的构建**（含 `proxy-networks` 运行期修复）。用 `latest` 会悄悄跑到旧/官方构建，
+表现为"公告了网段但完全不生效"。做法（compose 已支持 `${GW_TAG:-latest}`）：
+
+```yaml
+# .env（与 docker-compose.yml 同目录）
+GW_TAG=v1.19.32-fa.1020      # 固定版本 ✓ 可复现 ✓
+```
+
+**自证**（不看 tag，看二进制里的标记）：
+```bash
+docker inspect mihomo-gateway --format '{{.Config.Image}}'          # 期望 …:v1.19.32-fa.1020 ✓
+docker exec mihomo-gateway sh -c 'strings /proc/1/exe | grep -c "forwarded dials go through dialer-proxy"'   # 期望 1 ✓
+docker logs mihomo-gateway 2>&1 | grep "proxy networks announced"    # 期望出现你的网段 ✓
+```
