@@ -90,6 +90,9 @@ sniffer:
   enable: true
 
 rules:
+# ★ 会合点必须直连(2026-10-19 血案 ✓):家侧若把公网会合点也送进隧道,就会自锁——
+#   建 overlay 必须先连会合点,而连会合点的流量又被兜底规则塞进 overlay ✗
+- IP-CIDR,<会合点 IP>/32,DIRECT,no-resolve
 - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
 - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
 - IP-CIDR,192.168.0.0/24,et-mac,no-resolve

@@ -15,7 +15,7 @@ proxies:
     # 不写静态 ipv4 ⇒ dhcp 自动取唯一地址 ✓(多台机器共用同一模板也不会撞地址)
     peers:
       - tcp://<RENDEZVOUS, 会合点地址>:11010
-    udp: true
+    udp: true                        # 办公/酒店等封锁 UDP 的网络 ⇒ 改 false(TCP-only ✓,实测有效 ✓)
     exit-nodes:
       - <EXIT_ADDR, 家侧网关的 overlay 地址>      # 家侧"公告内网"的角色节点
 
