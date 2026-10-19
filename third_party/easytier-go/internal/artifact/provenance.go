@@ -3,6 +3,6 @@
 package artifact
 
 const (
-	Commit = "63519db2b5f2a6a1b9b7f20905f036dab54eb829"
-	SHA256 = "8b82f37d62fba2ffe8e256386096fddf448d4261d51c495d5bd97cd11bbb24a0"
+	Commit = "c51437c673a71f69b4b028c8d566a7b23b33e65c"
+	SHA256 = "17d6dd4561c1f1e818e7d70ed031c3cf8ea5dcfc1fd0461a6753f1f23f5fa6ab"
 )

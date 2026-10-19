@@ -1,6 +1,8 @@
---- a/internal/engine/host.go	2026-09-28 17:47:55
-+++ b/internal/engine/host.go	2026-10-02 00:08:36
-@@ -65,7 +65,8 @@
+diff --git a/internal/engine/host.go b/internal/engine/host.go
+index db2c769..a81519c 100644
+--- a/internal/engine/host.go
++++ b/internal/engine/host.go
+@@ -68,7 +68,8 @@ func NewHost(ctx context.Context, options Options) (_ *Host, err error) {
  	}
  
  	lifetime, cancel := context.WithCancel(contextutil.WithoutCancel(ctx))

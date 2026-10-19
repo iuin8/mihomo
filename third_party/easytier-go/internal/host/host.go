@@ -34,7 +34,9 @@ const (
 type Options struct {
 	Platform            platform.Services
 	PacketQueueCapacity int
-	// FORK(easytier-guestlog): sink for the guest's stdout/stderr (its tracing output).
+	// LogWriter receives module-wide guest logs. Nil discards output.
+	// Writes run synchronously while the guest is executing; the writer must
+	// not call back into this Host. The Host does not close the writer.
 	LogWriter io.Writer
 }
 

@@ -1,23 +1,17 @@
-# FORK: 给 easytier-go 增加公开的 PatchConfig（运行时下发配置）。
-#
-# 背景：网络实例的创建期 TOML 里有些字段**不会**经反序列化生效，
-# 只有 guest 的 CLI / config-patch RPC 那条路才会（见 component/easytier/proxy_network.go）。
-# 把 PatchConfig 暴露成公开方法，宿主才能在实例起来后对账。
-#
-# 本补丁由 scripts 无关：套用方式见 third_party/setup-easytier-interpreter.sh
 diff --git a/internal/host/rpc.go b/internal/host/rpc.go
-index 40ac3722..8bdc6a92 100644
+index 40ac372..a298e98 100644
 --- a/internal/host/rpc.go
 +++ b/internal/host/rpc.go
-@@ -5,6 +5,7 @@ import (
+@@ -5,6 +5,8 @@ import (
  	"fmt"
  	"time"
  
 +	apiconfig "github.com/easytier/easytier/easytier-go/proto/api/config"
++
  	apiinstance "github.com/easytier/easytier/easytier-go/proto/api/instance"
  	"github.com/easytier/easytier/easytier-go/proto/common"
  	"google.golang.org/protobuf/proto"
-@@ -48,6 +49,29 @@ func (instance *Instance) ListRoute(
+@@ -48,6 +50,29 @@ func (instance *Instance) ListRoute(
  	return response.Routes, nil
  }
  

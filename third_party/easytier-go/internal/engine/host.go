@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -27,11 +28,7 @@ type Options struct {
 	Services            platform.Services
 	PacketQueueCapacity int
 	Management          reactor.ManagementHandler
-	// FORK(easytier-guestlog): guest stdout/stderr sink. The WASI guest writes its tracing
-	// output to stdout (easytier/src/common/log/mod.rs), and wazero discards module output
-	// unless a writer is attached, which is why an embedded instance's internal logs were
-	// invisible. nil keeps the previous behaviour (discard).
-	LogWriter io.Writer
+	LogWriter           io.Writer
 }
 
 type Host struct {
@@ -108,10 +105,20 @@ func NewHost(ctx context.Context, options Options) (_ *Host, err error) {
 		return nil, fmt.Errorf("compile embedded EasyTier core: %w", err)
 	}
 	defer compiled.Close(contextutil.WithoutCancel(ctx))
-	module, err = runtime.InstantiateModule(ctx, compiled, newModuleConfig(options.LogWriter))
+	moduleConfig := newModuleConfig()
+	if options.LogWriter != nil {
+		moduleConfig = moduleConfig.WithStdout(options.LogWriter)
+	}
+	module, err = runtime.InstantiateModule(ctx, compiled, moduleConfig)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate embedded EasyTier core: %w", err)
 	}
+	// Compiling the core allocates ~100MB of throwaway compiler state on the
+	// Go heap. The Go runtime does not return it to the OS on its own after
+	// the initiating GC, so the process would retain the compilation peak as
+	// resident memory for its entire lifetime. NewHost runs once at startup,
+	// outside the packet path, so reclaim it explicitly here.
+	debug.FreeOSMemory()
 
 	host := &Host{
 		ctx:       lifetime,
@@ -127,19 +134,12 @@ func NewHost(ctx context.Context, options Options) (_ *Host, err error) {
 	return host, nil
 }
 
-func newModuleConfig(logWriter io.Writer) wazero.ModuleConfig {
-	// FORK(easytier-guestlog): without a writer wazero sends the guest's stdout/stderr to
-	// io.Discard, so every tracing line the guest emits is lost.
-	if logWriter == nil {
-		logWriter = io.Discard
-	}
+func newModuleConfig() wazero.ModuleConfig {
 	return wazero.NewModuleConfig().
 		WithRandSource(rand.Reader).
 		WithSysWalltime().
 		WithSysNanotime().
-		WithSysNanosleep().
-		WithStdout(logWriter).
-		WithStderr(logWriter)
+		WithSysNanosleep()
 }
 
 func (host *Host) CreateInstance(
