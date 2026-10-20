@@ -57,3 +57,11 @@ grep -q 'wazero.NewRuntime(' "$dest/internal/engine/host.go" && {
 }
 
 echo "✅ $module@$version 已换为解释器运行时 → $dest"
+
+# FORK(easytier-tun): 用我们按官方脚本重编的 guest wasm 覆盖模块里自带的产物 ✓。
+# 原因:官方 wasm 未声明 smoltcp_available ⇒ 子网代理退回 kernel-listener ⇒ WASI 无 TUN ⇒ SYN 只能过期 ✗
+VENDORED_WASM="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/easytier-go-wasi/easytier_core.wasm"
+if [[ -f "$VENDORED_WASM" ]]; then
+    cp -p "$VENDORED_WASM" third_party/easytier-go/internal/artifact/easytier_core.wasm
+    echo "✅ 已用 fork 自带的 guest wasm 覆盖产物（见 third_party/easytier-go-wasi/SHA256SUMS）"
+fi
