@@ -56,3 +56,14 @@ ssh <家侧> "docker exec mihomo-gateway sh -c 'strings /proc/1/exe | grep -c \"
 
 7. **测哪条路就让流量走那条路** ✓：测入口节点 ⇒ 先切分组 + **回读** + 用 `/connections` 的 `chains`
    或规则命中计数**证明**它真的走了该节点 ✓；**现场直连的 2xx 不能当作入口节点的证据** ✗。
+
+8. **改配置前先问"它属于谁"** ✓：三层归属 —— **上游订阅**（机场 `profiles/<uid>.yaml`，`type: remote`）✗ 不编辑、
+   **内核默认**（mihomo 源码默认值）✗ 不追改、**我们这层**（本仓 profile 与 CVR 全局里我们加的部分）✓ 唯一可改。
+   ```
+   ① grep -rl "<值>" "$CVR_DIR"                看命中哪个文件（排除 .bak / backup）
+   ② profiles.yaml 的 current                   命中机场 profile ⇒ 上游层 ⇒ 不改
+   ③ grep -rn "<值>" mihomo/{config,constant}   命中 ⇒ 内核默认层 ⇒ 不改
+   ```
+   需要不同行为 ⇒ 用 **merge/override 覆盖** ✓，绝不改原 profile ✗（改了会被订阅更新覆盖）。
+   例：`nameserver` 里的明文 `119.29.29.29` / `223.5.5.5` 属于机场订阅与内核默认 ⇒ **不动**；
+   我们只守 **A/B/C 三类内网解析**、`et-*` 节点、`内网入口` 分组与规则头部。
