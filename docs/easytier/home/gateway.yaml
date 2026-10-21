@@ -43,6 +43,9 @@ tun:
   dns-hijack:
     - any:53
 proxies:
+# ★ 两个节点都必须显式 bind 物理网卡 ✗ 不能留空：留空时内核按目标自动探测，
+#   而"到对端的路由"会被自家 TUN 接管 ⇒ 探测会选中 TUN 自己 ⇒ 回环/借网断 ✗（实测过 ✓）
+#   取值：持有本机 LAN 地址、且设备名不是 Meta/tun/utun/easytier* 的那块 ✓
 - name: et-gateway
   type: easytier
   network-name: private-overlay
@@ -50,6 +53,7 @@ proxies:
   hostname: ssy-fa-gw
   instance-name: ssy-fa-gw
   ipv4: 10.144.0.2/24
+  interface-name: <改这里：物理网卡名，如 enp2s0>
   state-dir: /root/.config/mihomo/easytier
   listeners:
   - tcp://0.0.0.0:11110
@@ -72,6 +76,7 @@ proxies:
   - tcp://<改这里：会合点公网IP或域名>:11010
   udp: true
   ipv4: 10.144.0.1/24
+  interface-name: <改这里：物理网卡名，如 enp2s0>
   tun: true
   tun-routes:
   - 1.1.1.1/32

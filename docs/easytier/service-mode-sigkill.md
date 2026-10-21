@@ -31,6 +31,8 @@ configuration we could construct.
   port 7897.
 * Outbound under test: `type: easytier` with `peers: [tcp://<rendezvous>:11010]`,
   `no-listener: true`, `disable-p2p: true`, `interface-name: en0`.
+  > `disable-p2p: true` 在这里只是**当时的故障现场条件**（用来排除打洞干扰），
+  > **不是修复手段** ✗ —— 修复已落在源码侧；生产配置不要靠关 P2P 绕过 ✗。
 
 ## Reproduction (minimum)
 
