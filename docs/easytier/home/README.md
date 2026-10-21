@@ -73,12 +73,12 @@ ip -o link show | grep Meta || echo "TUN 已消失 ✓"    # 确认回滚到位 
 
 ```yaml
 # .env（与 docker-compose.yml 同目录）
-GW_TAG=v1.19.32-fa.1020      # 固定版本 ✓ 可复现 ✓
+GW_TAG=<你构建的镜像 tag>     # 固定版本 ✓ 可复现 ✓;**绝不写 latest** ✗
 ```
 
 **自证**（不看 tag，看二进制里的标记）：
 ```bash
-docker inspect mihomo-gateway --format '{{.Config.Image}}'          # 期望 …:v1.19.32-fa.1020 ✓
+docker inspect mihomo-gateway --format '{{.Config.Image}}'          # 期望 …:<你写进 .env 的同一个 tag> ✓
 docker exec mihomo-gateway sh -c 'strings /proc/1/exe | grep -c "forwarded dials go through dialer-proxy"'   # 期望 1 ✓
 docker logs mihomo-gateway 2>&1 | grep "proxy networks announced"    # 期望出现你的网段 ✓
 ```

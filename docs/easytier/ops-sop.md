@@ -62,8 +62,10 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 ## 2. 日常操作
 
 ```bash
-<放配置>   cp <完整配置>.yaml <状态目录>/et-apply/config.yaml
-<生效>     sudo -n et-apply stage && sudo -n et-apply restart
+# ★ 唯一手改的文件:overlay.yaml(我们这层的小改动,~1.3 KB)
+<改配置>   $EDITOR <状态目录>/et-apply/overlay.yaml     # 只写"我们的增量",不复制整份配置 ✗
+<看变化>   et-config diff                              # 只读:列出相对 CVR 当前产物会做什么 ✓
+<生效>     et-config apply                             # build → stage(-t 校验) → restart ✓ 幂等 ✓
 <看状态>   sudo -n et-apply status
 <回滚>     sudo -n et-apply rollback
 

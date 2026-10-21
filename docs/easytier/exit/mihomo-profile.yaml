@@ -19,6 +19,11 @@ proxies:
     proxy-networks: ["<改这里：本机所在网段，如 192.168.0.0/24>"]   # 不与家侧/集群/overlay 重叠 ✗
     tun-routes: []                                # 直连网段无需 pin ✓
 
+    # ★ 必须显式绑**物理网卡** ✗ 不能留空：留空时内核按目标自动探测网卡，
+    #   而"到对端的路由"会被自家 TUN 接管 ⇒ 探测必然选中 TUN 自己 ⇒ 回环 ✗（实测过 ✓）
+    #   取值：持有本机 LAN 地址、且设备名不是 Meta/tun/utun/easytier* 的那块 ✓
+    interface-name: <改这里：物理网卡名，如 en0 / eth0 / enp2s0>
+
     # ② 让家侧借本机出网：家侧的包到家侧网关 → 由你落地出网 ✓
     enable-exit-node: true
 
@@ -32,7 +37,9 @@ proxies:
 
     # ⑤ 与家侧互联
     peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]
-    udp: true
+    # ★ 默认 TCP-only：办公/酒店/公共网络常封 UDP，开着只会让打洞一直失败 ✗
+    #   确认你的网络放行 UDP 后再改 true（能提升 P2P 成功率 ✓）
+    udp: false
     exit-nodes: ["<改这里：家侧网关在 overlay 里的地址，如 10.144.0.2>"]
     no-listener: true
 

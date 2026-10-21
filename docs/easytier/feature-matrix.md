@@ -62,8 +62,8 @@ ssh <家侧> "docker exec mihomo-gateway sh -c 'strings /proc/1/exe | grep -c \"
    |---|---|---|
    | 上游订阅 | 机场 `profiles/<uid>.yaml`（`type: remote`） | ✗ 不编辑；要改行为用 merge/override 覆盖 |
    | 内核默认 | mihomo 源码默认值（如 `config/config.go` 的 `nameserver`） | ✗ 不追改 |
-   | **我们这层** | ① 对外发布：`client/mihomo-profile.template.yaml`（自包含）② 本机运行源：`~/.local/state/clash-group/et-apply/config.yaml` ③ 本机订阅 profile | ✓ 唯一可改 |
-   | 生成物 | CVR `clash-verge.yaml`、`/Library/.../runtime/config.yaml`（内核 `-f`） | ✗ 禁止手改，只由 CVR 或 `et-apply stage` 产生 |
+   | **我们这层** | ① 对外发布：`client/mihomo-profile.template.yaml`（自包含）② 本机 overlay：`~/.local/state/clash-group/et-apply/overlay.yaml`（唯一手改 ✓）③ 本机订阅 profile | ✓ 唯一可改；改完用 `et-config apply` |
+   | 生成物 | 候选 `config.yaml`、CVR `clash-verge.yaml`、`/Library/.../runtime/config.yaml`（内核 `-f`） | ✗ 禁止手改，只由 `et-config` / CVR 产生 |
    ```
    ① grep -rl "<值>" "$CVR_DIR"                看命中哪个文件（排除 .bak / backup）
    ② profiles.yaml 的 current                   命中机场 profile ⇒ 上游层 ⇒ 不改

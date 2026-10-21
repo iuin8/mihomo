@@ -3,6 +3,7 @@
 #   ★ 用法:复制成 my-profile.yaml,把全部占位符替换成你自己的值(或用同目录 render.sh ✓)
 #   ★ 安全:本文件含 overlay 入网资格 ⇒ **分享 = 给出入网资格** ✗;对外分享请另建一套网络与 secret ✓
 #   ★ 角色:这是一个**入口节点(不带 tun)** ✓ —— 与出口节点(带 tun)天然共存 ✓
+#   ★ 内核:必须是**本 fork 构建**的 mihomo(easytier 出站是 fork 能力 ✓;上游会静默忽略 ✗)
 # ============================================================================
 proxies:
   # 入口节点:只负责"把内网目标送进 overlay",由家侧网关代拨/代转 ✓
@@ -12,10 +13,16 @@ proxies:
     network-secret: <NET_SECRET, overlay secret>
     no-listener: true                 # ✓ 不监听端口
     tun: false                        # ✓ 关键:不建设备 ⇒ 不抢 overlay /24 路由 ⇒ 与出口节点共存
+    # ★ 必须显式绑**物理网卡** ✗ 不能留空:留空时内核按目标探测网卡, 而"到对端的路由"会被
+    #   自家 overlay 设备接管 ⇒ 探测必然选中 overlay 自己 ⇒ 回环/不通 ✗(实测踩过 ✓)
+    #   取值:持有本机 LAN 地址、且设备名不是 Meta/tun/utun/easytier* 的那块 ✓
+    interface-name: <PHYS_NIC, 物理网卡名, 如 en0>
     # 不写静态 ipv4 ⇒ dhcp 自动取唯一地址 ✓(多台机器共用同一模板也不会撞地址)
     peers:
       - tcp://<RENDEZVOUS, 会合点地址>:11010
-    udp: true                        # 办公/酒店等封锁 UDP 的网络 ⇒ 改 false(TCP-only ✓,实测有效 ✓)
+    # ★ 默认 TCP-only:办公/酒店/公共网络常封 UDP, 开着只会让打洞一直失败 ✗
+    #   确认你的网络放行 UDP 后再改 true(能提升 P2P 成功率 ✓)
+    udp: false
     exit-nodes:
       - <EXIT_ADDR, 家侧网关的 overlay 地址>      # 家侧"公告内网"的角色节点
 
