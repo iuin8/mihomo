@@ -107,6 +107,29 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 | 重载后行为突变 | 重载会重置选择器 ✗ | 组内第一项 = 正确默认值 ✓ |
 | 手工改 runtime 后又变回去 | GUI 的"重载配置"会用它的合并结果覆盖 ✓(正常) | 要长期生效 ⇒ 改 **profile 源文件** ✓ |
 
+## 6. 配置变更入口（用户侧 `et-config`，2026-10-21 立）
+
+```text
+为什么：CVR 每次应用订阅都会重写合并产物（机场节点域名会轮换）。
+        整份快照会把旧数据冻结回写 ✗；叠加模式每次都从**当前产物**重算 ✓。
+
+分层：CVR 合并产物（基座，只读） + overlay.yaml（我们的改动，~1.3 KB）
+      └─ et-config build ─▶ 候选 config.yaml ─▶ sudo et-apply stage（-t 校验）─▶ restart
+      ⇒ root 助手保持"只校验只落盘"，不理解业务语义 ✓
+
+命令：
+  et-config diff     只读：打印相对基座会产生哪些变化 ✓
+  et-config build    只生成候选，不安装 ✓
+  et-config apply    build + stage + restart（幂等：重复执行结果逐字节相同 ✓）
+  et-config show     打印 overlay（敏感值打码 ✓）
+
+overlay 只支持 4 种幂等操作：`+` 并集 / `=` 设值 / `prepend` 前插 / `remove` 精确删。
+  · 没有 diff/上下文匹配 ⇒ 不会"打半份"✗
+  · 删掉 overlay 里的一条 ⇒ 下一次它就不再出现 ✓（无历史残留）
+  · 基座缺失/结构变化 ⇒ 校验失败 ⇒ **不落盘** ✓
+  · overlay 含 network-secret ⇒ **0600、不入 git** ✓
+```
+
 ## 5. 回滚入口
 
 ```text
