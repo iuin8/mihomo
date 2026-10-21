@@ -57,13 +57,22 @@ ssh <家侧> "docker exec mihomo-gateway sh -c 'strings /proc/1/exe | grep -c \"
 7. **测哪条路就让流量走那条路** ✓：测入口节点 ⇒ 先切分组 + **回读** + 用 `/connections` 的 `chains`
    或规则命中计数**证明**它真的走了该节点 ✓；**现场直连的 2xx 不能当作入口节点的证据** ✗。
 
-8. **改配置前先问"它属于谁"** ✓：三层归属 —— **上游订阅**（机场 `profiles/<uid>.yaml`，`type: remote`）✗ 不编辑、
-   **内核默认**（mihomo 源码默认值）✗ 不追改、**我们这层**（本仓 profile 与 CVR 全局里我们加的部分）✓ 唯一可改。
+8. **改配置前先问"它属于谁"** ✓：四层归属 ——
+   | 层 | 是谁的 | 怎么对待 |
+   |---|---|---|
+   | 上游订阅 | 机场 `profiles/<uid>.yaml`（`type: remote`） | ✗ 不编辑；要改行为用 merge/override 覆盖 |
+   | 内核默认 | mihomo 源码默认值（如 `config/config.go` 的 `nameserver`） | ✗ 不追改 |
+   | **我们这层** | ① 对外发布：`client/mihomo-profile.template.yaml`（自包含）② 本机运行源：`~/.local/state/clash-group/et-apply/config.yaml` ③ 本机订阅 profile | ✓ 唯一可改 |
+   | 生成物 | CVR `clash-verge.yaml`、`/Library/.../runtime/config.yaml`（内核 `-f`） | ✗ 禁止手改，只由 CVR 或 `et-apply stage` 产生 |
    ```
    ① grep -rl "<值>" "$CVR_DIR"                看命中哪个文件（排除 .bak / backup）
    ② profiles.yaml 的 current                   命中机场 profile ⇒ 上游层 ⇒ 不改
    ③ grep -rn "<值>" mihomo/{config,constant}   命中 ⇒ 内核默认层 ⇒ 不改
    ```
-   需要不同行为 ⇒ 用 **merge/override 覆盖** ✓，绝不改原 profile ✗（改了会被订阅更新覆盖）。
+   **对外分享只有一件东西** ✓：`client/mihomo-profile.template.yaml` —— 使用者「装 Clash + 导入这一份」，
+   不改任何全局设置。本机两处是运行态，不对外；与模板**语义漂移即视为缺陷** ✗。
+   ⚠️ **本机源是整份快照** ✓：机场订阅更新后，快照里的机场节点 `server` 域名会过期 ✗
+   （实测差 92 行、**全部是 `server`** ✗）。刷新 = 用 CVR 现产物覆盖源 → `et-apply stage` → `restart` ✓；
+   收敛方向是把「我们的改动」变成**小补丁**叠加到 CVR 新产物上，别再维护整份副本 ✗。
    例：`nameserver` 里的明文 `119.29.29.29` / `223.5.5.5` 属于机场订阅与内核默认 ⇒ **不动**；
    我们只守 **A/B/C 三类内网解析**、`et-*` 节点、`内网入口` 分组与规则头部。
