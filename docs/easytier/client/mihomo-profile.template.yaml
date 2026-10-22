@@ -41,6 +41,11 @@ rules:
   - IP-CIDR,<HOME_CIDR, 家侧内网网段, 如 192.168.1.0/24>,<GROUP, 内网分组名, 如 内网入口>
   - IP-CIDR,<CORP_CIDR, 公司内网网段, 如 10.0.0.0/8>,<GROUP, 内网分组名, 如 内网入口>
   # 域名分流:公网域名→内网 IP 的(split-horizon)与纯内网域名都要按**域名**分流 ✓
+  # ⚠️ 作用域陷阱:DOMAIN-SUFFIX 会把**整个后缀**送进这个节点 ✗。
+  #    若该后缀下也有**公网服务**(同域不同名很常见),它会被一起送进内网入口 ⇒ 超时 ✗
+  #    (家侧转发拨号是直连,不经它自己的机场 ✓;而你在家侧用浏览器却能开 ⇒ 极易误判为"网络环路" ✗)
+  #    ⇒ 该后缀若混有公网名字:删掉这条,改靠上面的 IP 规则 + fake-ip-filter 拿真实 IP 判定 ✓
+  #    ⇒ 只有"确定整段都是内网名字"时才保留本行 ✓
   - DOMAIN-SUFFIX,<CORP_DOMAIN, 内网域名, 如 corp.example.com>,<GROUP, 内网分组名, 如 内网入口>
   - DOMAIN-SUFFIX,<CLUSTER_DOMAIN, 集群内域名, 如 cluster.local>,<LAN_NODE, 入口节点名, 如 et-home>
   # 其余走你自己的订阅规则(把本段拷进你现有 profile 时,这两条要放在它的规则之前 ✓)
