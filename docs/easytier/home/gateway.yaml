@@ -61,6 +61,8 @@ proxies:
   peers:
   - tcp://<改这里：会合点公网IP或域名>:11010
   enable-exit-node: true
+  # 「全出口」写法:必须用两个半区, **不要写 0.0.0.0/0** ✗(前缀 0 在 host-tunnel guest 里不生效)
+  # proxy-networks: ["<内网网段>", "0.0.0.0/1", "128.0.0.0/1"]
   proxy-networks: ["<改这里：要公告给别人的网段，如 192.168.1.0/24>"]
   udp: true
   mtu: 1380
