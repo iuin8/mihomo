@@ -43,8 +43,10 @@ services:
     security_opt:
       - no-new-privileges:true
 
-    # 上限保护：实测稳态 ~200MB，1g 留足余量，同时避免异常时吃满宿主机内存
-    mem_limit: 1g
+    # 上限保护：**两个 WASI 节点实测稳态 ~0.75 GiB**（760 MiB 上下浮动，长时间不增长）
+    # ⚠️ 1g 会周期性地被 cgroup OOM 杀掉（exit 137）：实测 24h 内 10 次，表现是"隧道时好时坏" ✗
+    #    2g 给足余量（占用率 ~26%），既保护宿主机又不误杀
+    mem_limit: 2g
 
     # 容器级健康检查（探内核 API）：内核挂了/挂死时这里报 unhealthy —— 只做"可见"，
     # 不自动重启（普通 compose 没有按健康状态重启的原语；要无人值守见 SOP §6.13 的 B 方案）。
