@@ -74,5 +74,24 @@ echo "✅ $module@$version 已换为解释器运行时 → $dest"
 VENDORED_WASM="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/easytier-go-wasi/easytier_core.wasm"
 if [[ -f "$VENDORED_WASM" ]]; then
     cp -p "$VENDORED_WASM" third_party/easytier-go/internal/artifact/easytier_core.wasm
-    echo "✅ 已用 fork 自带的 guest wasm 覆盖产物（见 third_party/easytier-go-wasi/SHA256SUMS）"
+    # 断言 provenance 与真实产物一致：否则 CoreInfo 报的 sha 是假的，取证/发布都不可信 ✗
+actual_sha="$(shasum -a 256 "$dest/internal/artifact/easytier_core.wasm" | awk '{print $1}')"
+declared_sha="$(grep -oE 'SHA256 = "[0-9a-f]{64}"' "$dest/internal/artifact/provenance.go" | grep -oE '[0-9a-f]{64}')"
+if [[ -z "$declared_sha" || "$actual_sha" != "$declared_sha" ]]; then
+    echo "provenance 不一致：wasm=$actual_sha provenance=${declared_sha:-空}（跑 go generate 重算）" >&2
+    exit 1
+fi
+art_commit="$(grep -oE 'Commit = "[0-9a-f]{40}"' "$dest/internal/artifact/provenance.go" | grep -oE '[0-9a-f]{40}')"
+proto_commit="$(grep -oE 'EasyTierCommit = "[0-9a-f]{40}"' "$dest/proto/provenance.go" | grep -oE '[0-9a-f]{40}')"
+if [[ -z "$art_commit" || "$art_commit" != "$proto_commit" ]]; then
+    echo "provenance 不一致：artifact.Commit=$art_commit proto.EasyTierCommit=$proto_commit" >&2
+    exit 1
+fi
+recorded_sha="$(awk 'NR==1{print $1}' third_party/easytier-go-wasi/SHA256SUMS)"
+if [[ -z "$recorded_sha" || "$actual_sha" != "$recorded_sha" ]]; then
+    echo "SHA256SUMS 与产物不一致：wasm=$actual_sha SHA256SUMS=$recorded_sha" >&2
+    exit 1
+fi
+
+echo "✅ 已用 fork 自带的 guest wasm 覆盖产物（见 third_party/easytier-go-wasi/SHA256SUMS）"
 fi

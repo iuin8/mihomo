@@ -1,0 +1,171 @@
+diff --git a/internal/artifact/provenance.go b/internal/artifact/provenance.go
+index afed2653..bcd9bc84 100644
+--- a/internal/artifact/provenance.go
++++ b/internal/artifact/provenance.go
+@@ -3,6 +3,6 @@
+ package artifact
+ 
+ const (
+-	Commit = "c51437c673a71f69b4b028c8d566a7b23b33e65c"
+-	SHA256 = "17d6dd4561c1f1e818e7d70ed031c3cf8ea5dcfc1fd0461a6753f1f23f5fa6ab"
++	Commit = "8800574867580e1ecaa7e5c80bee8c92f8b75b86"
++	SHA256 = "b05e6174140a41f3b10a0ff653d7f42a37c729d399a9127b36d9abae7d7600ea"
+ )
+diff --git a/proto/api/config/api_config.pb.go b/proto/api/config/api_config.pb.go
+index 909bfa07..03d695cc 100644
+--- a/proto/api/config/api_config.pb.go
++++ b/proto/api/config/api_config.pb.go
+@@ -93,8 +93,11 @@ type InstanceConfigPatch struct {
+ 	VpnPortalClients       []*VpnPortalClientPatch      `protobuf:"bytes,15,rep,name=vpn_portal_clients,json=vpnPortalClients,proto3" json:"vpn_portal_clients,omitempty"`
+ 	ManagedCredentials     *manage.ManagedCredentialSet `protobuf:"bytes,16,opt,name=managed_credentials,json=managedCredentials,proto3" json:"managed_credentials,omitempty"`
+ 	PreferPeerRelay        *bool                        `protobuf:"varint,17,opt,name=prefer_peer_relay,json=preferPeerRelay,proto3,oneof" json:"prefer_peer_relay,omitempty"`
+-	unknownFields          protoimpl.UnknownFields
+-	sizeCache              protoimpl.SizeCache
++	// Applies with routes: true preserves an empty manual list; false restores
++	// automatic routes. Omission preserves legacy RoutePatch behavior.
++	EnableManualRoutes *bool `protobuf:"varint,18,opt,name=enable_manual_routes,json=enableManualRoutes,proto3,oneof" json:"enable_manual_routes,omitempty"`
++	unknownFields      protoimpl.UnknownFields
++	sizeCache          protoimpl.SizeCache
+ }
+ 
+ func (x *InstanceConfigPatch) Reset() {
+@@ -246,6 +249,13 @@ func (x *InstanceConfigPatch) GetPreferPeerRelay() bool {
+ 	return false
+ }
+ 
++func (x *InstanceConfigPatch) GetEnableManualRoutes() bool {
++	if x != nil && x.EnableManualRoutes != nil {
++		return *x.EnableManualRoutes
++	}
++	return false
++}
++
+ type VpnPortalClientPatch struct {
+ 	state         protoimpl.MessageState        `protogen:"open.v1"`
+ 	Action        ConfigPatchAction             `protobuf:"varint,1,opt,name=action,proto3,enum=api.config.ConfigPatchAction" json:"action,omitempty"`
+@@ -867,7 +877,7 @@ var File_api_config_proto protoreflect.FileDescriptor
+ const file_api_config_proto_rawDesc = "" +
+ 	"\n" +
+ 	"\x10api_config.proto\x12\n" +
+-	"api.config\x1a\fcommon.proto\x1a\tacl.proto\x1a\x12api_instance.proto\x1a\x10api_manage.proto\"\x86\t\n" +
++	"api.config\x1a\fcommon.proto\x1a\tacl.proto\x1a\x12api_instance.proto\x1a\x10api_manage.proto\"\xd6\t\n" +
+ 	"\x13InstanceConfigPatch\x12\x1f\n" +
+ 	"\bhostname\x18\x01 \x01(\tH\x00R\bhostname\x88\x01\x01\x12)\n" +
+ 	"\x04ipv4\x18\x02 \x01(\v2\x10.common.Ipv4InetH\x01R\x04ipv4\x88\x01\x01\x12)\n" +
+@@ -889,7 +899,8 @@ const file_api_config_proto_rawDesc = "" +
+ 	"\x12disable_relay_data\x18\x0e \x01(\bH\aR\x10disableRelayData\x88\x01\x01\x12N\n" +
+ 	"\x12vpn_portal_clients\x18\x0f \x03(\v2 .api.config.VpnPortalClientPatchR\x10vpnPortalClients\x12Q\n" +
+ 	"\x13managed_credentials\x18\x10 \x01(\v2 .api.manage.ManagedCredentialSetR\x12managedCredentials\x12/\n" +
+-	"\x11prefer_peer_relay\x18\x11 \x01(\bH\bR\x0fpreferPeerRelay\x88\x01\x01B\v\n" +
++	"\x11prefer_peer_relay\x18\x11 \x01(\bH\bR\x0fpreferPeerRelay\x88\x01\x01\x125\n" +
++	"\x14enable_manual_routes\x18\x12 \x01(\bH\tR\x12enableManualRoutes\x88\x01\x01B\v\n" +
+ 	"\t_hostnameB\a\n" +
+ 	"\x05_ipv4B\a\n" +
+ 	"\x05_ipv6B\x06\n" +
+@@ -898,7 +909,8 @@ const file_api_config_proto_rawDesc = "" +
+ 	"\x16_ipv6_public_addr_autoB\x1a\n" +
+ 	"\x18_ipv6_public_addr_prefixB\x15\n" +
+ 	"\x13_disable_relay_dataB\x14\n" +
+-	"\x12_prefer_peer_relay\"\x88\x01\n" +
++	"\x12_prefer_peer_relayB\x17\n" +
++	"\x15_enable_manual_routes\"\x88\x01\n" +
+ 	"\x14VpnPortalClientPatch\x125\n" +
+ 	"\x06action\x18\x01 \x01(\x0e2\x1d.api.config.ConfigPatchActionR\x06action\x129\n" +
+ 	"\x06client\x18\x02 \x01(\v2!.api.manage.VpnPortalClientConfigR\x06client\"x\n" +
+diff --git a/proto/api/instance/api_instance.pb.go b/proto/api/instance/api_instance.pb.go
+index e22584ba..dc5378da 100644
+--- a/proto/api/instance/api_instance.pb.go
++++ b/proto/api/instance/api_instance.pb.go
+@@ -4399,17 +4399,17 @@ var file_api_instance_proto_goTypes = []any{
+ 	nil, // 66: api.instance.ListForeignNetworkResponse.ForeignNetworksEntry
+ 	(*ListGlobalForeignNetworkResponse_OneForeignNetwork)(nil), // 67: api.instance.ListGlobalForeignNetworkResponse.OneForeignNetwork
+ 	(*ListGlobalForeignNetworkResponse_ForeignNetworks)(nil),   // 68: api.instance.ListGlobalForeignNetworkResponse.ForeignNetworks
+-	nil,                                         // 69: api.instance.ListGlobalForeignNetworkResponse.ForeignNetworksEntry
+-	nil,                                         // 70: api.instance.MetricSnapshot.LabelsEntry
+-	(*common.UUID)(nil),                         // 71: common.UUID
+-	(*common.TunnelInfo)(nil),                   // 72: common.TunnelInfo
+-	(peer_rpc.SecureAuthLevel)(0),               // 73: peer_rpc.SecureAuthLevel
+-	(peer_rpc.PeerIdentityType)(0),              // 74: peer_rpc.PeerIdentityType
+-	(*common.Ipv4Inet)(nil),                     // 75: common.Ipv4Inet
+-	(*common.StunInfo)(nil),                     // 76: common.StunInfo
+-	(*common.PeerFeatureFlag)(nil),              // 77: common.PeerFeatureFlag
+-	(*common.Ipv6Inet)(nil),                     // 78: common.Ipv6Inet
+-	(*peer_rpc.GetIpListResponse)(nil),          // 79: peer_rpc.GetIpListResponse
++	nil,                                // 69: api.instance.ListGlobalForeignNetworkResponse.ForeignNetworksEntry
++	nil,                                // 70: api.instance.MetricSnapshot.LabelsEntry
++	(*common.UUID)(nil),                // 71: common.UUID
++	(*common.TunnelInfo)(nil),          // 72: common.TunnelInfo
++	(peer_rpc.SecureAuthLevel)(0),      // 73: peer_rpc.SecureAuthLevel
++	(peer_rpc.PeerIdentityType)(0),     // 74: peer_rpc.PeerIdentityType
++	(*common.Ipv4Inet)(nil),            // 75: common.Ipv4Inet
++	(*common.StunInfo)(nil),            // 76: common.StunInfo
++	(*common.PeerFeatureFlag)(nil),     // 77: common.PeerFeatureFlag
++	(*common.Ipv6Inet)(nil),            // 78: common.Ipv6Inet
++	(*peer_rpc.GetIpListResponse)(nil), // 79: peer_rpc.GetIpListResponse
+ 	(*peer_rpc.RouteForeignNetworkSummary)(nil), // 80: peer_rpc.RouteForeignNetworkSummary
+ 	(*common.Url)(nil),                          // 81: common.Url
+ 	(*common.SocketAddr)(nil),                   // 82: common.SocketAddr
+diff --git a/proto/provenance.go b/proto/provenance.go
+index 4c6318e4..a784461a 100644
+--- a/proto/provenance.go
++++ b/proto/provenance.go
+@@ -3,6 +3,6 @@
+ package proto
+ 
+ const (
+-	EasyTierCommit = "c51437c673a71f69b4b028c8d566a7b23b33e65c"
+-	SchemaSHA256   = "e49a4af09e5b66089eebb73fda78ffca7e8468a5a938cf7a593d689881686f0a"
++	EasyTierCommit = "8800574867580e1ecaa7e5c80bee8c92f8b75b86"
++	SchemaSHA256   = "33516bc93a3fd43df341ce081a904c1f8c5fd00ea5c33d78925e2359312a926c"
+ )
+diff --git a/proto/web/web.pb.go b/proto/web/web.pb.go
+index ece7eb55..a6c9fff8 100644
+--- a/proto/web/web.pb.go
++++ b/proto/web/web.pb.go
+@@ -95,8 +95,11 @@ type HeartbeatRequest struct {
+ 	SupportConfigSource     bool                   `protobuf:"varint,9,opt,name=support_config_source,json=supportConfigSource,proto3" json:"support_config_source,omitempty"`
+ 	FailedNetworkInstances  []*common.UUID         `protobuf:"bytes,10,rep,name=failed_network_instances,json=failedNetworkInstances,proto3" json:"failed_network_instances,omitempty"`
+ 	SupportHeartbeatPolicy  bool                   `protobuf:"varint,11,opt,name=support_heartbeat_policy,json=supportHeartbeatPolicy,proto3" json:"support_heartbeat_policy,omitempty"`
+-	unknownFields           protoimpl.UnknownFields
+-	sizeCache               protoimpl.SizeCache
++	// Supports explicit manual mode patches and typed empty-manual readback.
++	// Older peers silently ignore unknown patch fields; missing means false.
++	SupportManualRoutesPatch bool `protobuf:"varint,12,opt,name=support_manual_routes_patch,json=supportManualRoutesPatch,proto3" json:"support_manual_routes_patch,omitempty"`
++	unknownFields            protoimpl.UnknownFields
++	sizeCache                protoimpl.SizeCache
+ }
+ 
+ func (x *HeartbeatRequest) Reset() {
+@@ -206,6 +209,13 @@ func (x *HeartbeatRequest) GetSupportHeartbeatPolicy() bool {
+ 	return false
+ }
+ 
++func (x *HeartbeatRequest) GetSupportManualRoutesPatch() bool {
++	if x != nil {
++		return x.SupportManualRoutesPatch
++	}
++	return false
++}
++
+ type HeartbeatResponse struct {
+ 	state               protoimpl.MessageState `protogen:"open.v1"`
+ 	HeartbeatIntervalMs *uint32                `protobuf:"varint,1,opt,name=heartbeat_interval_ms,json=heartbeatIntervalMs,proto3,oneof" json:"heartbeat_interval_ms,omitempty"`
+@@ -346,7 +356,7 @@ const file_web_proto_rawDesc = "" +
+ 	"\fDeviceOsInfo\x12\x17\n" +
+ 	"\aos_type\x18\x01 \x01(\tR\x06osType\x12\x18\n" +
+ 	"\aversion\x18\x02 \x01(\tR\aversion\x12\"\n" +
+-	"\fdistribution\x18\x03 \x01(\tR\fdistribution\"\x9d\x04\n" +
++	"\fdistribution\x18\x03 \x01(\tR\fdistribution\"\xdc\x04\n" +
+ 	"\x10HeartbeatRequest\x12+\n" +
+ 	"\n" +
+ 	"machine_id\x18\x01 \x01(\v2\f.common.UUIDR\tmachineId\x12%\n" +
+@@ -362,7 +372,8 @@ const file_web_proto_rawDesc = "" +
+ 	"\x15support_config_source\x18\t \x01(\bR\x13supportConfigSource\x12F\n" +
+ 	"\x18failed_network_instances\x18\n" +
+ 	" \x03(\v2\f.common.UUIDR\x16failedNetworkInstances\x128\n" +
+-	"\x18support_heartbeat_policy\x18\v \x01(\bR\x16supportHeartbeatPolicy\"\xb6\x01\n" +
++	"\x18support_heartbeat_policy\x18\v \x01(\bR\x16supportHeartbeatPolicy\x12=\n" +
++	"\x1bsupport_manual_routes_patch\x18\f \x01(\bR\x18supportManualRoutesPatch\"\xb6\x01\n" +
+ 	"\x11HeartbeatResponse\x127\n" +
+ 	"\x15heartbeat_interval_ms\x18\x01 \x01(\rH\x00R\x13heartbeatIntervalMs\x88\x01\x01\x125\n" +
+ 	"\x14heartbeat_timeout_ms\x18\x02 \x01(\rH\x01R\x12heartbeatTimeoutMs\x88\x01\x01B\x18\n" +
