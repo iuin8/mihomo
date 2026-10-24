@@ -56,6 +56,17 @@ grep -q 'wazero.NewRuntime(' "$dest/internal/engine/host.go" && {
   exit 1
 }
 
+# 断言 FIN 修复真的落地：Close 必须走有界 shutdown_write 再释放资源。
+# 少了它，关闭只会 drop socket ⇒ 对端永远收不到 FIN ⇒ 出口的转发任务永久悬挂 ✗
+grep -q 'SubmitTCPShutdownWrite' "$dest/internal/coreabi/dataplane.go" || {
+  echo "补丁未生效：$dest 里没有 SubmitTCPShutdownWrite（TCP 关闭不会发 FIN）" >&2
+  exit 1
+}
+grep -q 'OperationTCPShutdownWrite' "$dest/internal/engine/conn.go" || {
+  echo "补丁未生效：$dest/internal/engine/conn.go 的 Close 未走优雅关闭" >&2
+  exit 1
+}
+
 echo "✅ $module@$version 已换为解释器运行时 → $dest"
 
 # FORK(easytier-tun): 用我们按官方脚本重编的 guest wasm 覆盖模块里自带的产物 ✓。

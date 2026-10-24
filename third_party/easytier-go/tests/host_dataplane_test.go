@@ -186,6 +186,16 @@ func testTCPDataPlane(
 	case <-ctx.Done():
 		t.Fatalf("blocked TCP read did not wake: %v", ctx.Err())
 	}
+
+	// FIN gate: Close must half-close the stream so the peer's read ends with
+	// io.EOF. Releasing the resource without shutdown_write drops the socket
+	// instead, which leaves the peer ESTABLISHED forever (the exit-node leak).
+	if err := serverConnection.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set server read deadline: %v", err)
+	}
+	if _, err := serverConnection.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("server read after client close = %v, want io.EOF (FIN not sent)", err)
+	}
 }
 
 func testUDPDataPlane(

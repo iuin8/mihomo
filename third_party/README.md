@@ -31,6 +31,7 @@ macOS 上这会致命：
 | `easytier-go-interpreter.patch` | 解释器运行时（`internal/engine/host.go`），见上一节 |
 | `easytier-go-host-misc.patch` | ① 把 guest 的 stdout/stderr 接到 mihomo 的日志（`internal/{engine,host}/host.go` 的 `LogWriter`）；② 新增 `tests/host_route_learning_test.go`，以 Skip 记录「经中心学路由」这条缺失的覆盖 |
 | `easytier-go-patch-config.patch` | 公开 `Instance.PatchConfig`（`internal/host/rpc.go`），让宿主能在实例起来后对账创建期 TOML 里生效不了的字段（见 `component/easytier/proxy_network.go`） |
+| `easytier-go-fin-on-close.patch` | `streamConn.Close` 先有界 `shutdown_write`（发 FIN）再释放资源（`internal/{coreabi,engine}/dataplane.go`、`internal/engine/conn.go`）；新增 `tests/host_dataplane_test.go` 的 EOF 门禁（Close 退回裸 drop 会立刻红） |
 | `setup-easytier-interpreter.sh` | 从模块缓存重新生成 `easytier-go/`，再按文件名顺序套用 **`third_party/easytier-go-*.patch` 全部补丁**（依赖升级后跑它） |
 
 ## ⚠ 改 `easytier-go/` 的**唯一**正确方式
