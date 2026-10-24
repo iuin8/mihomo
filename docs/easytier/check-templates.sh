@@ -22,5 +22,23 @@ for f in $(find . -type f \( -name '*.md' -o -name '*.yaml' -o -name '*.yml' \) 
     esac
   done
 done
+
+# ③ 真实内网目标（denylist 在**本机**，绝不入 git ✓）
+#    有该文件才检查；敏感字样因此不会出现在仓库里 ✓
+DENY="${ET_DENYLIST:-$HOME/.local/state/clash-group/sensitive.txt}"
+if [ -r "$DENY" ]; then
+  hits=0
+  while IFS= read -r pat; do
+    case "$pat" in ''|'#'*) continue ;; esac
+    # 只扫文档/模板；命中文件名即可，不回显整行（避免二次泄漏）
+    for f in $(grep -rlF "$pat" --include='*.md' --include='*.yaml' --include='*.yml' . 2>/dev/null); do
+      hits=$((hits+1))
+      echo "✗ $f: 出现真实内网目标（denylist 第 $hits 条命中）⇒ 请改占位符"
+      bad=$((bad+1))
+    done
+  done < "$DENY"
+  [ "$hits" -eq 0 ] && echo "✓ 未出现 denylist 中的真实目标"
+fi
+
 [ "$bad" -eq 0 ] && echo "✓ 模板/文档脱敏检查通过(0 处 ✗)" || echo "✗ 共 $bad 处需要脱敏"
 [ "$bad" -eq 0 ]
