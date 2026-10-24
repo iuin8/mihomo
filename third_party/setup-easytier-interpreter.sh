@@ -88,6 +88,11 @@ if [[ -z "$art_commit" || "$art_commit" != "$proto_commit" ]]; then
     exit 1
 fi
 recorded_sha="$(awk 'NR==1{print $1}' third_party/easytier-go-wasi/SHA256SUMS)"
+recorded_commit="$(sed -n 's/^commit=//p' third_party/easytier-go-wasi/SHA256SUMS)"
+if [[ -z "$recorded_commit" || "$art_commit" != "$recorded_commit" ]]; then
+    echo "provenance 与 fork 记录不一致：artifact.Commit=$art_commit SHA256SUMS.commit=${recorded_commit:-空}" >&2
+    exit 1
+fi
 if [[ -z "$recorded_sha" || "$actual_sha" != "$recorded_sha" ]]; then
     echo "SHA256SUMS 与产物不一致：wasm=$actual_sha SHA256SUMS=$recorded_sha" >&2
     exit 1
