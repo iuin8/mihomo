@@ -53,6 +53,7 @@ type EasyTier struct {
 	mu         sync.Mutex
 	host       *corehost.Host
 	instance   *corehost.Instance
+	logLevel   corehost.LogLevel
 	unregister func()
 	// FORK(easytier-guestlog): 转发 guest 的 stdout/stderr，Close 时冲刷残余
 	guestLog *easytier.GuestLogWriter
@@ -77,7 +78,9 @@ type EasyTierOption struct {
 	Peers         []string `proxy:"peers,omitempty"`
 	Listeners     []string `proxy:"listeners,omitempty"`
 	NoListener    *bool    `proxy:"no-listener,omitempty"`
-	// FORK(easytier-logging): guest 内部日志级别（trace/debug/info/warn/error）✓
+	// FORK(easytier-logging): guest 内部日志级别（off/error/warn/warning/info/debug/trace）✓
+	// 注意：guest 行是经 log.Debugln 转发到宿主日志的 ⇒ **内核 log-level 也必须是 debug**
+	// 才看得到它们；只设本选项而内核是 info 时仍然看不到 guest 输出。
 	LogLevel        string   `proxy:"log-level,omitempty"`
 	MappedListeners []string `proxy:"mapped-listeners,omitempty"`
 	ExitNodes       []string `proxy:"exit-nodes,omitempty"`
@@ -225,7 +228,6 @@ func (o EasyTierOption) structuredConfig() easytier.Config {
 		Peers:               o.Peers,
 		Listeners:           o.Listeners,
 		NoListener:          o.NoListener,
-		LogLevel:            o.LogLevel,
 		MappedListeners:     o.MappedListeners,
 		ExitNodes:           o.ExitNodes,
 		STUNServers:         o.STUNServers,
@@ -252,7 +254,37 @@ func (o EasyTierOption) structuredConfig() easytier.Config {
 	}
 }
 
+// parseEasyTierLogLevel maps the node-level string to the guest logger level.
+// The accepted words are the tracing filter names the guest understands, plus
+// "warning" to match the wording mihomo uses for its own log level. Unknown
+// names are rejected here so a typo fails the outbound at construction instead
+// of silently logging at the default level or entering the retry loop.
+func parseEasyTierLogLevel(name string) (corehost.LogLevel, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "":
+		return corehost.LogLevelInfo, nil
+	case "off":
+		return corehost.LogLevelOff, nil
+	case "error":
+		return corehost.LogLevelError, nil
+	case "warn", "warning":
+		return corehost.LogLevelWarn, nil
+	case "info":
+		return corehost.LogLevelInfo, nil
+	case "debug":
+		return corehost.LogLevelDebug, nil
+	case "trace":
+		return corehost.LogLevelTrace, nil
+	default:
+		return corehost.LogLevelInfo, fmt.Errorf("easytier: invalid log-level %q (off|error|warn|warning|info|debug|trace)", name)
+	}
+}
+
 func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
+	logLevel, err := parseEasyTierLogLevel(option.LogLevel)
+	if err != nil {
+		return nil, err
+	}
 	configTOML, err := option.structuredConfig().RenderTOML()
 	if err != nil {
 		return nil, err
@@ -291,6 +323,7 @@ func NewEasyTier(option EasyTierOption) (*EasyTier, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	outbound := &EasyTier{
+		logLevel: logLevel,
 		Base: NewBase(BaseOption{
 			Name:         option.Name,
 			Addr:         addr,
@@ -476,6 +509,12 @@ func (e *EasyTier) init() error {
 	e.guestLog = guestLog
 	e.mu.Unlock()
 
+	// FORK(easytier-guestlog): the guest owns a module-level logger that starts at
+	// INFO; the node-level log-level has to be pushed through the existing ABI,
+	// otherwise debug/trace配置对 guest 完全无效。Set it per host (rebuilt on retry).
+	if err := host.SetLogLevel(e.ctx, e.logLevel); err != nil {
+		return fmt.Errorf("easytier: set guest log level: %w", err)
+	}
 	instance, err := host.CreateInstanceTOML(e.ctx, instanceName, instanceID, e.configTOML)
 	if err != nil {
 		return err
