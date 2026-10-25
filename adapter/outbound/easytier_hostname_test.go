@@ -70,3 +70,17 @@ func TestNewEasyTierDefaultsHostnamePerOutbound(t *testing.T) {
 		t.Fatalf("显式 hostname 被覆盖: %q", custom)
 	}
 }
+
+func TestEasyTierHostnameKeepsOutboundNameOnLongHost(t *testing.T) {
+	longHost := "iad20-eo1209-74fc3bc0-0c08-462a-86bb-a0bb2bf78fef-76913F56CE7B"
+	got := easyTierHostname(longHost, "et-a", "7cbcd36e")
+	if !strings.Contains(got, "-et-a-") {
+		t.Fatalf("outbound name lost: %q", got)
+	}
+	if len(got) > 63 {
+		t.Fatalf("hostname too long (%d): %q", len(got), got)
+	}
+	if strings.ContainsAny(got, " ._:/") {
+		t.Fatalf("illegal characters: %q", got)
+	}
+}

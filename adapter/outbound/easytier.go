@@ -147,9 +147,46 @@ func defaultEasyTierHostname(name, stateDir string) string {
 	if err != nil || host == "" {
 		host = "host"
 	}
-	base := sanitizeHostnameLabel(host + "-" + name)
-	if suffix := persistedHostIDSuffix(stateDir); suffix != "" {
-		return base + "-" + suffix
+	return easyTierHostname(host, name, persistedHostIDSuffix(stateDir))
+}
+
+// easyTierHostname keeps the outbound name visible even when the host name is
+// long: truncating the combined label from the right would drop the outbound
+// name on hosts with long names (macOS CI does), and then two outbounds would
+// look like the same node again.
+func easyTierHostname(host, name, suffix string) string {
+	hostPart := sanitizeHostnameLabel(host)
+	namePart := sanitizeHostnameLabel(name)
+	limit := 63
+	if suffix != "" {
+		limit -= len(suffix) + 1
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if len(namePart) > limit {
+		namePart = strings.Trim(namePart[:limit], "-")
+		if namePart == "" {
+			namePart = "node"
+		}
+	}
+	remain := limit - len(namePart) - 1
+	var base string
+	if remain < 1 {
+		base = namePart
+	} else {
+		if len(hostPart) > remain {
+			hostPart = hostPart[:remain]
+		}
+		hostPart = strings.Trim(hostPart, "-")
+		if hostPart == "" {
+			base = namePart
+		} else {
+			base = hostPart + "-" + namePart
+		}
+	}
+	if suffix != "" {
+		base += "-" + suffix
 	}
 	return base
 }
