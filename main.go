@@ -80,7 +80,20 @@ func init() {
 
 // FORK(easytier-resilience): 收到终止信号后允许关停流程使用的最长时间。
 // 必须小于宿主的宽限期（CVR 服务是 SIGTERM 后 1 秒就 SIGKILL），否则"自行退出"永远来不及。
-const shutdownGrace = 700 * time.Millisecond
+// CVR 无法向内核注入配置/环境，所以默认保留 700ms；其它宿主（docker/systemd）可用
+// CLASH_SHUTDOWN_GRACE 放宽，不必再为 CVR 的一个特例改全局默认值。
+var shutdownGrace = shutdownGraceFrom(os.Getenv)
+
+func shutdownGraceFrom(getenv func(string) string) time.Duration {
+	if v := getenv("CLASH_SHUTDOWN_GRACE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err == nil && d > 0 {
+			return d
+		}
+		log.Warnln("ignoring invalid CLASH_SHUTDOWN_GRACE=%q", v)
+	}
+	return 700 * time.Millisecond
+}
 
 func main() {
 	// Defensive programming: panic when code mistakenly calls net.DefaultResolver
@@ -239,6 +252,7 @@ func main() {
 		}
 	}
 
+	defer log.FlushLogs(200 * time.Millisecond) // LIFO：在 Shutdown 之后执行
 	defer executor.Shutdown()
 
 	termSign := make(chan os.Signal, 1)
@@ -256,8 +270,10 @@ func main() {
 			// 所以兜底必须先启动、且预算必须小于宿主那 1 秒窗口：无论后续日志/清理是否卡住，都自行退出。
 			go func() {
 				time.Sleep(shutdownGrace)
+				// 日志 sink 已是非阻塞的（log.BoundedWriter）；即便它仍被丢弃，
+				// 也要用非 0 退出让宿主知道清理没做完，而不是伪装成干净退出。
 				log.Warnln("shutdown did not finish within %v, exiting anyway", shutdownGrace)
-				os.Exit(0)
+				os.Exit(1)
 			}()
 			log.Warnln("received %v, shutting down", sig)
 			return

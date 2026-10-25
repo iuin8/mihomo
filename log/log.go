@@ -3,6 +3,7 @@ package log
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/metacubex/mihomo/common/observable"
 
@@ -15,8 +16,10 @@ var (
 	level  = INFO
 )
 
+var sink = NewBoundedWriter(os.Stdout, 1024)
+
 func init() {
-	log.SetOutput(os.Stdout)
+	log.SetOutput(sink)
 	log.SetLevel(log.DebugLevel)
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:             true,
@@ -70,6 +73,12 @@ func Subscribe() observable.Subscription[Event] {
 func UnSubscribe(sub observable.Subscription[Event]) {
 	source.UnSubscribe(sub)
 }
+
+// DroppedLogLines reports lines discarded because the log sink stopped draining.
+func DroppedLogLines() uint64 { return sink.Dropped() }
+
+// FlushLogs waits (bounded) for queued lines to reach the sink.
+func FlushLogs(timeout time.Duration) { sink.Flush(timeout) }
 
 func Level() LogLevel {
 	return level

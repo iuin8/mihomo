@@ -284,6 +284,10 @@ apply 的完整语义（不只是 build + restart）：
 ② 不要索取、转存或回显用户密码；也不要用 askpass 之类把密码塞进环境变量。
 ③ root 的 PATH 可能被重置/很小（不要假设它包含 /opt/homebrew 等）⇒ 脚本内一律用绝对路径调外部命令。
 
+⑤ 关停预算：内核默认 **700ms**（CVR 是 SIGTERM 后 1s SIGKILL）；其它宿主（docker/systemd）
+   用 `CLASH_SHUTDOWN_GRACE=10s` 放宽，不必改默认值。超时以**退出码 1** 结束（不伪装成干净退出）；
+   日志 sink 是非阻塞有界队列（sink 卡住时丢行并计数），不会再把关停卡在日志上。
+
 ④ **shell 变量后紧跟中文/全角字符时必须写成 `${var}`**（本轮部署脚本踩到，已实测复现）：
 
    /bin/bash 3.2.57，UTF-8 locale：
