@@ -14,24 +14,27 @@ type BoundedWriter struct {
 	dst     io.Writer
 	ch      chan []byte
 	dropped atomic.Uint64
-	pending atomic.Int64 // lines taken from ch and not yet written
+	// pending counts accepted lines that have not reached the sink yet. The
+	// producer increments it before handing the line to the goroutine, so a
+	// Flush racing with the hand-off cannot miss an in-flight line.
+	pending atomic.Int64
 
-	mu     sync.Mutex
-	closed bool
-	once   sync.Once
-	wg     sync.WaitGroup
+	mu        sync.Mutex
+	closed    bool
+	closeOnce sync.Once
+	done      chan struct{}
+	wg        sync.WaitGroup
 }
 
 func NewBoundedWriter(dst io.Writer, capacity int) *BoundedWriter {
 	if capacity <= 0 {
 		capacity = 1024
 	}
-	w := &BoundedWriter{dst: dst, ch: make(chan []byte, capacity)}
+	w := &BoundedWriter{dst: dst, ch: make(chan []byte, capacity), done: make(chan struct{})}
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
 		for b := range w.ch {
-			w.pending.Add(1)
 			_, _ = w.dst.Write(b)
 			w.pending.Add(-1)
 		}
@@ -48,9 +51,11 @@ func (w *BoundedWriter) Write(p []byte) (int, error) {
 		w.dropped.Add(1)
 		return len(p), nil
 	}
+	w.pending.Add(1)
 	select {
 	case w.ch <- b:
 	default:
+		w.pending.Add(-1)
 		w.dropped.Add(1)
 	}
 	return len(p), nil
@@ -76,23 +81,22 @@ func (w *BoundedWriter) Flush(timeout time.Duration) bool {
 }
 
 // Close stops accepting lines and closes the queue. It waits at most timeout
-// for the writer goroutine; a stuck sink makes it return false instead of
-// blocking the caller. Lines still queued when the timeout expires are
-// abandoned (the process is usually exiting).
+// for the in-flight line; a stuck sink makes it return false instead of
+// blocking the caller. Repeated calls report the actual completion state
+// instead of assuming success.
 func (w *BoundedWriter) Close(timeout time.Duration) bool {
 	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		return true
+	if !w.closed {
+		w.closed = true
+		close(w.ch)
 	}
-	w.closed = true
-	close(w.ch)
 	w.mu.Unlock()
 
-	done := make(chan struct{})
-	go func() { w.wg.Wait(); close(done) }()
+	w.closeOnce.Do(func() {
+		go func() { w.wg.Wait(); close(w.done) }()
+	})
 	select {
-	case <-done:
+	case <-w.done:
 		return true
 	case <-time.After(timeout):
 		return false

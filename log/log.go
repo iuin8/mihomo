@@ -26,6 +26,9 @@ func init() {
 		TimestampFormat:           "2006-01-02T15:04:05.000000000Z07:00",
 		EnvironmentOverrideColors: true,
 	})
+	// Fatalln writes through the async sink and then exits; flush first or the
+	// line explaining the fatal error may never reach the host.
+	log.RegisterExitHandler(func() { FlushLogs(200 * time.Millisecond) })
 }
 
 type Event struct {

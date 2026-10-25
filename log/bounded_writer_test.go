@@ -1,6 +1,8 @@
 package log
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -56,9 +58,14 @@ func TestFlushWaitsForInFlightLine(t *testing.T) {
 	if _, err := w.Write([]byte("only")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
-	<-bw.started // the writer goroutine has dequeued the line and is stuck in Write
+	// Do not wait for the writer goroutine: the producer already recorded the
+	// line as pending, so Flush must not claim success during the hand-off.
 	if w.Flush(50 * time.Millisecond) {
-		t.Fatal("Flush reported success while the last line was still in flight")
+		t.Fatal("Flush reported success while the line was still in flight")
+	}
+	<-bw.started
+	if w.Flush(50 * time.Millisecond) {
+		t.Fatal("Flush reported success while the sink was still blocked")
 	}
 	close(bw.release)
 	if !w.Flush(time.Second) {
@@ -69,7 +76,7 @@ func TestFlushWaitsForInFlightLine(t *testing.T) {
 	}
 }
 
-func TestCloseIsBoundedWithStuckSink(t *testing.T) {
+func TestCloseIsBoundedAndRepeatedCallsAreHonest(t *testing.T) {
 	bw := newBlockingWriter()
 	w := NewBoundedWriter(bw, 4)
 	if _, err := w.Write([]byte("line")); err != nil {
@@ -83,14 +90,35 @@ func TestCloseIsBoundedWithStuckSink(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("Close blocked: %v", elapsed)
 	}
+	if w.Close(100 * time.Millisecond) {
+		t.Fatal("second Close claimed success while the writer was still stuck")
+	}
 	close(bw.release)
+	if !w.Close(time.Second) {
+		t.Fatal("Close did not report completion after the sink was released")
+	}
 
-	// Write after Close must not panic and must be counted as dropped.
 	before := w.Dropped()
 	if _, err := w.Write([]byte("late")); err != nil {
 		t.Fatalf("Write after Close: %v", err)
 	}
 	if w.Dropped() != before+1 {
 		t.Fatalf("Write after Close: dropped=%d, want %d", w.Dropped(), before+1)
+	}
+}
+
+func TestFatalFlushesLastLine(t *testing.T) {
+	if os.Getenv("LOG_FATAL_CHILD") == "1" {
+		Fatalln("fatal-last-line")
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestFatalFlushesLastLine")
+	cmd.Env = append(os.Environ(), "LOG_FATAL_CHILD=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("child did not exit through Fatalln")
+	}
+	if !strings.Contains(string(out), "fatal-last-line") {
+		t.Fatalf("fatal line lost; child output:\n%s", out)
 	}
 }
