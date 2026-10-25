@@ -37,6 +37,7 @@ func TestTunBridgeIntegrationDeviceLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTunBridge: %v", err)
 	}
+	t.Cleanup(func() { _ = bridge.Close() })
 	if got := interfaceNames(t); len(got) != len(before)+1 {
 		t.Fatalf("expected one new interface, before=%v after=%v", before, got)
 	}
@@ -106,6 +107,8 @@ func TestTunBridgeIntegrationReloadKeepsActiveConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial through the real proxy: %v", err)
 	}
+	t.Cleanup(func() { _ = conn.Close() })
+	t.Cleanup(func() { _ = bridge.Close() })
 
 	// Reload replaces et-old but keeps the active connection.
 	tunnel.UpdateProxies(map[string]C.Proxy{"et-new": replacement, "keep": keepProxy}, nil)
