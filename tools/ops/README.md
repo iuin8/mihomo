@@ -48,16 +48,25 @@ easytier6 keep   et-lan
 
 ```bash
 tools/ops/et-route-migrate.sh --map /path/to/map            # dry-run
-sudo tools/ops/et-route-migrate.sh --map /path/to/map --expect-routes 0 --apply
+sudo tools/ops/et-route-migrate.sh --map /path/to/map --expect-routes 0 \
+  --allow-irreversible \
+  --data-plane-check 'curl -fsS --max-time 5 http://intranet.example/' \
+  --apply
 ```
 
 `start-command` 是**无引号的简单 shell 片段**（只允许 `[A-Za-z0-9_./@:-]` 与空格，
 避免注入/引号解析坏）；apply 时若某个 remove 项没有 start-command，默认拒绝，
 只有显式 `--allow-irreversible` 才继续（已知死亡的遗留设备）。
 
-`--apply` 前置：root、`--expect-routes`、当前每条 `10.144.0.0/24` 路由的 dev 都在 map 中、
-无 `easytier` 进程/容器、目标接口无 `fuser` 属主；先备份路由与映射，写 `rollback.sh`，
-删接口后立即与 30s 后各验一次路由数；**verify 失败自动执行 rollback.sh**。
+`--apply` 前置：root、`--expect-routes`、**`--data-plane-check CMD`**、当前每条
+`10.144.0.0/24` 路由的 dev 都在 map 中、无 `easytier` 进程/容器、目标接口无 `fuser` 属主；
+先跑一次 baseline check，再备份路由与映射，写 `rollback.sh`，删接口后立即与 30s 后各验一次
+路由数、30s 后再跑一次 data plane check；**任一步失败自动执行 rollback.sh**，
+`--allow-irreversible` 下只提示“需人工”，不会打印 `apply complete`。
+
+`--data-plane-check` 在**脚本所在主机**上执行，必须是简单 token 命令（无引号/元字符）。
+家侧 3 条遗留没有 start-command，实际窗口用 `--allow-irreversible`；删除前后还会从客户端
+跑 `et-net-mode check easytier` 作为 et-lan 路径的独立证据（脚本管不到客户端探针）。
 
 ## 安全边界
 

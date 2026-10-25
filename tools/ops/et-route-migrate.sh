@@ -16,13 +16,17 @@
 # removed interface. Without it, --apply refuses unless --allow-irreversible.
 #
 # Usage:
-#   et-route-migrate.sh --map FILE [--expect-routes N] [--allow-irreversible] [--apply]
+#   et-route-migrate.sh --map FILE [--expect-routes N] [--allow-irreversible]
+#                        [--data-plane-check CMD] [--apply]
 #
 # Dry-run prints the routes, the plan, the expected remaining count and a data
-# plane hint (ip route get 10.144.0.2). --apply needs root + --expect-routes,
-# refuses live easytier owners/unmapped devices, backs up routes+map, deletes
-# the "remove" interfaces, then re-checks immediately and after 30s. A failed
-# check runs rollback.sh (best effort) and exits non-zero.
+# plane hint (ip route get 10.144.0.2). --apply needs root, --expect-routes and
+# --data-plane-check; refuses live easytier owners/unmapped devices, backs up
+# routes+map, deletes the "remove" interfaces, then re-checks the route count
+# immediately and after 30s and runs the data plane check after 30s. Any failed
+# check runs rollback.sh (best effort) and exits non-zero; under
+# --allow-irreversible it reports "needs manual intervention" and never prints
+# "apply complete".
 set -Eeuo pipefail
 umask 022
 
@@ -31,6 +35,8 @@ MAP=
 EXPECT=
 APPLY=0
 ALLOW_IRREVERSIBLE=0
+DATA_PLANE_CHECK=''
+declare -a DATA_PLANE_CMD=()
 IP_BIN=$(command -v ip || true)
 [[ -n $IP_BIN ]] || IP_BIN=/sbin/ip
 [[ -x $IP_BIN ]] || IP_BIN=/usr/sbin/ip
@@ -46,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --expect-routes) EXPECT=${2:-}; shift 2 ;;
     --apply) APPLY=1; shift ;;
     --allow-irreversible) ALLOW_IRREVERSIBLE=1; shift ;;
+    --data-plane-check) DATA_PLANE_CHECK=${2:-}; shift 2 ;;
     -h|--help) usage ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -56,6 +63,12 @@ done
 if (( APPLY )); then
   [[ $EUID -eq 0 ]] || die "--apply needs root"
   [[ ${EXPECT:-} =~ ^[0-9]+$ ]] || die "--apply needs --expect-routes N"
+  [[ -n $DATA_PLANE_CHECK ]] || die "--apply needs --data-plane-check CMD"
+fi
+if [[ -n $DATA_PLANE_CHECK ]]; then
+  [[ $DATA_PLANE_CHECK =~ ^[A-Za-z0-9_./:@%?=,-]+(\ [A-Za-z0-9_./:@%?=,-]+)*$ ]] ||
+    die "data-plane-check must be plain tokens (no quotes/metacharacters)"
+  read -r -a DATA_PLANE_CMD <<<"$DATA_PLANE_CHECK"
 fi
 
 declare -a REMOVE_IFACES=() REMOVE_LABELS=() REMOVE_STARTS=() KEEP_IFACES=() ALL_MAPPED=()
@@ -123,6 +136,9 @@ if [[ -n ${EXPECT:-} && $EXPECT -ne $expected ]]; then
 fi
 
 if (( ! APPLY )); then
+  if [[ -n $DATA_PLANE_CHECK ]]; then
+    printf 'data plane check: %s\n' "$DATA_PLANE_CHECK"
+  fi
   printf 'dry-run: no changes made\n'
   if [[ -n $PGREP_BIN ]] && "$PGREP_BIN" -x easytier >/dev/null; then
     printf 'warning: easytier process is running; stop it before --apply\n' >&2
@@ -143,6 +159,9 @@ for iface in "${REMOVE_IFACES[@]}"; do
     die "$iface still has an owner; stop that process first"
   fi
 done
+printf 'baseline data plane check: %s\n' "$DATA_PLANE_CHECK"
+"${DATA_PLANE_CMD[@]}" ||
+  die "baseline data plane check failed; nothing deleted"
 if (( ! ALLOW_IRREVERSIBLE )); then
   for i in "${!REMOVE_IFACES[@]}"; do
     [[ -n ${REMOVE_STARTS[$i]:-} ]] ||
@@ -174,6 +193,9 @@ chmod 700 "$backup_dir/rollback.sh"
 attempt_rollback() {
   printf 'applying rollback: %s\n' "$backup_dir/rollback.sh" >&2
   bash "$backup_dir/rollback.sh" || printf 'rollback reported an error; inspect manually\n' >&2
+  if (( ALLOW_IRREVERSIBLE )); then
+    printf 'irreversible mode: rollback has no start command; manual intervention required\n' >&2
+  fi
 }
 cleanup() { printf 'backup: %s\nrollback: %s\n' "$backup_dir" "$backup_dir/rollback.sh" >&2; }
 trap cleanup EXIT
@@ -197,7 +219,16 @@ verify() {
     die "$stage route count mismatch"
   fi
 }
+check_data_plane() {
+  local stage=$1
+  printf '%s data plane check: %s\n' "$stage" "$DATA_PLANE_CHECK"
+  if ! "${DATA_PLANE_CMD[@]}"; then
+    attempt_rollback
+    die "$stage data plane check failed"
+  fi
+}
 verify immediately
 sleep 30
 verify after-30s
+check_data_plane after-30s
 printf 'apply complete\n'
