@@ -1,0 +1,530 @@
+#!/usr/bin/env python3
+"""et-config — 把「我们的改动」以声明式叠加的方式作用到 CVR 当前合并产物上。
+
+为什么不是整份快照：订阅更新时 CVR 会重写合并产物（机场节点域名会轮换）。
+整份快照会把旧数据冻结回写 ✗；叠加每次都从新产物重新算，永不漂移 ✓。
+
+分工（最小特权）：
+  · 本脚本（用户身份）= 生成候选配置 ~/.local/state/clash-group/et-apply/config.yaml
+  · `sudo -n et-apply stage|restart`（唯一 root 组件）= 内核 -t 校验 + 原子落盘 + 重启
+  ⇒ root 助手保持"只校验只落盘"，不理解业务语义 ✓
+
+幂等操作（没有 diff/上下文匹配）：
+  + 并集（列表去重后补入）、= 设值（按 key 覆盖）、prepend（前插并去重）、remove（按值精确删）
+overlay 支持的键：
+  · dns.fake-ip-filter_add / nameserver-policy_set —— 列表并集 / 按域名设 nameserver
+  · rules_remove / rules_prepend —— 逐行精确删 / 前插去重
+  · proxies / proxy-groups —— 按 name 覆盖或追加（保持原位）
+  · sniffer —— **整体替换**（不是合并）；base 将来若带 sniffer 会被 overlay 覆盖；
+    未写的字段沿用 mihomo 默认值（enable=false；force-dns-mapping/parse-pure-ip/
+    override-destination=true）—— 省略不等于关闭
+  ⇒ 反复执行结果相同；删掉 overlay 里的一条 = 下一次就不再出现 ✓
+  ⇒ show 打码覆盖 secret/password/passwd/token ✓
+
+用法：
+  et-config diff        只读：打印叠加会产生的变化
+  et-config build       生成候选（不安装）
+  et-config apply       build + stage + restart（需要 sudo -n 已授权）
+  et-config show       打印 overlay（敏感值打码）
+  et-config --no-verify  跳过数据面复验（仅排障用；失败时不再自动回滚）
+  et-config --base P    可选：用别的基座文件（仅用于验证/演练）
+"""
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+STATE = os.path.expanduser("~/.local/state/clash-group/et-apply")
+OVERLAY = os.path.join(STATE, "overlay.yaml")
+CANDIDATE = os.path.join(STATE, "config.yaml")
+CVR = os.path.expanduser(
+    "~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev")
+BASE = os.path.join(CVR, "clash-verge.yaml")          # CVR 合并产物（与订阅同时重写）
+PROFILES = os.path.join(CVR, "profiles.yaml")
+ROOT = os.environ.get("CLASH_GROUP_ROOT") or str(
+    pathlib.Path(__file__).resolve().parents[3])          # <repo>/tools/ops/et-config → 项目根
+_UID = os.getuid()
+SOCK = os.environ.get("CLASH_GROUP_SOCK") or (
+    f"/var/run/clash-verge-service/users/{_UID}/verge-mihomo.sock")
+RUNTIME_CONFIG = os.environ.get("CLASH_GROUP_RUNTIME") or (
+    f"/Library/Application Support/clash-verge-service/users/{_UID}/runtime/config.yaml")
+ET_NET_MODE = os.environ.get("ET_NET_MODE") or shutil.which("et-net-mode") or str(
+    pathlib.Path(__file__).resolve().parent / "et-net-mode")
+MIXED = "http://127.0.0.1:7897"
+PROBES = os.environ.get("ET_PROBES") or str(pathlib.Path(ROOT) / "local-state" / "probes.conf")
+
+try:
+    import yaml
+except ImportError:
+    sys.exit("需要 PyYAML（/usr/bin/python3 自带）")
+
+
+def die(msg):
+    sys.exit(f"et-config: {msg}")
+
+
+# ---------- 幂等操作 ----------
+
+def add_list(base, extra, where):
+    base = base if isinstance(base, list) else []
+    out, seen = [], set()
+    for x in base:
+        if json.dumps(x, sort_keys=True) not in seen:
+            seen.add(json.dumps(x, sort_keys=True))
+            out.append(x)
+    for x in extra or []:
+        k = json.dumps(x, sort_keys=True)
+        if k not in seen:
+            seen.add(k)
+            out.append(x)
+            print(f"  + {where}: {x}")
+    return out
+
+
+def remove_list(base, extra, where):
+    drop = {json.dumps(x, sort_keys=True) for x in (extra or [])}
+    out = []
+    for x in base or []:
+        if json.dumps(x, sort_keys=True) in drop:
+            print(f"  - {where}: {x}")
+        else:
+            out.append(x)
+    return out
+
+
+def prepend_list(base, extra, where):
+    extra = extra or []
+    drop = {json.dumps(x, sort_keys=True) for x in extra}
+    rest = [x for x in (base or []) if json.dumps(x, sort_keys=True) not in drop]
+    if (base or [])[:len(extra)] != extra:
+        for x in extra:
+            print(f"  ^ {where}: {x}")
+    return list(extra) + rest
+
+
+def upsert_items(base, extra, where, key="name"):
+    """按 key 覆盖或追加（保持原位）；打印实际变化 ✓"""
+    base = list(base or [])
+    index = {x.get(key): i for i, x in enumerate(base) if isinstance(x, dict)}
+    for item in extra or []:
+        name = item.get(key)
+        if name in index:
+            i = index[name]
+            if base[i] != item:
+                base[i] = item
+                print(f"  = {where}[{name}]")
+        else:
+            base.append(item)
+            print(f"  + {where}[{name}]")
+    return base
+
+
+
+
+BYPASS_MARK = os.environ.get("ET_BYPASS_MARK", "fa.internet")  # 与 et-net-mode 默认一致
+
+
+def base_has_bypass(path=BASE):
+    try:
+        cfg = yaml.safe_load(open(path)) or {}
+    except Exception:
+        return False
+    return any(BYPASS_MARK in str(p.get("name", ""))
+               for p in (cfg.get("proxies") or []) if isinstance(p, dict))
+
+
+# ---------- 叠加 ----------
+
+def load(path, what):
+    if not os.path.exists(path):
+        die(f"{what}不存在: {path}")
+    with open(path) as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        die(f"{what}不是 YAML 映射: {path}")
+    return data
+
+
+def staleness_note(base_path):
+    """CVR 每次应用订阅时会同时重写产物；若订阅比产物新，说明产物落后 ⇒ 提醒 ✓"""
+    if not os.path.exists(PROFILES):
+        return
+    try:
+        cur = (yaml.safe_load(open(PROFILES)) or {}).get("current")
+    except Exception:
+        return
+    prof = os.path.join(CVR, "profiles", f"{cur}.yaml")
+    if cur and os.path.exists(prof) and os.path.getmtime(prof) > os.path.getmtime(base_path):
+        print("  ! 订阅比 CVR 产物新 ⇒ 产物可能落后：请在 Clash Verge 里应用一次订阅后再 stage ✗")
+
+
+def build(base_path):
+    base = load(base_path, "基座(CVR 合并产物)")
+    if base_path == BASE:
+        staleness_note(base_path)
+    ov = load(OVERLAY, "overlay")
+    dns = base.setdefault("dns", {}) or {}
+
+    d = ov.get("dns") or {}
+    if d.get("fake-ip-filter_add"):
+        dns["fake-ip-filter"] = add_list(dns.get("fake-ip-filter"), d["fake-ip-filter_add"], "fake-ip-filter")
+    if d.get("nameserver-policy_set"):
+        nsp = dns.setdefault("nameserver-policy", {}) or {}
+        for k, v in d["nameserver-policy_set"].items():
+            if nsp.get(k) != v:
+                print(f"  = nameserver-policy[{k}]")
+            nsp[k] = v
+        dns["nameserver-policy"] = nsp
+    base["dns"] = dns
+
+    rules = base.get("rules") or []
+    if ov.get("rules_remove"):
+        rules = remove_list(rules, ov["rules_remove"], "rules")
+    if ov.get("rules_prepend"):
+        rules = prepend_list(rules, ov["rules_prepend"], "rules")
+    base["rules"] = rules
+
+    if ov.get("sniffer"):
+        base["sniffer"] = ov["sniffer"]
+        print("  = sniffer")
+
+    if ov.get("proxies"):
+        base["proxies"] = upsert_items(base.get("proxies"), ov["proxies"], "proxies")
+    if ov.get("proxy-groups"):
+        base["proxy-groups"] = upsert_items(base.get("proxy-groups"), ov["proxy-groups"], "proxy-groups")
+    return base
+
+
+def write_candidate(cfg):
+    # 候选里含订阅/secret ⇒ 0600 原子落盘（task ⑥）
+    tmp = CANDIDATE + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CANDIDATE)
+    print(f"  候选已生成: {CANDIDATE} ({os.path.getsize(CANDIDATE)} B)")
+
+
+def redact(obj):
+    if isinstance(obj, dict):
+        return {k: ("<redacted>" if any(t in str(k).lower() for t in ("secret", "password", "passwd", "token")) else redact(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [redact(x) for x in obj]
+    return obj
+
+
+# ---------- 数据面复验（#6）----------
+
+def api(path, method="GET", body=None, timeout=6):
+    """内核控制面（unix socket）；失败返回 (None, 原因)"""
+    cmd = ["curl", "-s", "--max-time", str(timeout), "--unix-socket", SOCK,
+           "-w", "\n%{http_code}", f"http://localhost{path}"]
+    if method != "GET":
+        cmd[1:1] = ["-X", method]
+    if body is not None:
+        cmd[1:1] = ["-H", "Content-Type: application/json", "-d", json.dumps(body)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    out, _, code = r.stdout.rpartition("\n")
+    return (out if code == "200" else None), code or "000"
+
+
+def mixed_port():
+    """从候选配置读 mixed-port；ET_MIXED 可覆盖（不硬编码）"""
+    env = os.environ.get("ET_MIXED")
+    if env:
+        return env
+    try:
+        cfg = yaml.safe_load(open(CANDIDATE))
+        return str((cfg or {}).get("mixed-port") or 7897)
+    except Exception:
+        return "7897"
+
+
+def load_probes(strict=True):
+    """probes.conf 缺失 = 门禁被绕过 ⇒ 必须显式失败（不是静默跳过）"""
+    if not os.path.exists(PROBES):
+        return None
+    out = []
+    for line in open(PROBES, encoding="utf-8"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            out.append((parts[0], {c.strip() for c in parts[1].split(",") if c.strip()}))
+    return out
+
+
+def probe_code(url, timeout=20):
+    """走 mixed-port 取码；URL 经 stdin 传给 curl（argv 里不出现内网目标 ⇒ 脱敏）"""
+    conf = (f'url = "{url}"\n'
+            f'proxy = "http://127.0.0.1:{mixed_port()}"\n'
+            'silent\nshow-error\noutput = "/dev/null"\n'
+            'insecure\n'          # 验收目标含自签证书；这里只关心"是否到达"，不校验身份
+            'max-time = %d\nwrite-out = "%%{http_code}"\n' % timeout)
+    r = subprocess.run(["curl", "--config", "-"], input=conf, capture_output=True, text=True)
+    return (r.stdout or "").strip() or "000"
+
+
+def probes_ok(deadline=None):
+    probes = load_probes()
+    if probes is None:
+        return False, f"缺少 {PROBES}（门禁不能跳过）"
+    if not probes:
+        return False, "probes.conf 里没有条目"
+    import time
+    bad = 0
+    for i, (url, want) in enumerate(probes, 1):
+        got = "000"
+        for attempt in range(2):          # 连接级瞬时失败重试一次
+            got = probe_code(url)
+            if got != "000" or attempt == 1:
+                break
+            time.sleep(3)
+            if deadline and time.time() >= deadline:
+                break
+        ok = (got != "000") if "any" in want else (got in want)
+        bad += 0 if ok else 1
+        if deadline and time.time() >= deadline:
+            print("  … 探针超出复验预算，提前结束")
+            return False, "探针超时（复验预算用尽）"
+        print(f"  {'✓' if ok else '✗'} 探针#{i}: {got}" + ("" if ok else f"（期望 {'/'.join(sorted(want))}）"))
+    return bad == 0, "全部通过" if bad == 0 else f"{bad} 个失败"
+
+
+def rule_entry_ok():
+    """et 模式：首条覆盖 10.0.0.0/8 的规则必须精确指向入口组"""
+    body, code = api("/rules", timeout=6)
+    if body is None:
+        return False, f"控制面不可用({code})"
+    try:
+        for r in json.loads(body).get("rules", []):
+            if str(r.get("type") or "") not in ("IPCIDR", "IP-CIDR"):
+                continue
+            if str(r.get("payload") or "") == "10.0.0.0/8":
+                return str(r.get("proxy")) == "内网入口", f"10/8 → {r.get('proxy')}"
+    except ValueError:
+        return False, "控制面返回非 JSON"
+    return False, "规则表里没有 10.0.0.0/8"
+
+
+def set_entry_group():
+    body, code = api("/proxies")
+    if body is None:
+        return False, f"控制面不可用({code})"
+    try:
+        cur = json.loads(body).get("proxies", {})
+    except ValueError:
+        return False, "控制面返回非 JSON"
+    if "内网入口" not in cur:
+        return False, "缺少内网入口分组 ⇒ et 订阅未生效"
+    if (cur["内网入口"].get("now") or "") == "et-lan":
+        return True, "内网入口=et-lan(已就位)"
+    _, code = api("/proxies/" + "内网入口", "PUT", {"name": "et-lan"})
+    return code in ("200", "204"), f"内网入口→et-lan({code})"
+
+
+def bypass_absent():
+    """不变量 7：et 订阅生效时，frp+ssh 订阅的节点不得在配置里（否则两个订阅并存）"""
+    body, code = api("/proxies", timeout=6)
+    if body is None:
+        return False, f"控制面不可用({code})"
+    try:
+        keys = json.loads(body).get("proxies", {}).keys()
+    except ValueError:
+        return False, "控制面返回非 JSON"
+    hits = [k for k in keys if BYPASS_MARK in k]
+    return (not hits), ("配置里无 frp 订阅节点" if not hits else f"仍有 {len(hits)} 个 frp 订阅节点")
+
+
+def et_ready():
+    """et 模式的就绪 = 控制面在 **且** et-lan 出站存在
+       （不能只信 utun1024：utun 会跨重启泄漏 ⇒ 假阳性，#2）"""
+    body, code = api("/proxies/et-lan", timeout=4)
+    if body is None:
+        return False, f"et-lan 出站不可查({code})"
+    return True, "et-lan 出站存在"
+
+
+def check_via_net_mode(stage):
+    """复用 et-net-mode 的既有判据（不变量 7），避免第二套残缺实现。
+       **捕获输出**：它的 probe_all 会打印内网目标（probes.conf 是 0600）⇒ 只回报 ✓/✗"""
+    r = subprocess.run([ET_NET_MODE, "check", stage], capture_output=True, text=True)
+    ok = r.returncode == 0
+    return ok, f"check {stage}" + ("" if ok else "（细节请手动跑 et-net-mode check " + stage + "）")
+
+
+def verify_once(mode, deadline=None):
+    if mode == "et":
+        ok, detail = et_ready()
+        print(f"  {'✓' if ok else '…'} 就绪: {detail}")
+        if not ok:
+            return False, detail
+        ok, detail = bypass_absent()
+        print(f"  {'✓' if ok else '✗'} {detail}")
+        if not ok:
+            return False, detail
+        ok, detail = set_entry_group()
+        print(f"  {'✓' if ok else '✗'} {detail}")
+        if not ok:
+            return False, detail
+        ok, detail = rule_entry_ok()
+        print(f"  {'✓' if ok else '✗'} 规则 {detail}")
+        if not ok:
+            return False, detail
+        return probes_ok(deadline)
+    if mode == "frp":
+        return check_via_net_mode("bypass")
+    if mode == "none":
+        return check_via_net_mode("isolated")
+    return False, f"未知模式 {mode!r}"
+
+
+def verify_loop(mode, timeout=20):
+    """整轮复验重试到 timeout：单次失败更可能是"还没起来"，不是"配置坏了" """
+    import time
+    deadline = time.time() + timeout
+    while True:
+        ok, detail = verify_once(mode, deadline)
+        if ok:
+            return True, detail
+        if time.time() >= deadline:
+            return False, detail
+        print(f"  … {detail}；重试（≤{timeout}s）")
+        time.sleep(2)
+
+
+def classify(cfg):
+    rules = [str(r) for r in (cfg.get("rules") or [])]
+    names = {p.get("name") for p in (cfg.get("proxies") or []) if isinstance(p, dict)}
+    entry = any(r.startswith("IP-CIDR,10.0.0.0/8,") and r.endswith("内网入口") for r in rules)
+    frp = any(r.split(",")[-1] in ("ssy_g", "mac_ssy_g") for r in rules)
+    if entry and any(n in names for n in ("et-lan", "et-fa", "et-k8s-pdd")):
+        return "et"
+    if frp:
+        return "frp"
+    return "none"
+
+
+def detect_mode(path=None):
+    """模式检测：运行时配置优先（rollback 恢复它），但它是 root-only ⇒ 用户身份会 EACCES，
+       此时回退到候选（上次 apply 写入的那份，用户可读）。两者都读不了 ⇒ None（不静默当 none）"""
+    order = [path] if path else [RUNTIME_CONFIG, CANDIDATE]
+    for p in order:
+        if not p:
+            continue
+        try:
+            with open(p) as f:
+                cfg = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            continue
+        except PermissionError:
+            print(f"  ! 模式检测：{p} 不可读（root-only），回退候选")
+            continue
+        except Exception as exc:
+            print(f"  ! 模式检测：{p} 解析失败（{exc}），回退候选")
+            continue
+        return classify(cfg)
+    return None
+
+
+def apply_with_verify(mode, verify_enabled=True, prev_mode=None):
+    import time
+    prev = prev_mode or detect_mode()
+    for stage in ("stage", "restart"):
+        r = subprocess.run(["sudo", "-n", "/usr/local/libexec/clash-group/et-apply", stage])
+        if r.returncode != 0:
+            die(f"et-apply {stage} 失败（et-apply 可能已自动回滚；请 et-net-mode status 复核）")
+    if not verify_enabled:
+        print("  ! 已跳过数据面复验（--no-verify，仅排障用；失败不再自动回滚）")
+        return 0
+    ok, detail = verify_loop(mode)
+    if ok:
+        print(f"  数据面复验通过 ✓（{detail}）")
+        return 0
+    print(f"  ✗ 数据面复验失败：{detail} ⇒ 自动回滚")
+    r = subprocess.run(["sudo", "-n", "/usr/local/libexec/clash-group/et-apply", "rollback"])
+    if r.returncode != 0:
+        print("  ⛔ 回滚命令失败（配置可能停在不可用状态）⇒ 需要人工处理", file=sys.stderr)
+        return 4
+    print(f"  回滚目标是上一份配置（模式={prev}）")
+    ok2, detail2 = verify_loop(prev)
+    if ok2:
+        print(f"  已回滚到上一份配置，复验通过 ✓（{detail2}）")
+        return 3
+    print(f"  ⛔ 回滚后复验仍失败：{detail2} ⇒ 需要人工处理", file=sys.stderr)
+    return 4
+
+
+def mode_main(mode, verify_enabled=True):
+    """在"两个订阅"之间切换（不经过 CVR GUI）：
+       frp = 原样 stage 基座（基座即 frp+ssh 订阅：10.x → ssy_g）
+       et  = 基座 + overlay（easytier 订阅：10/8 → 内网入口）
+    两者互斥，切换后自动 restart。"""
+    prev = detect_mode()          # 写候选之前取：回滚恢复的是"上一份已应用配置"
+    if prev is None:
+        print("  ! 无法判定回滚前模式（运行时/候选都不可读）⇒ 失败时按请求模式复验")
+        prev = mode
+    if mode in ("frp", "none") and not base_has_bypass():
+        die("基座里没有 frp+ssh 订阅的节点 ⇒ 先在 CVR 切换到 frp 订阅"
+            "（两个订阅平级互斥，本工具不代替 CVR 切换；不变量 7）")
+    if mode == "frp":
+        write_candidate(load(BASE, "基座"))
+        print("  模式 = frp（基座原样：10.x → ssy_g）")
+    elif mode == "et":
+        write_candidate(build(BASE))
+        print("  模式 = et（基座 + overlay：10/8 → 内网入口）")
+    elif mode == "none":
+        # 两个订阅都不激活：只去掉 frp 订阅的转发规则（保留其它，便于快速回切）
+        cfg = build(BASE)
+        drop = {"ssy_g", "mac_ssy_g"}
+        before = len(cfg.get("rules") or [])
+        cfg["rules"] = [r for r in (cfg.get("rules") or [])
+                        if str(r).split(",")[-1] not in drop]
+        write_candidate(cfg)
+        print(f"  模式 = none（无订阅：移除 {before - len(cfg['rules'])} 条 frp 转发规则）")
+    else:
+        die(f"mode 只支持 frp|et|none，收到 {mode!r}")
+    return apply_with_verify(mode, verify_enabled=verify_enabled, prev_mode=prev)
+
+
+def main(argv):
+    base_path = BASE
+    args = list(argv)
+    verify_enabled = "--no-verify" not in args
+    if "--no-verify" in args:
+        args.remove("--no-verify")
+    if "--base" in args:
+        i = args.index("--base")
+        base_path = os.path.expanduser(args[i + 1])
+        del args[i:i + 2]
+    cmd = args[0] if args else "diff"
+
+    if cmd == "show":
+        print(yaml.safe_dump(redact(load(OVERLAY, "overlay")), allow_unicode=True, sort_keys=False), end="")
+        return 0
+    if cmd == "diff":
+        print(f"基座: {base_path}")
+        build(base_path)
+        print("  (以上是相对基座的固定变化；重复执行结果完全相同 ✓)")
+        return 0
+    if cmd == "build":
+        write_candidate(build(base_path))
+        return 0
+    if cmd == "mode":
+        return mode_main(args[1] if len(args) > 1 else "", verify_enabled=verify_enabled) or 0
+    if cmd == "apply":
+        prev = detect_mode()      # 先记上一份已应用配置的模式，再写候选
+        if prev is None:
+            print("  ! 无法判定回滚前模式（运行时/候选都不可读）⇒ 失败时按 et 复验")
+            prev = "et"
+        write_candidate(build(base_path))
+        return apply_with_verify("et", verify_enabled=verify_enabled, prev_mode=prev)
+    die(f"未知用法: {cmd}（diff|build|apply|show|mode frp|mode et）")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

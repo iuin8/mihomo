@@ -24,14 +24,14 @@
 **不接受自由参数**)+ 一条白名单规则。
 
 ```bash
-sudo install -d -o root -g wheel -m 755 /usr/local/libexec/clash-group
-sudo install -o root -g wheel -m 755 <项目根>/tools/et-apply /usr/local/libexec/clash-group/et-apply
-printf '%s\n' '<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply' \
-  | sudo tee /tmp/clash-group-et-apply.sudoers >/dev/null
-sudo visudo -c -f /tmp/clash-group-et-apply.sudoers     # ★ 先校验，再落盘
-sudo install -o root -g wheel -m 440 /tmp/clash-group-et-apply.sudoers \
-  /etc/sudoers.d/clash-group-et-apply
+<repo>/tools/ops/install-helpers.sh          # dry-run：打印将安装的路径/规则，不落盘
+sudo <repo>/tools/ops/install-helpers.sh --apply
 ```
+
+安装器（`tools/ops/install-helpers.sh`）会做四件事：把 `et-apply` 装到
+`/usr/local/libexec/clash-group/et-apply`；生成 `/etc/clash-group/et-apply.conf`（0600，含
+`CLASH_GROUP_STATE_DIR`/`CLASH_GROUP_UID`，root 助手据此定位用户目录）；校验并安装 sudoers（0440）；
+把 `et-config`/`et-net-mode` 链接进该用户的 `~/.local/bin`。真实用户名与 sudoers **不进仓库**。
 
 白名单是**一条不带参数的规则**（现场即如此）：
 
@@ -264,8 +264,8 @@ apply 的完整语义（不只是 build + restart）：
   home-egress.cred  家侧 mihomo 代理的用户名/密码（`et-home` 用；0600，不入 git）
 
 引用方：
-  ~/.local/bin/et-net-mode   → PROBES
-  ~/.local/bin/et-config     → PROBES
+  ~/.local/bin/et-net-mode   → PROBES（仓库源 tools/ops/et-net-mode，安装为符号链接）
+  ~/.local/bin/et-config     → PROBES（同上）
   docs/easytier/check-templates.sh → ET_DENYLIST（默认值指向该目录）
 
 ⚠️ 项目根目录本身不是 git 仓库；不要把 local-state/ 交给任何仓库或打包外发。

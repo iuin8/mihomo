@@ -1,0 +1,245 @@
+#!/bin/sh
+# et-apply —— 极窄的 Clash 内核助手（唯一以 root 运行的部分）
+#   stage         校验(内核自己 -t)+ 落盘 + 备份 config.yaml
+#   restart       重建内核(失败自动回滚 config)
+#   status        只读
+#   rollback      回滚 config
+#   core-upgrade  从固定发布通道取最新内核 ⇒ 校验(sha256 + -v + -t)⇒ 备份 ⇒ 原子安装 ⇒ codesign ⇒ 重启;
+#                 任一步失败 ⇒ **自动回滚旧内核** 并重启（2026-10-16 加,让内核升级也无需人工 ✓）
+#   core-rollback 手动回滚到最近一次自动备份的内核
+# 纪律:所有路径写死 ✓ 不接受任何自由参数(尤其不接受"用户指定的文件/URL") ✗ —— 否则等于把 root 交给调用方。
+# 信任锚 = 我们的 GitHub 发布(HTTPS ✓)+ 同一发布里的 checksums.txt ✓(与 CVR 自带升级通道同级 ✓,不更弱 ✓)。
+set -eu
+
+LOG="/var/log/clash-group-et-apply.log"
+
+REL="https://github.com/iuin8/mihomo/releases/download/Prerelease-Alpha"
+API="https://api.github.com/repos/iuin8/mihomo/releases/tags/Prerelease-Alpha"
+ASSET="mihomo-darwin-arm64"
+
+log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" "$2" | tee -a "$LOG"; }
+die() { log ERROR "$1"; exit 1; }
+# fetch —— 3 次重试(2026-10-16 实测:GitHub 个别对象会长时间 0 字节超时 ✗,而同一发布里的大文件正常 ✓)
+fetch() { i=1; while [ "$i" -le 3 ]; do curl -fsSL --max-time 600 -o "$2" "$1" && return 0; log WARN "下载失败(第 $i 次): $1"; i=$((i+1)); sleep 3; done; return 1; }
+fetch_api() { i=1; while [ "$i" -le 3 ]; do curl -fsSL --max-time 120 -H 'Accept: application/octet-stream' -o "$2" "$1" && return 0; i=$((i+1)); sleep 3; done; return 1; }
+
+# ── 配置来源（root 助手的脚本位置不是用户目录；不猜） ──────────────────────────
+#   优先级 1：CLASH_GROUP_CONFIG_SRC（显式指定候选配置）
+#   优先级 2：/etc/clash-group/et-apply.conf（安装器生成，0600；可含 CLASH_GROUP_STATE_DIR/CLASH_GROUP_UID）
+#   优先级 3：SUDO_USER 的 home → ~/.local/state/clash-group/et-apply
+#   都没有 ⇒ 明确失败（既不用脚本自身位置推，也不回落到 /root）
+LOG="/var/log/clash-group-et-apply.log"
+log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" "$2" | tee -a "$LOG"; }
+die() { log ERROR "$1"; exit 1; }
+
+[ -r /etc/clash-group/et-apply.conf ] && . /etc/clash-group/et-apply.conf
+STATE_DIR=${CLASH_GROUP_STATE_DIR:-}
+if [ -z "$STATE_DIR" ]; then
+  [ -n "${SUDO_USER:-}" ] || die "无法确定候选配置目录：请用 sudo 调用，或先安装 /etc/clash-group/et-apply.conf"
+  HOME_U=$(dscl . -read "/Users/$SUDO_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+  [ -n "$HOME_U" ] || die "无法解析用户 $SUDO_USER 的 home"
+  STATE_DIR="$HOME_U/.local/state/clash-group/et-apply"
+fi
+U=${CLASH_GROUP_UID:-$(id -u "${SUDO_USER:-$(id -un)}")}
+RUNTIME="/Library/Application Support/clash-verge-service/users/$U/runtime"
+CONFIG="$RUNTIME/config.yaml"
+COREDIR="/Library/Application Support/clash-verge-service/cores"
+CORE="$COREDIR/verge-mihomo-alpha"
+[ -x "$CORE" ] || CORE="$COREDIR/verge-mihomo"
+SOCK="/var/run/clash-verge-service/users/$U/verge-mihomo.sock"
+LABEL="io.github.clash-verge-rev.clash-verge-rev.service"
+SRC="${CLASH_GROUP_CONFIG_SRC:-$STATE_DIR/config.yaml}"
+PIN="$STATE_DIR/pinned-core.txt"   # <版本> <sha256> ✓ 由 core-upgrade 写入
+
+kernel_pids() { pgrep -f 'clash-verge-service/cores/verge-mihomo' 2>/dev/null || true; }
+kernel_version() { curl -s --max-time 5 --unix-socket "$SOCK" http://localhost/version 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p'; }
+healthy() { [ -n "$(kernel_version)" ]; }
+wait_healthy() {  # $1 = 期望的"新 pid 不等于它"(可空); $2 = 期望的版本(可空)
+  i=0
+  while [ "$i" -lt 25 ]; do
+    sleep 1
+    pids=$(kernel_pids)
+    [ -n "$pids" ] || { i=$((i+1)); continue; }
+    if { [ -z "${1:-}" ] || [ "$pids" != "${1:-}" ]; } && healthy; then
+      if [ -z "${2:-}" ] || [ "$(kernel_version)" = "${2:-}" ]; then return 0; fi
+    fi
+    i=$((i+1))
+  done
+  return 1
+}
+
+# do_restart —— 只负责"把内核重建起来",不做任何回滚(由调用方决定回滚什么 ✓)
+#
+# 先走 launchctl kickstart:让服务管理器自己"停→起"。直接 kill 内核进程会落到 launchd 的
+# KeepAlive 节流(~10s)才被拉起,重启时延因此多出 10s 量级(实测:kill 后 0.4s 失联、10.6s 才出现新 pid)。
+do_restart() {
+  before="$(kernel_pids | tr '\n' ' ' | sed 's/ $//')"
+  launchctl kickstart -k "system/$LABEL" >/dev/null 2>&1 || true
+  wait_healthy "$before" "${1:-}" && return 0
+  # 服务管理器没把内核拉起来 ⇒ 回退到"杀进程,等 KeepAlive"
+  log WARN "kickstart 未重建内核 ⇒ 回退为结束进程后等待拉起"
+  [ -n "$before" ] && kill $before 2>/dev/null || true
+  wait_healthy "$before" "${1:-}" && return 0
+  wait_healthy "" "${1:-}" && return 0
+  return 1
+}
+
+cmd_stage() {
+  [ -f "$SRC" ] || die "源配置不存在: $SRC"
+  [ -r "$SRC" ] || die "源配置不可读: $SRC"
+  tmp="$RUNTIME/.et-apply-candidate.yaml"
+  install -o root -g wheel -m 600 "$SRC" "$tmp" || die "候选文件写入失败"
+  # ★ 必须让内核自己校验通过,否则拒绝安装(绝不把坏配置放进去)
+  if ! "$CORE" -t -d "$RUNTIME" -f "$tmp" >/tmp/et-validate.out 2>&1; then
+    rm -f "$tmp"
+    log ERROR "配置校验未通过,已丢弃: $(tail -3 /tmp/et-validate.out | tr '\n' ' ')"
+    exit 2
+  fi
+  ts=$(date '+%Y%m%d-%H%M%S')
+  [ -f "$CONFIG" ] && cp -p "$CONFIG" "$RUNTIME/config.yaml.et-bak-$ts"
+  mv -f "$tmp" "$CONFIG" || die "替换 config.yaml 失败"
+  chown root:wheel "$CONFIG"; chmod 644 "$CONFIG"
+  log INFO "stage 完成: 校验通过 ✓ 备份 config.yaml.et-bak-$ts ✓ 已落盘: $(wc -c < "$CONFIG" | tr -d ' ') 字节"
+}
+
+cmd_restart() {
+  log INFO "restart: 当前内核 pid=[$(kernel_pids | tr '\n' ' ' | sed 's/ $//')] 版本=$(kernel_version)"
+  if do_restart ""; then log INFO "restart 完成 ✓ pid=[$(kernel_pids | tr '\n' ' ')]"; return 0; fi
+  log ERROR "重启后内核仍不健康 ⇒ 自动回滚配置"
+  cmd_rollback || true
+  exit 3
+}
+
+cmd_rollback() {
+  newest="$(ls -1t "$RUNTIME"/config.yaml.et-bak-* 2>/dev/null | head -1 || true)"
+  [ -n "$newest" ] || die "没有可用备份,无法回滚"
+  cp -p "$newest" "$CONFIG"; chown root:wheel "$CONFIG"; chmod 644 "$CONFIG"
+  log INFO "已回滚配置到备份: $(basename "$newest")"
+  do_restart "" || true
+}
+
+# ── 内核升级(全自动 ✓ 无需人工授权 ✓)─────────────────────────────────────────
+core_backup_newest() { ls -1t "$COREDIR"/"$(basename "$CORE")".et-bak-* 2>/dev/null | head -1 || true; }
+
+core_install_from() {  # $1 = 已校验过的候选二进制
+  ts=$(date '+%Y%m%d-%H%M%S')
+  cp -p "$CORE" "$COREDIR/$(basename "$CORE").et-bak-$ts" || die "备份内核失败"
+  tmp="$COREDIR/.et-apply-core-candidate"
+  install -o root -g wheel -m 755 "$1" "$tmp" || die "内核候选写入失败"
+  mv -f "$tmp" "$CORE" || die "替换内核失败"
+  # ★ macOS 服务模式的硬要求:必须 ad-hoc 重签,且**绝不加** --options runtime(否则 SIGKILL ✗)
+  codesign --force --sign - --timestamp=none "$CORE" >/dev/null 2>&1 || log WARN "codesign 未成功(内核可能仍可用)"
+  log INFO "内核已安装: 备份 $(basename "$CORE").et-bak-$ts ✓ 大小 $(wc -c < "$CORE" | tr -d ' ') 字节"
+}
+
+cmd_core_upgrade() {
+  old_ver="$(kernel_version)"
+  work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT INT TERM
+  command -v python3 >/dev/null 2>&1 || die "缺少 python3,无法解析发布元数据"
+  log INFO "core-upgrade: 开始(当前内核版本=${old_ver:-未知})"
+
+  # 1) 发布元数据(api.github.com ✓ 与 releases/download 是**不同主机** ⇒ 绕开个别对象卡住的问题 ✓)
+  fetch "$API" "$work/rel.json" || die "取发布元数据失败(网络问题)"
+  ver="$(python3 - "$work/rel.json" "$ASSET" <<'PYEOF'
+import json,sys
+d=json.load(open(sys.argv[1])); pre=sys.argv[2]
+for a in d.get("assets",[]):
+    n=a["name"]
+    if n.startswith(pre+"-") and n.endswith(".gz"):
+        print(n[len(pre)+1:-3]); break
+PYEOF
+)"
+  case "$ver" in *fa.*) ;; *) die "解析出的版本不合预期: '$ver'" ;; esac
+  if [ "$ver" = "$old_ver" ]; then
+    # 已是最新也把 pin 写上(bootstrap ✓):否则漂移检测要等下一次升级才生效 ✗
+    sha="$(shasum -a 256 "$CORE" | awk '{print $1}')"
+    printf '%s %s\n' "$ver" "$sha" > "$PIN" && chown fa:staff "$PIN" 2>/dev/null || log WARN "写入 pin 失败"
+    log INFO "已是最新($ver)✓ 无需升级;pin 已写入 sha=$(echo "$sha" | cut -c1-16)…"
+    return 0
+  fi
+
+  # 2) 期望摘要(GitHub 服务端计算的 sha256 ✓)+ 资产 id(走资产 API 下载 ✓ 已实测可通 ✓)
+  read -r want aid <<EOF
+$(python3 - "$work/rel.json" "$ASSET-$ver.gz" <<'PYEOF'
+import json,sys
+d=json.load(open(sys.argv[1])); name=sys.argv[2]
+for a in d.get("assets",[]):
+    if a["name"]==name:
+        print(a.get("digest","").replace("sha256:","") or "-", a["id"]); break
+PYEOF
+)
+EOF
+  [ -n "${want:-}" ] && [ "$want" != "-" ] || die "发布元数据里没有 $ASSET-$ver.gz 的 sha256 摘要"
+  fetch_api "https://api.github.com/repos/iuin8/mihomo/releases/assets/$aid" "$work/core.gz" \
+    || die "下载资产失败: $ASSET-$ver.gz"
+  got="$(shasum -a 256 "$work/core.gz" | awk '{print $1}')"
+  [ "$want" = "$got" ] || die "sha256 不匹配(资产= $got 期望= $want)⇒ 拒绝安装"
+  log INFO "校验通过: sha256=$(echo "$got" | cut -c1-16)… ⇔ 发布摘要一致 ✓ ($ASSET-$ver.gz)"
+
+  # 3) 解包 + 候选自证版本 + 用**当前生产配置**让候选自己解析一遍
+  gunzip -c "$work/core.gz" > "$work/core" || die "解包失败"
+  chmod 755 "$work/core"
+  have="$("$work/core" -v 2>/dev/null | head -1)"
+  case "$have" in *"$ver"*) log INFO "候选自证版本: $have" ;; *) die "候选二进制版本不符: '$have' 不含 '$ver'" ;; esac
+  [ -f "$CONFIG" ] || die "生产配置不存在,拒绝在未知状态下换核: $CONFIG"
+  if ! "$work/core" -t -d "$RUNTIME" -f "$CONFIG" >"$work/validate.out" 2>&1; then
+    die "候选内核无法解析当前生产配置: $(tail -3 "$work/validate.out" | tr '\n' ' ')"
+  fi
+  codesign --force --sign - --timestamp=none "$work/core" >/dev/null 2>&1 || log WARN "codesign 未成功(继续尝试)"
+
+  # 4) 安装 + 重启 + **按版本核对**(不是"进程活着"就算数 ✓)
+  core_install_from "$work/core"
+  if do_restart "$ver"; then
+    sha="$(shasum -a 256 "$CORE" | awk '{print $1}')"
+    printf '%s %s\n' "$ver" "$sha" > "$PIN" && chown fa:staff "$PIN" 2>/dev/null || log WARN "写入 pin 失败"
+    log INFO "core-upgrade 完成 ✓ 版本 $old_ver ⇒ $(kernel_version) ✓ pid=[$(kernel_pids | tr '\n' ' ')] | pin=$ver sha=$(echo "$sha" | cut -c1-16)…"
+    return 0
+  fi
+
+  # 5) 失败 ⇒ 自动回滚旧内核
+  log ERROR "新内核未能健康起效(期望版本 $ver)⇒ 自动回滚旧内核"
+  cmd_core_rollback || true
+  exit 4
+}
+
+cmd_core_rollback() {
+  newest="$(core_backup_newest)"
+  [ -n "$newest" ] || die "没有内核备份,无法回滚"
+  install -o root -g wheel -m 755 "$newest" "$CORE" || die "回滚写入失败"
+  codesign --force --sign - --timestamp=none "$CORE" >/dev/null 2>&1 || true
+  log INFO "已回滚内核到备份: $(basename "$newest")"
+  do_restart "" || log WARN "回滚后内核未确认健康(需要人工看一眼)"
+}
+
+cmd_status() {
+  printf 'core   : %s\n' "$CORE"
+  # 漂移检测:装机 sha256 与 pin 对比(不对就是被覆盖了 ✗,例如 CVR 的 ForceReinstall 拷了内置核 ✓)
+  cur_sha="$(shasum -a 256 "$CORE" 2>/dev/null | awk '{print $1}')"
+  if [ -f "$PIN" ]; then
+    read -r pin_ver pin_sha < "$PIN" || true
+    if [ "$cur_sha" = "$pin_sha" ]; then
+      printf 'drift  : 无 ✓ (pin=%s sha=%s…)\n' "$pin_ver" "$(echo "$cur_sha" | cut -c1-16)"
+    else
+      printf 'drift  : ★ 已被覆盖 ✗ (pin=%s %s… / 装机 %s… ⇒ 重跑 core-upgrade ✓)\n' \
+        "${pin_ver:-?}" "$(echo "${pin_sha:-}" | cut -c1-16)" "$(echo "$cur_sha" | cut -c1-16)"
+    fi
+  else
+    printf 'drift  : 未设 pin(下次 core-upgrade 会写入 ✓)\n'
+  fi
+  printf 'kernel : pid=[%s] version=%s\n' "$(kernel_pids | tr '\n' ' ')" "$(kernel_version)"
+  printf 'runtime: %s\n' "$( [ -f "$CONFIG" ] && echo "存在 ($(wc -c < "$CONFIG" | tr -d ' ') 字节)" || echo 缺失 )"
+  printf 'backups: config=%s core=%s\n' \
+    "$(ls -1 "$RUNTIME"/config.yaml.et-bak-* 2>/dev/null | wc -l | tr -d ' ')" \
+    "$(ls -1 "$COREDIR"/"$(basename "$CORE")".et-bak-* 2>/dev/null | wc -l | tr -d ' ')"
+  printf 'src    : %s\n' "$( [ -f "$SRC" ] && echo "存在 ($(wc -c < "$SRC" | tr -d ' ') 字节)" || echo 缺失 )"
+}
+
+case "${1:-}" in
+  stage)         cmd_stage ;;
+  restart)       cmd_restart ;;
+  status)        cmd_status ;;
+  rollback)      cmd_rollback ;;
+  core-upgrade)  cmd_core_upgrade ;;
+  core-rollback) cmd_core_rollback ;;
+  *) echo "用法: et-apply {stage|restart|status|rollback|core-upgrade|core-rollback}" >&2; exit 64 ;;
+esac

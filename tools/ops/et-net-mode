@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# et-net-mode —— 网络模式设置 + 订阅流程**自检**
+#
+# 两个订阅是**平级、互斥**的通路（不是叠加）：
+#   ① frp+ssh 订阅   ：只用于管理家侧 mihomo
+#   ② easytier 订阅  ：被验收的产品通路
+#
+# 正确流程（三步，每步都要看结果）：
+#   1. 激活 frp+ssh 订阅  ⇒ 能连家侧 ✓        `et-net-mode check bypass`
+#   2. 停用 frp+ssh 订阅  ⇒ **连不上**家侧 ✓  `et-net-mode check isolated`
+#   3. 换成 easytier 订阅 ⇒ 能连家侧 ✓        `et-net-mode check easytier`
+#
+# 本脚本不切订阅（那是 CVR 的动作）；它只做：模式设置 + 每步的自证。
+set -euo pipefail
+# 解析符号链接（安装到 ~/.local/bin 时是链接）后再推导项目根
+SRC=${BASH_SOURCE[0]}
+while [ -L "$SRC" ]; do
+  d=$(cd "$(dirname "$SRC")" && pwd)
+  SRC=$(readlink "$SRC")
+  case "$SRC" in /*) ;; *) SRC="$d/$SRC" ;; esac
+done
+SCRIPT_DIR=$(cd "$(dirname "$SRC")" && pwd)
+ROOT=${CLASH_GROUP_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}
+SOCK=${CLASH_GROUP_SOCK:-/var/run/clash-verge-service/users/$(id -u)/verge-mihomo.sock}
+GRP='内网入口'
+BYPASS_SSH=${BYPASS_SSH:-}                  # 家侧 ssh 别名；未设时 bypass/isolated 的 ssh 判据直接报缺配置
+BYPASS_MARK=${BYPASS_MARK:-fa.internet}     # frp+ssh 订阅里的节点/分组特征
+# 验收目标放本机(敏感, 不入 git)；没有该文件时要求显式 PROBE_INTERNAL
+PROBES=${PROBES:-$ROOT/local-state/probes.conf}
+PROBE_INTERNAL=${PROBE_INTERNAL:-}
+if [[ ! -r "$PROBES" && -z "$PROBE_INTERNAL" ]]; then
+  echo "✗ 既没有 $PROBES，也没有设置 PROBE_INTERNAL ⇒ 无验收目标，拒绝运行" >&2
+  exit 2
+fi
+
+q() { python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$1"; }
+now() { curl -s --max-time 5 --unix-socket "$SOCK" http://localhost/proxies 2>/dev/null \
+  | python3 -c "import json,sys;print((json.load(sys.stdin)['proxies'].get(sys.argv[1]) or {}).get('now'))" "$1" 2>/dev/null; }
+set_sel() {
+  curl -s -o /dev/null -X PUT --unix-socket "$SOCK" "http://localhost/proxies/$(q "$1")" \
+    -H 'Content-Type: application/json' -d "{\"name\":\"$2\"}"
+  sleep 0.4
+  local got; got=$(now "$1")
+  [[ "$got" == "$2" ]] || { echo "  ✗ 回读不一致：$1 = $got（期望 $2）" >&2; return 1; }
+  echo "  $1 = $got"
+}
+tun_ok() { [[ $(ifconfig 2>/dev/null | grep -c '^utun1024') -gt 0 ]]; }
+# TUN 在重启后是**延迟出现**的（实测 6s 时还没有、10s 时已有）
+# ⇒ 轮询等待，避免把"还没建好"误判成"缺失"（假阴性 ✗）
+tun_wait() {
+  local i
+  for i in $(seq 1 10); do
+    tun_ok && return 0
+    sleep 2
+  done
+  return 1
+}
+# frp+ssh 订阅是否在当前配置里（订阅级判据 ✓，与分组选择无关）
+bypass_present() {
+  curl -s --max-time 6 --unix-socket "$SOCK" http://localhost/proxies 2>/dev/null \
+    | python3 -c "
+import json,sys
+p = json.load(sys.stdin)['proxies']
+print('yes' if any(sys.argv[1] in k for k in p) else 'no')" "$BYPASS_MARK" 2>/dev/null
+}
+home_ssh() { [ -n "$BYPASS_SSH" ] || return 3; timeout 14 ssh -o BatchMode=yes -o ConnectTimeout=8 -o ControlPath=none "$BYPASS_SSH" true >/dev/null 2>&1; }
+# 注意：curl 失败时 -w 也会输出 000，再 `|| echo 000` 会拼成 000000 ✗
+code() { local o; o=$(curl -s -o /dev/null -m 15 --noproxy '*' -w '%{http_code}' "$1" 2>/dev/null) || true; echo "${o:-000}"; }
+probe_hint() { if [ -r "$PROBES" ]; then awk '!/^[[:space:]]*#/ && NF {print $1; exit}' "$PROBES"; else printf '%s' "$PROBE_INTERNAL"; fi; }
+
+
+# 按 probes.conf 逐条判定(每行: <url> <期望码,逗号分隔>)；文件不存在时退回单目标探测
+probe_all() {
+  local fail=0 url want got
+  if [[ ! -r "$PROBES" ]]; then
+    got=$(code "$PROBE_INTERNAL")
+    echo "  ${PROBE_INTERNAL} ⇒ ${got}（期望 200）"
+    [[ "$got" == 200 ]] || fail=1
+    return $fail
+  fi
+  while read -r url want _rest; do
+    [[ -z "$url" || "$url" == \#* ]] && continue
+    got=$(code "$url")
+    if [[ ",${want}," == *",any,"* && "$got" != "000" ]] || [[ ",${want}," == *",${got},"* ]]; then
+      echo "  ${url} ⇒ ${got} ✓"
+    else
+      echo "  ${url} ⇒ ${got} ✗（期望 ${want}）"; fail=1
+    fi
+  done < "$PROBES"
+  return $fail
+}
+
+check() {
+  local want=$1 fail=0 bp hssh et
+  echo "① 内核 TUN（最多等 20s，TUN 是延迟建的）"
+  if tun_wait; then echo "  ✓ utun1024 在"; else
+    echo "  ✗ utun1024 缺失 ⇒ 流量绕过内核，任何读数都不可信"
+    echo "    处置：sudo -n /usr/local/libexec/clash-group/et-apply restart"
+    fail=1
+  fi
+  bp=$(bypass_present || echo '?')
+  rc=0; home_ssh || rc=$?; case $rc in 0) hssh=yes;; 3) hssh=missing;; *) hssh=no;; esac
+  et=$(code "$(probe_hint)")
+  echo "② 现状：frp+ssh 订阅=${bp} · 家侧 ssh=${hssh} · 内网 $(probe_hint)=${et}"
+  case "$want" in
+    bypass)
+      [[ "$hssh" != missing ]] || { echo "  ✗ 未设置 BYPASS_SSH ⇒ 无法验证旁路订阅"; fail=1; }
+      [[ "$bp" == yes ]] || { echo "  ✗ 配置里没有 frp+ssh 订阅的节点 ⇒ 先在 CVR 激活它"; fail=1; }
+      [[ "$hssh" == yes ]] || { echo "  ✗ 家侧连不上 ⇒ 旁路订阅没生效"; fail=1; } ;;
+    isolated)
+      [[ "$hssh" != missing ]] || { echo "  ✗ 未设置 BYPASS_SSH ⇒ 无法验证隔离"; fail=1; }
+      [[ "$hssh" == no ]] || { echo "  ✗ 家侧 ssh 仍可达 ⇒ frp+ssh 订阅没停干净"; fail=1; }
+      # 隔离还必须覆盖"内网地址本身不可达"：否则这条网络自带内网通路，验收无意义
+      [[ "$et" == "000" ]] || { echo "  ✗ 无订阅时内网探测仍返回 ${et} ⇒ 该网络自带内网通路，不能用于验收"; fail=1; } ;;
+    easytier)
+      # 判据 = **有效路径**：首条覆盖 10.0.0.0/8 的规则必须指向我们的入口组
+      first=$(curl -s --max-time 6 --unix-socket "$SOCK" http://localhost/rules 2>/dev/null \
+        | python3 -c "
+import json,sys
+for r in json.load(sys.stdin)['rules']:
+    d = f\"{r.get('type')},{r.get('payload')},{r.get('proxy')}\"
+    if r.get('type') in ('IPCIDR','IP-CIDR') and '10.0.0.0/8' in str(r.get('payload')):
+        print(d); break
+" 2>/dev/null)
+      echo "  首条 10/8 规则 = ${first:-无}"
+      [[ "$first" == *"内网入口"* ]] || { echo "  ✗ 10/8 的首条规则不是我们的入口组 ⇒ easytier 订阅没生效"; fail=1; }
+      probe_all || { echo "  ✗ 验收目标未全部通过 ⇒ easytier 通路本身没工作"; fail=1; } ;;
+    *)
+      echo "  ✗ check 需要参数：bypass | isolated | easytier" >&2; exit 2 ;;
+  esac
+  echo "③ 结论"
+  if [[ $fail -eq 0 ]]; then echo "  ✓ ${want} 阶段自检通过"; else echo "  ✗ ${want} 阶段自检未通过"; exit 1; fi
+}
+
+case "${1:-}" in
+  lan|home|office) set_sel "$GRP" DIRECT ;;
+  mobile|offsite|wan) set_sel "$GRP" et-lan ;;
+  status)
+    echo "  内网入口 = $(now "$GRP")"
+    echo "  frp+ssh 订阅存在 = $(bypass_present || echo '?')"
+    rc=0; home_ssh || rc=$?; case $rc in 0) echo "  家侧 ssh = 可达";; 3) echo "  家侧 ssh = 未设置 BYPASS_SSH";; *) echo "  家侧 ssh = 不可达";; esac
+    echo "  内网探测 = $(code "$(probe_hint)")"
+    if tun_wait; then echo "  TUN = 在 ✓"; else echo "  TUN = 缺失 ✗"; fi ;;
+  check) check "${2:-}" ;;
+  *)
+    echo "usage: et-net-mode <lan|mobile|status|check bypass|check isolated|check easytier>" >&2; exit 2 ;;
+esac
