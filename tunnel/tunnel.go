@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -229,9 +230,40 @@ func RuleProviders() map[string]P.RuleProvider {
 // UpdateProxies handle update proxies
 func UpdateProxies(newProxies map[string]C.Proxy, newProviders map[string]P.ProxyProvider) {
 	configMux.Lock()
+	old := proxies
 	proxies = newProxies
 	providers = newProviders
 	configMux.Unlock()
+	closeOutdatedProxies(old, newProxies)
+}
+
+type closeWhenIdler interface {
+	CloseWhenIdle()
+}
+
+func sameProxy(a, b C.Proxy) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Type() != vb.Type() || va.Kind() != reflect.Ptr {
+		return false
+	}
+	return va.Pointer() == vb.Pointer()
+}
+
+// closeOutdatedProxies releases proxies that a reload replaced or removed.
+// Identity matters: a reload can reuse a name for a new object, and only the
+// old object may be closed.
+func closeOutdatedProxies(old, new map[string]C.Proxy) {
+	for name, p := range old {
+		if np, ok := new[name]; ok && sameProxy(p, np) {
+			continue
+		}
+		if c, ok := p.(closeWhenIdler); ok {
+			c.CloseWhenIdle()
+		}
+	}
 }
 
 func UpdateListeners(newListeners map[string]C.InboundListener) {

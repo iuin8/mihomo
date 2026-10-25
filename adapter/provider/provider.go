@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -27,8 +28,6 @@ import (
 const (
 	ReservedName = "default"
 )
-
-var collectOutdatedProxies = runtime.GC
 
 type ProxySchema struct {
 	Proxies []map[string]any `yaml:"proxies"`
@@ -105,13 +104,14 @@ func (bp *baseProvider) RegisterHealthCheckTask(url string, expectedStatus utils
 func (bp *baseProvider) setProxies(proxies []C.Proxy) {
 	bp.mutex.Lock()
 	hadProxies := len(bp.proxies) > 0
+	old := bp.proxies
 	bp.proxies = proxies
 	bp.version += 1
 	bp.healthCheck.setProxies(proxies)
 	bp.mutex.Unlock()
 
 	if hadProxies {
-		collectOutdatedProxies()
+		closeOutdatedProxies(old, proxies)
 	}
 	if bp.healthCheck.auto() {
 		go bp.healthCheck.check()
@@ -472,4 +472,39 @@ func NewProxiesParser(pdName string, tunnel C.Tunnel, filter string, excludeFilt
 
 		return proxies, nil
 	}, nil
+}
+
+type closeWhenIdler interface {
+	CloseWhenIdle()
+}
+
+func sameProxy(a, b C.Proxy) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Type() != vb.Type() || va.Kind() != reflect.Ptr {
+		return false
+	}
+	return va.Pointer() == vb.Pointer()
+}
+
+// closeOutdatedProxies closes only the objects that this update removed or
+// replaced; equal objects are left alone.
+func closeOutdatedProxies(old, new []C.Proxy) {
+	for _, p := range old {
+		kept := false
+		for _, np := range new {
+			if sameProxy(p, np) {
+				kept = true
+				break
+			}
+		}
+		if kept {
+			continue
+		}
+		if c, ok := p.(closeWhenIdler); ok {
+			c.CloseWhenIdle()
+		}
+	}
 }

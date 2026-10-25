@@ -382,6 +382,9 @@ type TunBridge struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	err    error
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // StartTunBridge 创建设备并启动双向搬运；调用方收尾时必须调用 Close。
@@ -400,26 +403,7 @@ func StartTunBridge(parent context.Context, options TunDeviceOptions, plane pack
 			log.Warnln("[EasyTier] TUN bridge stopped: %v", err)
 		}
 	}()
-	installBridgeFinalizer(bridge)
 	return bridge, nil
-}
-
-// installBridgeFinalizer 让"调用方再也不会调用 Close"的桥也能被收尾。
-//
-// FORK(easytier-tun, 2026-10-16):**这是设备泄漏的根因** ✗✓。mihomo 换配置时只是替换出站集合
-// （tunnel.UpdateProxies 里 `proxies = newProxies`，没有任何 Close ✗）⇒ 被移出配置的 easytier 出站
-// 永远不会 Close ⇒ 它的 TUN 设备、overlay 地址与 /24 路由**一直留在内核里** ✗
-// （实测:一次重载后出现 4 张 utun，两张是上一代的 10.144.0.6/.7 ✗）。
-// ⇒ 桥一旦不可达就由 GC 收尾；Close 里会清掉 finalizer（幂等，不会重复收尾 ✓）。
-func installBridgeFinalizer(bridge *TunBridge) {
-	if bridge == nil {
-		return
-	}
-	runtime.SetFinalizer(bridge, func(b *TunBridge) {
-		// 现场可见：这条只在"调用方再也不会 Close"时出现（例如被移出配置的出站）✓
-		log.Debugln("[EasyTier] TUN bridge finalized: abandoned by a config reload, device closed")
-		_ = b.Close()
-	})
 }
 
 // Close 停止搬运并关闭设备；幂等，可重复调用。
@@ -427,15 +411,15 @@ func (b *TunBridge) Close() error {
 	if b == nil {
 		return nil
 	}
-	runtime.SetFinalizer(b, nil) // 显式收尾 ⇒ 不需要 GC 再跑一遍
-	b.cancel()
-	<-b.done
-	if b.device == nil {
-		return nil
-	}
-	device := b.device
-	b.device = nil
-	return device.Close()
+	b.closeOnce.Do(func() {
+		b.cancel()
+		<-b.done
+		if b.device != nil {
+			b.closeErr = b.device.Close()
+			b.device = nil
+		}
+	})
+	return b.closeErr
 }
 
 // Err 返回搬运循环结束时的错误（须在 Close 之后读）。

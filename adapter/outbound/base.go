@@ -9,6 +9,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/metacubex/mihomo/common/atomic"
 	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/component/dialer"
@@ -374,6 +375,9 @@ type autoCloseProxyAdapter struct {
 	ProxyAdapter
 	closeOnce sync.Once
 	closeErr  error
+
+	refs    atomic.Int64
+	closing atomic.Bool
 }
 
 func (p *autoCloseProxyAdapter) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
@@ -384,7 +388,8 @@ func (p *autoCloseProxyAdapter) DialContext(ctx context.Context, metadata *C.Met
 	if c, ok := c.(AddRef); ok {
 		c.AddRef(p)
 	}
-	return c, nil
+	p.refs.Add(1)
+	return &autoReleaseConn{Conn: c, p: p}, nil
 }
 
 func (p *autoCloseProxyAdapter) ListenPacketContext(ctx context.Context, metadata *C.Metadata) (_ C.PacketConn, err error) {
@@ -395,7 +400,48 @@ func (p *autoCloseProxyAdapter) ListenPacketContext(ctx context.Context, metadat
 	if pc, ok := pc.(AddRef); ok {
 		pc.AddRef(p)
 	}
-	return pc, nil
+	p.refs.Add(1)
+	return &autoReleasePacketConn{PacketConn: pc, p: p}, nil
+}
+
+// CloseWhenIdle marks the adapter as outdated: it is closed as soon as the
+// last connection that started while it was still active is closed. This is
+// the deterministic counterpart of the GC finalizer below.
+func (p *autoCloseProxyAdapter) CloseWhenIdle() {
+	p.closing.Store(true)
+	if p.refs.Load() == 0 {
+		_ = p.Close()
+	}
+}
+
+func (p *autoCloseProxyAdapter) releaseRef() {
+	if p.refs.Add(-1) == 0 && p.closing.Load() {
+		_ = p.Close()
+	}
+}
+
+type autoReleaseConn struct {
+	C.Conn
+	p    *autoCloseProxyAdapter
+	once sync.Once
+}
+
+func (c *autoReleaseConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.p.releaseRef)
+	return err
+}
+
+type autoReleasePacketConn struct {
+	C.PacketConn
+	p    *autoCloseProxyAdapter
+	once sync.Once
+}
+
+func (c *autoReleasePacketConn) Close() error {
+	err := c.PacketConn.Close()
+	c.once.Do(c.p.releaseRef)
+	return err
 }
 
 func (p *autoCloseProxyAdapter) Close() error {
