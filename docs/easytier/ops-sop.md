@@ -98,6 +98,15 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 | `/proxies/<节点>` 的 `alive` 字段 | ❌ 常为陈旧读数 ⇒ 要**实测** |
 | 用 ICMP ping 判连通 | ❌ 隧道/代理场景不可信(一律用 TCP) |
 
+## 3.1 重启类验收必须留间隔（2026-10-25 实测）
+
+```text
+launchd 对同一 job 的连续重启有 ~10s 节流：背靠背 restart 三次实测 1.68 / 10.36 / 10.38s，
+留 12s 间隔后是 1.83 / 1.39 / 1.30s。
+⇒ 验收"重启有多快"时必须间隔 ≥12s；背靠背测到的是节流，不是重启本身。
+⇒ 生产用法本来就是单次重启，所以 1.3s 这个数量级才是该对标的读数。
+```
+
 ## 4. 已知故障模式
 
 | 症状 | 原因 | 处置 |
@@ -108,6 +117,26 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 | 一台机器加第二个节点后借网断 | 两个节点**抢同一段 overlay 路由** ✗ | **一机一节点** ✓ |
 | 重载后行为突变 | 重载会重置选择器 ✗ | 组内第一项 = 正确默认值 ✓ |
 | 手工改 runtime 后又变回去 | GUI 的"重载配置"会用它的合并结果覆盖 ✓(正常) | 要长期生效 ⇒ 改 **profile 源文件** ✓ |
+
+### 4.1 某公网目标 000，但家侧直连正常（airport 节点/外部故障，2026-10-25）
+
+```text
+症状：经 mixed-port 与 --noproxy 都是 000（TLS 握手超时/EOF），但 `nc` 能连上 443，家侧直连 302。
+判断顺序：
+  1) 查 `/connections` 的 chains：若命中 airport 节点（如 `<机场节点>`）⇒ 先怀疑节点到该目标的通路；
+  2) 家侧直连同一目标（`ssh 家侧 curl --noproxy '*'`）⇒ 能通说明服务端与线路没问题；
+  3) 再查规则：`/rules` 里是否有把该域名送进隧道的规则（见 4.2）。
+⇒ 结论写法要区分"路径错"与"外部故障"，别把外部故障当成配置回归。
+```
+
+### 4.2 overlay 里 `rules_prepend` 与 `rules_remove` 同时出现同一条规则（会自我抵消）
+
+```text
+现象：明明在 rules_remove 里删了某条域名规则，运行配置里它还在（且排在前面）。
+原因：rules_prepend 又把同一条加回来了 ⇒ 删除无效。
+修法：删规则时**同时**检查两个键；判据 = `/rules` 里搜不到该 payload，
+      再用 `/connections` 的 chain 证明流量不再进隧道（不能只看"我改过文件"）。
+```
 
 ## 6. 配置变更入口（用户侧 `et-config`，2026-10-21 立）
 
@@ -172,3 +201,45 @@ overlay 只支持 4 种幂等操作：`+` 并集 / `=` 设值 / `prepend` 前插
 对端网关     : 部署目录的备份 ⇒ docker compose -p <项目> up -d --force-recreate <服务>
 对端宿主终端 : ip -o link show | grep Meta 应为空 ✓、default via <原网关> ✓
 ```
+
+## 8. 本机私有状态：`local-state/`（2026-10-25 立）
+
+```text
+不入 git 的东西统一放**项目根目录**的 local-state/，便于检索，且不会被仓库打包带走。
+
+  目录 0700、文件 0600
+  probes.conf    验收探针（<url> <期望码[,码...]>；any = 非 000）
+  sensitive.txt  仓库脱敏守卫的 denylist（真实内网域名/IP/网段）
+
+引用方：
+  ~/.local/bin/et-net-mode   → PROBES
+  ~/.local/bin/et-config     → PROBES
+  docs/easytier/check-templates.sh → ET_DENYLIST（默认值指向该目录）
+
+⚠️ 项目根目录本身不是 git 仓库；不要把 local-state/ 交给任何仓库或打包外发。
+```
+
+## 9. root 动作的执行姿势（无 TTY 时，2026-10-25 实测）
+
+```text
+① 需要管理员权限时，用 macOS 原生授权 UI（密码只进系统对话框，不经过脚本/agent）：
+
+   osascript -e 'with timeout of 300 seconds' \
+             -e 'do shell script "/绝对路径/脚本.sh" with administrator privileges' \
+             -e 'end timeout'
+
+   失败时 AppleScript 只报错误号、看不到 stdout ⇒ 让脚本把输出重定向到 /tmp/<log> 再读。
+② 不要索取、转存或回显用户密码；也不要用 askpass 之类把密码塞进环境变量。
+③ root 的 PATH 可能被重置/很小（不要假设它包含 /opt/homebrew 等）⇒ 脚本内一律用绝对路径调外部命令。
+
+④ **shell 变量后紧跟中文/全角字符时必须写成 `${var}`**（本轮部署脚本踩到，已实测复现）：
+
+   /bin/bash 3.2.57，UTF-8 locale：
+     set -u; bak=ABC; echo "$bak（"   ⇒ bak�: unbound variable   ✗（即使已赋值）
+     set -u; bak=ABC; echo "${bak}（" ⇒ 正常                         ✓
+   C/POSIX locale 下按字节处理，非 ASCII 字节会终止变量名 ⇒ 同一行不报错（易误判）。
+   ⇒ 与 locale + set -u 相关，且报错只显示变量名、该行恰好带中文，极易误判成"变量未初始化"。
+   ⇒ 规范：变量先初始化 + 引用一律 `${var}`（尤其后面紧跟中文/全角字符时）。
+   注：`$DENY）` 这类写法在本轮守卫脚本里也真实触发过一次。
+```
+

@@ -2,7 +2,8 @@
 # check-templates.sh —— 入库文档的"脱敏/模板化"守卫(防回潮 ✓)
 # 判据:①模板里的 network-secret 必须是占位符 ✗真值;②文档里不得出现**公网** IP ✗;③不得残留真实私有域名的明文 ✗
 set -u
-cd "$(dirname "$0")" || exit 1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
 bad=0
 # ① network-secret 必须占位
 for f in $(grep -rl "network-secret" . --include='*.yaml' --include='*.yml' --include='*.md' 2>/dev/null); do
@@ -25,7 +26,9 @@ done
 
 # ③ 真实内网目标（denylist 在**本机**，绝不入 git ✓）
 #    有该文件才检查；敏感字样因此不会出现在仓库里 ✓
-DENY="${ET_DENYLIST:-$HOME/.local/state/clash-group/sensitive.txt}"
+# 默认路径从脚本位置推导（mihomo/docs/easytier → 项目根/local-state），
+# 这样在任何机器/目录结构下都成立；可用 ET_DENYLIST 覆盖。
+DENY="${ET_DENYLIST:-$(cd "$SCRIPT_DIR/../../.." && pwd)/local-state/sensitive.txt}"
 if [ -r "$DENY" ]; then
   hits=0
   while IFS= read -r pat; do
@@ -38,6 +41,9 @@ if [ -r "$DENY" ]; then
     done
   done < "$DENY"
   [ "$hits" -eq 0 ] && echo "✓ 未出现 denylist 中的真实目标"
+else
+  # 缺文件是 fail-open；但必须**可见**，不能把"没检查"混成"检查通过"
+  echo "⚠️ 未找到 denylist（${DENY}）⇒ 跳过真实目标检查（可用 ET_DENYLIST 指定）"
 fi
 
 [ "$bad" -eq 0 ] && echo "✓ 模板/文档脱敏检查通过(0 处 ✗)" || echo "✗ 共 $bad 处需要脱敏"
