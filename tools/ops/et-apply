@@ -34,7 +34,7 @@ if [ -z "$STATE_DIR" ]; then
   [ -n "$HOME_U" ] || die "无法解析用户 $SUDO_USER 的 home"
   STATE_DIR="$HOME_U/.local/state/clash-group/et-apply"
 fi
-OWNER=${CLASH_GROUP_OWNER:-${SUDO_USER:-}}
+OWNER=${SUDO_USER:-}
 U=${CLASH_GROUP_UID:-$(id -u "${SUDO_USER:-$(id -un)}")}
 RUNTIME="/Library/Application Support/clash-verge-service/users/$U/runtime"
 CONFIG="$RUNTIME/config.yaml"

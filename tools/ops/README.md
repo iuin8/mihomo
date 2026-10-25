@@ -15,7 +15,7 @@
 
 ## 配置来源（不使用任何个人路径）
 
-- `et-apply`：`CLASH_GROUP_CONFIG_SRC` → `/etc/clash-group/et-apply.conf`（`CLASH_GROUP_STATE_DIR` / `CLASH_GROUP_UID`）→ `SUDO_USER` 的 home；三者都没有则**明确失败**（不猜）。
+- `et-apply`：`/etc/clash-group/et-apply.conf`（安装器生成，0600；`CLASH_GROUP_STATE_DIR` / `CLASH_GROUP_UID`）→ `SUDO_USER` 的 home；两者都没有则**明确失败**（不猜）。不接受环境变量指定文件/目录。
 - `et-config` / `et-net-mode`：`CLASH_GROUP_ROOT`（默认从脚本位置推导项目根）、`ET_PROBES`、`CLASH_GROUP_SOCK`；`users/<uid>` 由 `id -u` 得出。
 - 凭据/私有状态**不进仓库**：`local-state/`（probes/denylist/home-egress cred）、overlay、sudoers 都由安装器在本机生成（0600/0440）。
 
@@ -26,7 +26,7 @@
 tools/ops/install-helpers.sh            # dry-run
 sudo tools/ops/install-helpers.sh --apply
 # 2) 内核（先 dry-run；默认只写服务侧）
-tools/ops/install-core.sh /path/to/verge-mihomo --apply   # 需要 sudo
+tools/ops/install-core.sh /path/to/verge-mihomo --sha256 <64位摘要> --apply   # 需要 sudo；--sha256 必填
 # 3) 配置
 et-config build && sudo -n et-apply stage && sudo -n et-apply restart
 # 回滚

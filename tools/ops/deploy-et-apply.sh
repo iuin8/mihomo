@@ -8,11 +8,14 @@
 #  · 性能（≤2s）、utun 集合、数据面诊断 只断言，不回滚；未达项计入 rc；
 #  · 内核本来健康时（sha/bash -n 阶段）回滚只还原文件，不白重启。
 set -uo pipefail
+PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/et-apply"
 DST="/usr/local/libexec/clash-group/et-apply"
 LABEL="io.github.clash-verge-rev.clash-verge-rev.service"
-SOCK="${CLASH_GROUP_SOCK:-/var/run/clash-verge-service/users/$(id -u)/verge-mihomo.sock}"
+U=${SUDO_UID:-${CLASH_GROUP_UID:-}}
+[ -n "$U" ] || { echo "✗ 需要 sudo（SUDO_UID 缺失）或 CLASH_GROUP_UID" >&2; exit 1; }
+SOCK="${CLASH_GROUP_SOCK:-/var/run/clash-verge-service/users/$U/verge-mihomo.sock}"
 ET_NET_MODE="${ET_NET_MODE:-$(cd "$(dirname "$0")" && pwd)/et-net-mode}"
 INSTALL="/usr/bin/install"
 BACKUP_KEEP=5

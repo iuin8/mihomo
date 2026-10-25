@@ -26,6 +26,7 @@ done
 [ -n "$NEW" ] && [ -f "$NEW" ] || { echo "用法: $0 <新内核> --sha256 <期望sha256> [--service|--app] [--name NAME] [--apply]" >&2; exit 64; }
 case "$NAME" in ''|*[!A-Za-z0-9._-]*) echo "✗ --name 只允许 [A-Za-z0-9._-]: $NAME" >&2; exit 64 ;; esac
 case "$EXPECT_SHA" in ''|*[!0-9a-fA-F]*) echo "✗ 必须用 --sha256 固定期望摘要（不再对任意二进制 root 执行 -v）" >&2; exit 64 ;; esac
+[ ${#EXPECT_SHA} -eq 64 ] || { echo "✗ --sha256 必须是 64 位十六进制" >&2; exit 64; }
 
 SVC_ROOT="/Library/Application Support/clash-verge-service/cores"
 APP_ROOT="/Applications/Clash Verge.app/Contents/MacOS"

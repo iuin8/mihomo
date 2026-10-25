@@ -136,6 +136,8 @@ def upsert_items(base, extra, where, key="name"):
 
 
 BYPASS_MARK = os.environ.get("ET_BYPASS_MARK", "")  # 未配置 ⇒ 相关门禁显式失败（见 bypass_absent）
+K8S_NODE_PREFIX = os.environ.get("K8S_NODE_PREFIX", "")   # 机器相关：local-state/tools.env
+FRP_GROUPS = [g for g in os.environ.get("FRP_GROUPS", "").split(",") if g]
 
 
 def base_has_bypass(path=BASE):
@@ -419,7 +421,8 @@ def classify(cfg):
     entry = any(r.startswith("IP-CIDR,10.0.0.0/8,") and r.endswith("内网入口") for r in rules)
     # frp 订阅的节点特征来自 local-state/tools.env；未配置时不猜
     frp = bool(BYPASS_MARK) and any(BYPASS_MARK in r for r in rules)
-    if entry and any(n.startswith(("et-lan", "et-fa", "et-k8s")) for n in names):
+    if entry and any(n.startswith(("et-lan", "et-fa")) or
+                     (K8S_NODE_PREFIX and n.startswith(K8S_NODE_PREFIX)) for n in names):
         return "et"
     if frp:
         return "frp"
@@ -478,7 +481,7 @@ def apply_with_verify(mode, verify_enabled=True, prev_mode=None):
 
 def mode_main(mode, verify_enabled=True):
     """在"两个订阅"之间切换（不经过 CVR GUI）：
-       frp = 原样 stage 基座（基座即 frp+ssh 订阅：10.x → ssy_g）
+       frp = 原样 stage 基座（基座即 frp+ssh 订阅：10.x → frp 节点）
        et  = 基座 + overlay（easytier 订阅：10/8 → 内网入口）
     两者互斥，切换后自动 restart。"""
     prev = detect_mode()          # 写候选之前取：回滚恢复的是"上一份已应用配置"
@@ -490,14 +493,16 @@ def mode_main(mode, verify_enabled=True):
             "（两个订阅平级互斥，本工具不代替 CVR 切换；不变量 7）")
     if mode == "frp":
         write_candidate(load(BASE, "基座"))
-        print("  模式 = frp（基座原样：10.x → ssy_g）")
+        print("  模式 = frp（基座原样：10.x → frp 节点）")
     elif mode == "et":
         write_candidate(build(BASE))
         print("  模式 = et（基座 + overlay：10/8 → 内网入口）")
     elif mode == "none":
         # 两个订阅都不激活：只去掉 frp 订阅的转发规则（保留其它，便于快速回切）
         cfg = build(BASE)
-        drop = {"ssy_g", "mac_ssy_g"}
+        if not FRP_GROUPS:
+            die("FRP_GROUPS 未配置（应在 local-state/tools.env）⇒ 无法安全移除 frp 转发规则")
+        drop = set(FRP_GROUPS)
         before = len(cfg.get("rules") or [])
         cfg["rules"] = [r for r in (cfg.get("rules") or [])
                         if str(r).split(",")[-1] not in drop]
