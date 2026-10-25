@@ -67,3 +67,10 @@ sudo -n et-apply core-rollback   # 回滚到上一份内核备份
 - 首次离网验收通过（终端 404/200 + 无缓存浏览器标题）
 - 出口侧证据：`syn received` / `accepted for proxy` / `purpose=4` / `expired=0`
 - wasm sha256 `b542ef04…`（EasyTier **`5af90471`** + smoltcp 能力补丁）
+
+## 2026-10-25 · `ssh-system` 移出 trunk
+
+`ssh-system`（约 2000 行，fork-only，与 easytier 产品无关）已从 `fa/trunk` 删除，
+历史保留在 `archive/ssh-system` 分支（起点 `d9cc800f`）。删除后 `adapter/outbound/ssh.go`
+回到基线，`go build ./...` 与 `go test ./...`（58 包）全绿；`use-system-socks` /
+`ssh-user` / `ssh-flags` / `system-socks-port` / `ssh-config-path` 不再支持。

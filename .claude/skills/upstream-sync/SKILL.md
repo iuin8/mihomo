@@ -71,7 +71,6 @@ done
 | `.github/workflows/build.yml` / `test.yml` | 保留 fork 精简 CI | 吸收上游 Go 版本、权限、patch 引用、构建参数修复；确认 `.github/patch/` 静态引用存在 |
 | `component/updater/update_core.go` | 保留 fork 下载 URL | 吸收上游 updater bug fix / 安全修复 |
 | `adapter/outbound/ssh.go` | 智能合并 | 保留 `socksExt`、`systemSocks`、`useSystemSsh`、`closed`、`UseSshConfigAlias`、`UseSystemSocks`、`SshUser`、`SshFlags` |
-| `adapter/outbound/ssh_system*.go` / `ssh_resilience.go` | fork-only | 检查上游包名、函数签名、字段变化造成的间接编译影响 |
 | sudoku / trusttunnel | upstream-maintained | 不当作 fork-only；跟随上游 |
 | 自动合并成功但双方改过 | 不可默认通过 | 查上游 delta 与 fork-only 调用方是否兼容 |
 | 其他上游文件 | 跟随上游 | build/test 兜底 |

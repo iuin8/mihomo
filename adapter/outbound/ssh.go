@@ -26,35 +26,22 @@ type Ssh struct {
 	config *ssh.ClientConfig
 	client *ssh.Client
 	cMutex sync.Mutex
-	closed bool // 标记是否由 Close() 主动关闭，阻止自动重连
-
-	socksExt *systemSocksExt // 系统级 SOCKS5 扩展逻辑
-	socks    *Socks5
 }
 
 type SshOption struct {
 	BasicOption
 	Name                 string   `proxy:"name"`
 	Server               string   `proxy:"server"`
-	Port                 int      `proxy:"port,omitempty"`
-	UserName             string   `proxy:"username,omitempty"`
+	Port                 int      `proxy:"port"`
+	UserName             string   `proxy:"username"`
 	Password             string   `proxy:"password,omitempty"`
 	PrivateKey           string   `proxy:"private-key,omitempty"`
 	PrivateKeyPassphrase string   `proxy:"private-key-passphrase,omitempty"`
 	HostKey              []string `proxy:"host-key,omitempty"`
 	HostKeyAlgorithms    []string `proxy:"host-key-algorithms,omitempty"`
-	SshUser              string   `proxy:"ssh-user,omitempty"`
-	SshFlags             []string `proxy:"ssh-flags,omitempty"`
-	UseSystemSocks       bool     `proxy:"use-system-socks,omitempty"`
-	SystemSocksPort      *int     `proxy:"system-socks-port,omitempty"`
-	SshConfigPath        string   `proxy:"ssh-config-path,omitempty"`
 }
 
 func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
-	if s.socksExt != nil && s.socksExt.inUse {
-		return s.dialSystemSocks(ctx, metadata)
-	}
-
 	client, err := s.connect(ctx, s.addr)
 	if err != nil {
 		return nil, err
@@ -70,13 +57,9 @@ func (s *Ssh) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, 
 func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err error) {
 	s.cMutex.Lock()
 	defer s.cMutex.Unlock()
-	if s.closed {
-		return nil, fmt.Errorf("ssh adapter is closed")
-	}
 	if s.client != nil {
 		return s.client, nil
 	}
-
 	c, err := s.dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
@@ -108,7 +91,6 @@ func (s *Ssh) connect(ctx context.Context, addr string) (client *ssh.Client, err
 			s.client = nil
 		}
 	}()
-	go s.startHealthCheck(client)
 
 	return client, nil
 }
@@ -124,11 +106,9 @@ func (s *Ssh) ProxyInfo() C.ProxyInfo {
 func (s *Ssh) Close() error {
 	s.cMutex.Lock()
 	defer s.cMutex.Unlock()
-	s.closed = true
 	if s.client != nil {
-		_ = s.client.Close()
+		return s.client.Close()
 	}
-	s.cleanupSocks()
 	return nil
 }
 
@@ -217,22 +197,6 @@ func NewSsh(option SshOption) (*Ssh, error) {
 		option: &option,
 		config: &config,
 	}
-
-	if option.UseSystemSocks {
-		localPort := 0
-		pinnedPort := false
-		if option.SystemSocksPort != nil {
-			localPort = *option.SystemSocksPort
-			pinnedPort = true
-		}
-		outbound.socksExt = &systemSocksExt{
-			inUse:         true,
-			pinned:        pinnedPort,
-			port:          localPort,
-			sshConfigPath: option.SshConfigPath,
-		}
-	}
-
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
 	return outbound, nil
 }
