@@ -119,10 +119,14 @@ func runTunBridge(parent context.Context, device packetDevice, plane packetPlane
 		defer cleanup()
 	}
 
+	deviceDone := make(chan struct{})
 	go func() {
+		defer close(deviceDone)
 		<-ctx.Done()
 		_ = device.Close()
 	}()
+	// 返回前必须等设备真正关闭；否则调用方以为关完了，旧 utun 还短暂活着。
+	defer func() { cancel(); <-deviceDone }()
 
 	results := make(chan error, 2)
 	go func() { results <- copyDeviceToPlane(ctx, device, plane) }()

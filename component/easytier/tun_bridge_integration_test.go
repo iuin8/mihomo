@@ -9,7 +9,6 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/outbound"
@@ -44,14 +43,9 @@ func TestTunBridgeIntegrationDeviceLifecycle(t *testing.T) {
 	if err := bridge.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(interfaceNames(t)) == len(before) {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+	if got := interfaceNames(t); len(got) != len(before) {
+		t.Fatalf("Close returned but the interface was still present: before=%v after=%v", before, got)
 	}
-	t.Fatalf("interfaces not reclaimed after Close: before=%v after=%v", before, interfaceNames(t))
 }
 
 type blockingPlane struct{}
@@ -107,8 +101,8 @@ func TestTunBridgeIntegrationReloadKeepsActiveConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial through the real proxy: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
 	t.Cleanup(func() { _ = bridge.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 
 	// Reload replaces et-old but keeps the active connection.
 	tunnel.UpdateProxies(map[string]C.Proxy{"et-new": replacement, "keep": keepProxy}, nil)
@@ -125,15 +119,12 @@ func TestTunBridgeIntegrationReloadKeepsActiveConnection(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatalf("conn.Close: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if oldAdapter.closed.Load() == 1 && len(interfaceNames(t)) == len(before) {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+	if got := oldAdapter.closed.Load(); got != 1 {
+		t.Fatalf("old bridge closed %d times after the last connection ended, want 1", got)
 	}
-	t.Fatalf("old bridge not closed/interface not reclaimed: closed=%d before=%v after=%v",
-		oldAdapter.closed.Load(), before, interfaceNames(t))
+	if got := interfaceNames(t); len(got) != len(before) {
+		t.Fatalf("Close returned but the old interface was still present: before=%v after=%v", before, got)
+	}
 }
 
 type bridgeAdapter struct {
