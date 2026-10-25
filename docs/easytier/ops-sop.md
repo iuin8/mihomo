@@ -183,11 +183,11 @@ overlay 的操作模型是幂等的：`+` 并集 / `=` 设值 / `prepend` 前插
 2. 本机 overlay 加三样（完整 YAML 见 `feature-matrix.md`「二·补三」）：
    - `et-home`：`type: http` + 家侧 overlay IP:7890 + `username/password` + **`dialer-proxy: et-lan`**
    - `rules_prepend: DOMAIN-SUFFIX,<后缀>,et-home`
-   - `sniffer`：`enable: true` + `TLS: [443]` + `HTTP: [80]`
-     · 本项目**实测最小集就够**：删掉 `parse-pure-ip`、`force-dns-mapping`、扩端口后，
-       TUN 与 mixed 两路仍 302（见 feature-matrix 的 A/B）
-     · 若换内核版本后 TUN 路径不生效，再按序加回 `parse-pure-ip: true` → `force-dns-mapping: true`
-       并每次复测；不要一次全开（否则无法归因）
+   - `sniffer`：显式只写 `enable: true` + `TLS: [443]` + `HTTP: [80]`
+     · 省略的字段继承 mihomo 默认 true：`force-dns-mapping`、`parse-pure-ip`、
+       `override-destination` 当前仍然生效（默认值见 `config/config.go` 的 `DefaultRawConfig`）
+     · 若确实要收窄全局副作用，必须显式写 `false` 再 apply 复测（预计真 IP 的 TUN 嗅探会失效）
+     · A/B（enable off ⇒ TUN 000 / on ⇒ 302）只证明 `enable` 必要，不证明其余三项可省
 3. 备份 overlay 并记 sha（**et-apply 备份的是 runtime config，不含 overlay**），
    命名要能区分"变更前基线"与"中途编辑态"：
    ```bash

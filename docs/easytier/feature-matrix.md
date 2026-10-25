@@ -146,11 +146,16 @@ sniffer:                           # 最小集；见下方 A/B
 影响**所有**经过 443/80 的 TLS/HTTP 连接（以及纯 IP 连接），会参与嗅探/规则匹配/DNS mapping；
 `sniffer` 在 overlay 里是**整体替换**（不是合并）。
 
-- 本项目实测：只开 `enable` + 443/80 即可让 TUN 路径工作；**额外删掉 `parse-pure-ip`、
-  `force-dns-mapping` 后仍 302**（两步分别验证）⇒ 暂不启用，减少全局副作用。
+- **默认值必须知道**：mihomo 的 `RawSniffer` 默认就是
+  `force-dns-mapping: true`、`parse-pure-ip: true`、`override-destination: true`
+  （`config/config.go` 的 `DefaultRawConfig()`；`UnmarshalRawConfig` 在默认值上做 unmarshal）。
+  ⇒ overlay 里**省略这些字段 = 继承 true**，不是关闭；当前运行态仍包含这三项。
+- 上面的 A/B **只证明 `enable` 是必要条件**；它不证明那三项可选（省略 ≠ false）。
 - 本次回归：baidu/google/github/pdd 200、内网探针 403、13 组选择器不变 ✓
-- 若某天需要覆盖 DoH/IP-literal 等场景，再按序加回 `parse-pure-ip: true` → `force-dns-mapping: true`
-  并逐项复测；不要一次全开。
+- 真要把全局副作用关小：必须在 overlay 里**显式**写 `parse-pure-ip: false` /
+  `force-dns-mapping: false` / `override-destination: false` 并重新 apply 复测；
+  预计关掉 `parse-pure-ip`/`override-destination` 会让真 IP 的 TUN 连接无法按域名匹配（回落到 IP 规则），
+  本项目未采用。
 - 更窄的替代方案：只把该后缀从 `fake-ip-filter` 移除、不用 sniffer —— 副作用更小，
   但**本机实测不可靠**（`dig` 得 fake-ip、`getaddrinfo` 仍得真 IP，TUN 流量按真 IP 匹配不到）。
 
