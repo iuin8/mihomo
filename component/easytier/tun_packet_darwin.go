@@ -19,6 +19,7 @@ package easytier
 import (
 	"fmt"
 	"io"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -35,6 +36,7 @@ type packetHeaderDevice struct {
 	inner        packetDevice
 	readScratch  []byte
 	writeScratch []byte
+	once         sync.Once
 }
 
 // wrapPacketDevice 在 darwin 上补一层地址族头处理；其它平台由 tun_packet_other.go 直通。
@@ -99,6 +101,10 @@ func (d *packetHeaderDevice) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (d *packetHeaderDevice) Close() error { return d.inner.Close() }
+func (d *packetHeaderDevice) Close() error {
+	var err error
+	d.once.Do(func() { err = d.inner.Close() })
+	return err
+}
 
 var _ io.ReadWriteCloser = (*packetHeaderDevice)(nil)

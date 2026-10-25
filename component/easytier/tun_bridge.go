@@ -412,10 +412,9 @@ func (b *TunBridge) Close() error {
 	b.closeOnce.Do(func() {
 		b.cancel()
 		<-b.done
-		if b.device != nil {
-			b.closeErr = b.device.Close()
-			b.device = nil
-		}
+		// runTunBridge 已在 ctx 取消时关闭设备；这里再关一次会让
+		// sing-tun 的 StopFD 二次 Stop（实测 panic: bad file descriptor）。
+		b.device = nil
 	})
 	return b.closeErr
 }

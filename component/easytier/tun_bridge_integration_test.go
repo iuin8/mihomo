@@ -32,7 +32,7 @@ func TestTunBridgeIntegrationDeviceLifecycle(t *testing.T) {
 	before := interfaceNames(t)
 	plane := &blockingPlane{}
 	bridge, err := easytier.StartTunBridge(context.Background(), easytier.TunDeviceOptions{
-		Prefix: netip.MustParsePrefix("10.144.99.1/24"),
+		Prefix: netip.MustParsePrefix("10.250.99.1/24"),
 	}, plane)
 	if err != nil {
 		t.Fatalf("StartTunBridge: %v", err)
@@ -87,7 +87,7 @@ func TestTunBridgeIntegrationReloadKeepsActiveConnection(t *testing.T) {
 	ctx := context.Background()
 
 	bridge, err := easytier.StartTunBridge(ctx, easytier.TunDeviceOptions{
-		Prefix: netip.MustParsePrefix("10.144.98.1/24"),
+		Prefix: netip.MustParsePrefix("10.250.98.1/24"),
 	}, &blockingPlane{})
 	if err != nil {
 		t.Fatalf("StartTunBridge: %v", err)
