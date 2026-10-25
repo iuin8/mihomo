@@ -55,6 +55,7 @@ visudo -c -f "$TMP" >/dev/null
 install -o root -g wheel -m 440 "$TMP" "$SUDOERS"; rm -f "$TMP"
 
 install -d -o "$USER_NAME" -g staff -m 755 "$HOME_U/.local/bin"
+umask 022          # 否则 root 的 077 会把符号链接建成 700 root ⇒ 用户 Permission denied
 for t in et-config et-net-mode; do
   DST="$HOME_U/.local/bin/$t"
   [ -e "$DST" ] && cp -p "$DST" "$BK/$t.bak"
