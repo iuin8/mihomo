@@ -105,6 +105,70 @@ rules:
 > 只转发**内网目标**时稳态 ~765 MiB、数小时不增长 ✓。
 > ⇒ 该能力在泄漏修好前**不要用于生产**；离网访问"只有出口能到的公网服务"暂时不具备。
 
+## 二·补三、按域名走家侧出口（2026-10-25）
+
+**场景**：某个内网域名（及子域）在**本机出口**被阻断（TCP 能连、TLS ClientHello 后被重置），
+而**家侧出口可达**。L3 隧道只能按 CIDR 转发；把公网 IP 写死会随 DNS 漂移失效 ✗。
+正确做法是按**域名**把这条流量交给**家侧的 mihomo**（它本来就在跑，不新增容器）：
+
+```yaml
+# 本机 overlay（et-config）
+proxies:
+  - name: et-home
+    type: http
+    server: <家侧 overlay IP>      # 稳定 overlay 地址，不是动态公网 IP
+    port: 7890
+    username: <user>
+    password: <pass>
+    dialer-proxy: et-lan           # 跳点走隧道；否则直连家侧 overlay IP 会被物理网卡绑定而超时
+rules_prepend:
+  - DOMAIN-SUFFIX,<内网域名后缀>,et-home
+sniffer:                           # 最小集；见下方 A/B
+  enable: true
+  sniff:
+    TLS:  {ports: [443]}
+    HTTP: {ports: [80]}
+```
+
+**为什么必须有 sniffer**：本机系统解析器可能绕过 mihomo DNS（实测 `dig` 得 fake-ip、`getaddrinfo`
+仍得真 IP）。TUN 连接只有真实 IP，`DOMAIN-SUFFIX` 匹配不到 ⇒ 必须从 TLS SNI / HTTP Host 还原域名。
+
+**A/B 对照（2026-10-25）**：
+
+| sniffer | TUN 直连 | mixed-port |
+| --- | --- | --- |
+| `enable: false` | **000** | 302 |
+| `enable: true`（仅 443/80） | **302 (0.46s)** | 302 |
+
+⇒ sniffer 是 **TUN 路径的必要条件**（关掉后域名规则匹配不到，回落到 GeoIP→DIRECT→000）。
+
+**它是全局开关，不是"只对该后缀生效"**：`enable`（以及可选的 `parse-pure-ip`/`force-dns-mapping`）
+影响**所有**经过 443/80 的 TLS/HTTP 连接（以及纯 IP 连接），会参与嗅探/规则匹配/DNS mapping；
+`sniffer` 在 overlay 里是**整体替换**（不是合并）。
+
+- 本项目实测：只开 `enable` + 443/80 即可让 TUN 路径工作；**额外删掉 `parse-pure-ip`、
+  `force-dns-mapping` 后仍 302**（两步分别验证）⇒ 暂不启用，减少全局副作用。
+- 本次回归：baidu/google/github/pdd 200、内网探针 403、13 组选择器不变 ✓
+- 若某天需要覆盖 DoH/IP-literal 等场景，再按序加回 `parse-pure-ip: true` → `force-dns-mapping: true`
+  并逐项复测；不要一次全开。
+- 更窄的替代方案：只把该后缀从 `fake-ip-filter` 移除、不用 sniffer —— 副作用更小，
+  但**本机实测不可靠**（`dig` 得 fake-ip、`getaddrinfo` 仍得真 IP，TUN 流量按真 IP 匹配不到）。
+
+**硬约束**：
+- 家侧 mixed-port **必须开认证**（`authentication`）。家侧容器是 **host 网络**，7890 监听 `*`
+  （LAN 可达；实测无凭据 **407/000**、带凭据 200/302；变更时 0 条 established、仅 mihomo 自身占用）
+- 只对 TCP + TLS/HTTP 生效：**QUIC/UDP、ECH、不在上表端口内的流量（如 22/25/53 及未列端口）、
+  纯 IP 直连都不覆盖**（QUIC 场景浏览器会回退 TCP，先失败一次）
+- 依赖家侧 mihomo 与其凭据：家侧重启/认证错 ⇒ 该后缀黑洞，**无 fallback**
+- 与 `#1b` 的"全出口 EasyTier 转发"无关（后者仍未定性、不用于生产）
+
+**判据**：同一域名经 TUN 与 mixed-port 两路都 200/302；`/rules` 首条为该域名规则、旧
+`→内网入口` 规则 0 条；家侧 `ss` 监听 7890 且无凭据 407；回归：内网目标 403/200、
+`IP-CIDR,<overlay 网段>→DIRECT` 与 `IP-CIDR,<peer>/32→DIRECT` 仍命中、其它公网 200 不变。
+
+**验收入口**：用 `et-config apply` 的 **mixed-port 探针**（`probes.conf`）；
+`et-net-mode check easytier` 的第三探针走 **DIRECT**，办公网出口故障时仍 ✗ —— 不要拿它当本变更的通过判据。
+
 ## 三、改配置前的 5 条回归（每条都应有读数，不许"看着像通"）
 
 ```bash

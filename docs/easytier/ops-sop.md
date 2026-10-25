@@ -154,16 +154,52 @@ launchd 对同一 job 的连续重启有 ~10s 节流：背靠背 restart 三次�
   et-config apply    build + stage + restart（幂等：重复执行结果逐字节相同 ✓）
   et-config show     打印 overlay（敏感值打码 ✓）
 
-overlay 只支持 4 种幂等操作：`+` 并集 / `=` 设值 / `prepend` 前插 / `remove` 精确删。
+overlay 的操作模型是幂等的：`+` 并集 / `=` 设值 / `prepend` 前插 / `remove` 精确删；
+顶层键按语义合并（列表按值去重、`proxies`/`proxy-groups` 按 name upsert），
+`sniffer` 是**整体替换**（不是合并；base 将来若带 sniffer 会被覆盖）。
   · 没有 diff/上下文匹配 ⇒ 不会"打半份"✗
   · 删掉 overlay 里的一条 ⇒ 下一次它就不再出现 ✓（无历史残留）
   · 基座缺失/结构变化 ⇒ 校验失败 ⇒ **不落盘** ✓
-  · overlay 含 network-secret ⇒ **0600、不入 git** ✓
+  · overlay 含 network-secret/凭据 ⇒ **0600、不入 git** ✓
 
 ⚠️ **apply 会重启内核 ⇒ 所有 select 分组的运行期选择被重置** ✗（回到候选列表首项）。
    ⇒ 每次 `apply` 之后必须重设：`内网入口`（现场 DIRECT / 离网入口节点）、`🇨🇳 国内网站` 等 ✓
    ⇒ 否则会误判成"隧道坏了"（本次踩过：国内组被重置到死节点 ⇒ 公网站 000 ✗）
 ```
+
+### 6.1 按域名走家侧出口（2026-10-25 实测）
+
+适用：某内网域名在本机出口被阻断、家侧可达，且**不想**把公网 IP 写死。
+原理、A/B 与边界见 `feature-matrix.md`「二·补三」。
+
+步骤：
+
+1. **先**给家侧 mixed-port 开认证（否则等于开放代理；家侧是 host 网络，7890 监听 `*`）：
+   ```yaml
+   authentication:
+     - <user>:<pass>
+   ```
+   改完 `docker compose restart`（bind mount 改文件**不会**自动重启）；验证无凭据 407。
+2. 本机 overlay 加三样（完整 YAML 见 `feature-matrix.md`「二·补三」）：
+   - `et-home`：`type: http` + 家侧 overlay IP:7890 + `username/password` + **`dialer-proxy: et-lan`**
+   - `rules_prepend: DOMAIN-SUFFIX,<后缀>,et-home`
+   - `sniffer`：`enable: true` + `TLS: [443]` + `HTTP: [80]`
+     · 本项目**实测最小集就够**：删掉 `parse-pure-ip`、`force-dns-mapping`、扩端口后，
+       TUN 与 mixed 两路仍 302（见 feature-matrix 的 A/B）
+     · 若换内核版本后 TUN 路径不生效，再按序加回 `parse-pure-ip: true` → `force-dns-mapping: true`
+       并每次复测；不要一次全开（否则无法归因）
+3. 备份 overlay 并记 sha（**et-apply 备份的是 runtime config，不含 overlay**），
+   命名要能区分"变更前基线"与"中途编辑态"：
+   ```bash
+   cp -p ~/.local/state/clash-group/et-apply/overlay.yaml \
+         ~/.local/state/clash-group/et-apply/overlay.yaml.baseline-<用途>-$(date +%Y%m%d-%H%M%S)
+   shasum -a 256 ~/.local/state/clash-group/et-apply/overlay.yaml.baseline-*
+   ```
+   ⚠️ 回滚点是**变更前**那份；中途编辑出来的备份不能当基线（否则回滚后 et-home 仍在）。
+4. `et-config apply`（不要加 `--no-verify`；用 mixed-port 探针把关）→ 选择器若被重启重置，按快照恢复。
+5. 判据：TUN 与 mixed-port 两路 200/302；`/rules` 首条为域名规则、旧 `→内网入口` 规则 0 条；
+   内网目标与其它公网回归不变；家侧无凭据 407。
+6. 回滚：把**变更前** overlay 恢复回去 → `et-config apply`（只恢复文件不 apply 等于没回滚）。
 
 ## 7. 两个订阅：平级、互斥、三步自检（2026-10-24 立）
 
