@@ -11,8 +11,8 @@
 #    结果就是又回到 no-TUN——表现为代理子网 TCP 不通、ICMP 不可用，且没有任何报错提示。
 #    docker-compose.yml 拉取本 fork 的镜像（GHCR），**不会**在本地编译；要自编见 Dockerfile。
 #
-# `/dev/net/tun` 与 `NET_ADMIN` 由 compose 提供；`ip_forward` **不在** compose 里设
-# （host 网络下 Docker 不允 sysctls）⇒ 宿主机需自己开启。NAT 不需要 —— 实测 guest 自身 SNAT ✓。
+# `/dev/net/tun` 与 `NET_ADMIN` 由 compose 提供。本拓扑**不需要** NAT/`ip_forward`：
+# WASI guest 在自己的 smoltcp 栈里做转发与 SNAT（host 网络下 Docker 也不允许设 sysctls）✓。
 # 你只需改下面标了「改这里」的几处，并保留 prewarm: true（家侧必需）。
 
 # ── 2026-10-14 补：宿主终端接管（"合并路线"）────────────────────────────────────

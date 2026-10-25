@@ -62,15 +62,17 @@ ip route get <你的 SSH 来源 IP>          # ⇒ 应显示 dev <物理网卡> 
 ## 回滚
 
 ```bash
-cp /tmp/backup-*/docker-compose.yml /tmp/backup-*/gateway.yaml .
+d=$(ls -dt /tmp/backup-* 2>/dev/null | head -1); [ -n "$d" ] || { echo "没有备份，别回滚"; exit 1; }
+cp "$d/docker-compose.yml" "$d/gateway.yaml" .
 docker compose -p easytier-gateway up -d --force-recreate mihomo
 ip -o link show | grep Meta || echo "TUN 已消失 ✓"    # 确认回滚到位 ✓
 ```
 
 ## ★ 镜像必须固定版本（不可用 `latest`）
 
-家侧运行的内核**必须是我们 fork 的构建**（含 `proxy-networks` 运行期修复）。用 `latest` 会悄悄跑到旧/官方构建，
-表现为"公告了网段但完全不生效"。做法（compose 用 `${GW_TAG:?...}`，未设直接报错而不是落到 latest）：
+家侧运行的内核**必须是我们 fork 的构建**（含 `proxy-networks` 运行期修复）。`:latest` 会悄悄解析到某个旧/未验证的
+fork 构建 ⇒ 不可复现、无法用 `mihomo -v` 回溯，甚至表现为"公告了网段但完全不生效"。做法（compose 用
+`${GW_TAG:?...}`，未设直接报错而不是落到 latest）：
 
 ```yaml
 # .env（与 docker-compose.yml 同目录）
