@@ -13,7 +13,7 @@
 
 ```bash
 LAN_NODE=et-home NET_NAME=<网络名> NET_SECRET=<secret> RENDEZVOUS=<会合点地址> \
-EXIT_ADDR=<家侧网关 overlay 地址> GROUP=内网入口 OVERLAY=10.144.0.0/24 \
+PHYS_NIC=<物理网卡名，如 en0> EXIT_ADDR=<家侧网关 overlay 地址> GROUP=内网入口 OVERLAY=10.144.0.0/24 \
 HOME_CIDR=192.168.1.0/24 CORP_CIDR=10.0.0.0/8 CORP_DOMAIN=<内网域名> \
 CLUSTER_DOMAIN=cluster.local DNS=<内网DNS> sh render.sh > my-profile.yaml
 ```

@@ -40,7 +40,7 @@ proxies:
     # ★ 默认 TCP-only：办公/酒店/公共网络常封 UDP，开着只会让打洞一直失败 ✗
     #   确认你的网络放行 UDP 后再改 true（能提升 P2P 成功率 ✓）
     udp: false
-    exit-nodes: ["<改这里：家侧网关在 overlay 里的地址，如 10.144.0.2>"]
+    # 出口节点**不要**写 exit-nodes（只在需要借网的入口节点写；否则上游拒绝/504环）
     no-listener: true
 
 # ⑥ 出口替对端解析时必须经代理 DoH ✓（放在 profile 里 ⇒ 重新生成配置也不丢 ✓）

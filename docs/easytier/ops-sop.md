@@ -25,21 +25,24 @@
 
 ```bash
 sudo install -d -o root -g wheel -m 755 /usr/local/libexec/clash-group
-sudo install -o root -g wheel -m 755 et-apply /usr/local/libexec/clash-group/et-apply
-sudo visudo -c -f sudoers          # ★ 先校验,再落盘(防坏规则弄坏 sudo)
-sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
+sudo install -o root -g wheel -m 755 <项目根>/tools/et-apply /usr/local/libexec/clash-group/et-apply
+printf '%s\n' '<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply' \
+  | sudo tee /tmp/clash-group-et-apply.sudoers >/dev/null
+sudo visudo -c -f /tmp/clash-group-et-apply.sudoers     # ★ 先校验，再落盘
+sudo install -o root -g wheel -m 440 /tmp/clash-group-et-apply.sudoers \
+  /etc/sudoers.d/clash-group-et-apply
 ```
 
-白名单(**枚举子命令,不用通配符**):
+白名单是**一条不带参数的规则**（现场即如此）：
 
 ```text
-<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply stage
-<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply restart
-<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply status
-<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply rollback
-<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply core-upgrade
-<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply core-rollback
+<用户> ALL=(root) NOPASSWD: /usr/local/libexec/clash-group/et-apply
 ```
+
+安全性不靠 sudo 侧枚举，而靠 helper 本身：`case "${1:-}"` 只认
+`stage|restart|status|rollback|core-upgrade|core-rollback` 六个固定词，忽略 `$1` 之外的参数，
+所有路径/URL 写死，未知参数 `exit 64`，不接受任何"用户指定的文件/URL"。
+（历史上文档写成六条枚举；**与实际不一致**，已按现场写实。`sudo -n -l` 可核对。）
 
 > ⚠️ **不要把"零参数约束"`""` 加到规则末尾** ✗ —— 实测某些 sudo 版本上它**不匹配**(`sudo -l` 会列出规则,
 > 但真正调用时仍要密码)。这里的安全性不靠参数约束:helper **只认 `$1` 的六个固定词**、忽略其余参数、
@@ -101,10 +104,11 @@ sudo install -o root -g wheel -m 440 sudoers /etc/sudoers.d/clash-group-et-apply
 ## 3.1 重启类验收必须留间隔（2026-10-25 实测）
 
 ```text
-launchd 对同一 job 的连续重启有 ~10s 节流：背靠背 restart 三次实测 1.68 / 10.36 / 10.38s，
-留 12s 间隔后是 1.83 / 1.39 / 1.30s。
-⇒ 验收"重启有多快"时必须间隔 ≥12s；背靠背测到的是节流，不是重启本身。
-⇒ 生产用法本来就是单次重启，所以 1.3s 这个数量级才是该对标的读数。
+`et-apply do_restart` 已改为 **先 `launchctl kickstart -k`**（服务管理器原语，无节流）：
+单次重启实测 1.83 / 1.39 / 1.30s（间隔 12s 的重复测量）。
+⇒ 单次重启 ≈1.3s 才是对标读数；若实测 ~10s，说明 kickstart 分支失败、回退到了
+  "kill + 等 KeepAlive"，那是**回归**，按 ops-sop §4.1/§4.2 的路径排查。
+⇒ 12s 间隔只在需要**诊断回退**时使用（背靠背会叠加 launchd 节流，测到的是节流而非重启）。
 ```
 
 ## 4. 已知故障模式
@@ -114,7 +118,7 @@ launchd 对同一 job 的连续重启有 ~10s 节流：背靠背 restart 三次�
 | 内网域名超时 | 分流组被重置到错误项 ✗ / 该域名被 fake-ip 换成假地址 ✗ | 组里第一项放正确默认 ✓;把业务域名加入 `dns.fake-ip-filter` ✓ |
 | **借出口(对端借本机上网)超时** | **TUN 设备代际残留**:重载后旧设备未回收,`/24` 路由仍指向旧设备 ✗ | 急用:`et-apply restart`(整进程重建)✓;**根因已在源码侧修复**(路由夺回 ✓ + 桥 finalizer ✓)⇒ 正常重载不再留残留 ✓ |
 | 内网流量被送去机场 | 内网规则指向了一个带 `dialer-proxy` 的**出口**节点 ✗ | 出口节点**不得**放进分流组 ✓ |
-| 一台机器加第二个节点后借网断 | 两个节点**抢同一段 overlay 路由** ✗ | **一机一节点** ✓ |
+| 一台机器加第二个节点后借网断 | 两个节点**抢同一段 overlay 路由** ✗ | 每个 overlay `/24` 只能有一个 `tun:true` 持有者；入口优先 `tun:false`，需本地 TUN 的入口用独立 `/24` ✓ |
 | 重载后行为突变 | 重载会重置选择器 ✗ | 组内第一项 = 正确默认值 ✓ |
 | 手工改 runtime 后又变回去 | GUI 的"重载配置"会用它的合并结果覆盖 ✓(正常) | 要长期生效 ⇒ 改 **profile 源文件** ✓ |
 
@@ -165,6 +169,12 @@ overlay 的操作模型是幂等的：`+` 并集 / `=` 设值 / `prepend` 前插
 ⚠️ **apply 会重启内核 ⇒ 所有 select 分组的运行期选择被重置** ✗（回到候选列表首项）。
    ⇒ 每次 `apply` 之后必须重设：`内网入口`（现场 DIRECT / 离网入口节点）、`🇨🇳 国内网站` 等 ✓
    ⇒ 否则会误判成"隧道坏了"（本次踩过：国内组被重置到死节点 ⇒ 公网站 000 ✗）
+
+apply 的完整语义（不只是 build + restart）：
+  · 重启后**整轮复验**（就绪 → 代理出站存在 → `内网入口` → 10/8 规则 → mixed-port 探针），最多重试 20s；
+  · 复验失败 ⇒ `et-apply rollback` 回上一份配置，并**在回滚后复跑探针**；
+  · 退出码：0 = 成功；3 = 已回滚且回滚后通过；4 = 回滚后仍失败（需人工）；
+  · `--no-verify` 仅排障用（跳过复验 = 不自动回滚）；`local-state/probes.conf` 缺失时**直接失败**（门禁不能跳过）。
 ```
 
 ### 6.1 按域名走家侧出口（2026-10-25 实测）
@@ -196,6 +206,8 @@ overlay 的操作模型是幂等的：`+` 并集 / `=` 设值 / `prepend` 前插
    shasum -a 256 ~/.local/state/clash-group/et-apply/overlay.yaml.baseline-*
    ```
    ⚠️ 回滚点是**变更前**那份；中途编辑出来的备份不能当基线（否则回滚后 et-home 仍在）。
+   当前现场的真实基线（2026-10-25）：`overlay.yaml.bak-20261025-102840`（1393 B，sha256
+   `83da1043e426a960b3f7bae91f54bb521ad7aada748bd49172461ca46ed0eb34`）；当前 overlay 1613 B。
 4. `et-config apply`（不要加 `--no-verify`；用 mixed-port 探针把关）→ 选择器若被重启重置，按快照恢复。
 5. 判据：TUN 与 mixed-port 两路 200/302；`/rules` 首条为域名规则、旧 `→内网入口` 规则 0 条；
    内网目标与其它公网回归不变；家侧无凭据 407。
@@ -217,17 +229,20 @@ overlay 的操作模型是幂等的：`+` 并集 / `=` 设值 / `prepend` 前插
 | 2 | **停用** frp+ssh 订阅 | **连不上**家侧 | `et-net-mode check isolated` |
 | 3 | 换成 easytier 订阅 | 内网目标可达 | `et-net-mode check easytier` |
 
-`check easytier` 的三个判据（缺一不可）：
+`check easytier` 的真实判据（与 `~/.local/bin/et-net-mode` 实现一致，缺一不可）：
 
-1. `utun1024` 存在（TUN 缺失时流量绕过内核，读数无意义）；
-2. frp+ssh 订阅的节点**不在**运行配置里（还在 = 没停干净）；
-3. 内网探测目标返回 `200`。
+1. `utun1024` 存在（最多轮询 20s；缺失时流量绕过内核，读数无意义）；
+2. `/rules` 里**首条** `10.0.0.0/8` 规则指向 `内网入口`（其它 10/8 规则都不算）；
+3. `local-state/probes.conf` 里的目标**全部**通过（当前 403 / 200 / 302）。
+   · 第三条走 **DIRECT/TUN**（`--noproxy '*'`），不是 mixed-port；若某目标只经 mixed-port 可达，要单独验；
+   · 配置里是否还有 frp+ssh 订阅节点只作**现状打印**，不是判据（`check isolated` 才要求"连不上"）。
 
-**两个真实缺陷（已踩过）**
+**两个历史现象（现状，别再当"必然如此"）**
 
-1. **TUN 是延迟创建的**：重启后 6 秒还没有、10 秒才出现 ⇒ 立刻采样会得到假阴性 ✗
-   ⇒ preflight 轮询最多 20 秒；20 秒仍缺失才判失败。
-2. **utun 设备会累积**（实测每次重启约泄漏 1 个）⇒ 内核侧待修缺陷，不阻塞验收但要记账。
+1. TUN 创建延迟：`kickstart` 修复后单次重启 ≈1.3s；若观测到 6–10s，说明退回了
+   "kill + KeepAlive 节流"，按**回归**处理，而不是"正常慢"。
+2. utun 累积：历史上 6→8（每次重启 +1）；源码侧 stale 清理 + upstream 重启行为核实后
+   **当前不复现**（恒为 6），保留回归观察。
 
 ## 5. 回滚入口
 
@@ -244,8 +259,9 @@ overlay 的操作模型是幂等的：`+` 并集 / `=` 设值 / `prepend` 前插
 不入 git 的东西统一放**项目根目录**的 local-state/，便于检索，且不会被仓库打包带走。
 
   目录 0700、文件 0600
-  probes.conf    验收探针（<url> <期望码[,码...]>；any = 非 000）
-  sensitive.txt  仓库脱敏守卫的 denylist（真实内网域名/IP/网段）
+  probes.conf       验收探针（<url> <期望码[,码...]>；any = 非 000）
+  sensitive.txt     仓库脱敏守卫的 denylist（真实内网域名/IP/网段）
+  home-egress.cred  家侧 mihomo 代理的用户名/密码（`et-home` 用；0600，不入 git）
 
 引用方：
   ~/.local/bin/et-net-mode   → PROBES

@@ -28,7 +28,7 @@
   enable-exit-node: true          # 允许家侧借我的网出网
   dialer-proxy: <你的代理组>       # ★ 替对端拨号走本机代理（不写 = 裸直连 ⇒ 国外全不通 ✗）
   peers: ["tcp://<会合点>:11010"]
-  exit-nodes: ["<家侧网关的 overlay 地址>"]
+  # 出口节点**不要**写 exit-nodes（上游会拒绝，形成 504 环）；exit-nodes 只写在需要借网的入口节点上 ✓
 ```
 
 > **改任何设置前先看 [功能 × 设置 交互矩阵](feature-matrix.md)** ✓ —— 五个功能共用一份配置，

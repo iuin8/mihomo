@@ -1,9 +1,9 @@
 # 规格：EasyTier 出站 TUN 模式（fork-only）
 
 > **现状（2026-10-03）**：本文的选项契约与验收标准仍然有效 ✓。此后新增/变化的部分：
-> ① 家侧配置需要 `prewarm: true` ✓（服务端预启动实例，见 SOP §6.12）；
+> ① 家侧配置需要 `prewarm: true` ✓（服务端预启动实例，见 `home/gateway.yaml` 的 `prewarm: true`）；
 > ② 家侧镜像已发布为 `ghcr.io/iuin8/mihomo`（纯 mihomo，无入口脚本 ✓）；
-> ③ NAT 由 EasyTier 自身完成，**不再需要 iptables** ✓（实测见 SOP §6.13）。
+> ③ NAT 由 EasyTier 自身完成，**不再需要 iptables** ✓（实测：家侧 TUN 模式下 guest 自身 SNAT）。
 
 > 状态：草案 → 实现中。本文是 SDD 产物：先定契约与验收标准，再写测试，最后写实现。
 > 分支：`fa/easytier-tun`。上游共享文件的改动必须小块 + `// FORK:` 标注。
@@ -141,17 +141,9 @@ dns:
 
 对比：同一拓扑走 hysteria2 绕行时 1MB 下载卡在 ~122KB；TUN 模式下 20MB 仅 0.61s。
 
-**复现**（工具随仓库提供，仅标准库，无凭据）：
+**复现**：早期随仓库提供的 `probe.sh` / `socks5-udp-probe.py` 已在 `df1a7525` 删除；
+AC5–AC7 的读数来自当时工具，现由 `component/easytier/tun_bridge_test.go` 的单元/集成测试覆盖。
 
-```bash
-# 目标侧（内网另一台机器上跑）：
-
-# 本机侧：TCP + UDP 一次跑完（UDP 走 SOCKS5 UDP ASSOCIATE；Docker/端口映射场景要带 --relay）
-    --socks 127.0.0.1:7891 --relay 127.0.0.1:7891 --target 172.32.0.2 --port 18001 --payload tun-e2e
-```
-
-判据：`probe.sh` 退出码 0（TCP 与 UDP 都通）；探针打印 `PASS[udp]`。
-ICMP（AC7）需客户端侧有 TUN（例如 native 客户端），mihomo 的 SOCKS 入站不代理 ICMP。
 
 **踩过的两个测量陷阱**（会让 UDP 结论假失败，务必先排除）：
 

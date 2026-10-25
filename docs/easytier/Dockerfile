@@ -11,7 +11,7 @@
 # ⚠️ 国内网络：Go 官方代理 proxy.golang.org 在国内会 i/o timeout，所以默认走 goproxy.cn。
 #    换源（任何可用代理都行）：
 #      docker compose build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/,direct
-#    完全不想在容器里编译（最快、也不依赖 Go 代理）：见 Dockerfile.prebuilt
+#    不想在容器里编译时，可直接用 GHCR 上本 fork 的预构建镜像
 FROM golang:1.26-alpine AS build
 
 ARG GOPROXY=https://goproxy.cn,direct
@@ -37,8 +37,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -o /out/mihomo .
 
 FROM alpine:3.24
-# iptables 不是运行必需 —— 实测 guest（EasyTier）在 TUN 模式下自己会 SNAT，见 SOP §6.13。保留它是为了：
-#   ① 遇到特殊拓扑时按 §6.13 的逃生口自己加一条 SNAT；② 把本镜像当通用路由容器用时随手就有。
+# iptables 不是运行必需 —— 实测 guest（EasyTier）在 TUN 模式下自己会 SNAT。
+# 保留它是为了：① 特殊拓扑下手工加 SNAT；② 把本镜像当通用路由容器用时随手可用。
 # 国内网络可换 Alpine 镜像源（默认已用中科大；置空则用官方源）
 ARG APK_MIRROR=mirrors.ustc.edu.cn
 RUN if [ -n "$APK_MIRROR" ]; then sed -i "s#dl-cdn.alpinelinux.org#$APK_MIRROR#g" /etc/apk/repositories; fi \

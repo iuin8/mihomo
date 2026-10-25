@@ -5,7 +5,7 @@
 # Draft upstream issue: easytier outbound takes down the core in macOS service mode
 
 > 目标仓库：`MetaCubeX/mihomo`（内核侧）/ `clash-verge-rev/clash-verge-rev`（服务侧）
-> 本地分支：`fa/easytier-tun`，相关背景见 `docs/easytier_home_gateway_sop.md` §6.2–6.4
+> 本地分支：`fa/easytier-tun`，相关背景见 `docs/easytier/ops-sop.md` 的故障模式与 `feature-matrix.md`
 
 ## Summary
 

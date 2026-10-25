@@ -8,12 +8,12 @@
 #   ghcr.io/iuin8/mihomo   ← 镜像就是纯 mihomo：没有入口脚本，行为全部来自挂载的 config
 # 由 .github/workflows/mihomo-image.yml 构建（多架构 amd64/arm64）。
 #
-# 想自己编译内核（改了代码、或拉不到 GHCR）时用构建覆盖文件：
-#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# 想自己编译内核（改了代码、或拉不到 GHCR）时直接在仓库根构建：
+#   docker build -f docs/easytier/Dockerfile -t ghcr.io/iuin8/mihomo:<tag> .
 #
 # 这里**没有** iptables/MASQUERADE，也不需要：实测 EasyTier（guest）在 TUN 模式下自己会 SNAT，
-# 内网主机看到的是本机内网地址、回包正常（实验与判据见 SOP §6.13）。若你的内网拓扑特殊、
-# 实测回包不通，再用 §6.13 里那段 compose 逃生口加一条 SNAT 即可。
+# 内网主机看到的是本机内网地址、回包正常。若你的内网拓扑特殊、实测回包不通，
+# 再按 ops-sop 的故障模式加一条 SNAT（不要默认加）。
 #
 # 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
 # ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
@@ -49,7 +49,7 @@ services:
     mem_limit: 2g
 
     # 容器级健康检查（探内核 API）：内核挂了/挂死时这里报 unhealthy —— 只做"可见"，
-    # 不自动重启（普通 compose 没有按健康状态重启的原语；要无人值守见 SOP §6.13 的 B 方案）。
+    # 不自动重启（普通 compose 没有按健康状态重启的原语；要无人值守请用 systemd/docker 的 restart 策略）。
     # 真的 unhealthy 时：docker compose restart mihomo
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/version"]

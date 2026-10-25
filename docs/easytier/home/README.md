@@ -36,7 +36,7 @@ ss -lntp | grep -E ':7890|:9090|:11110' || echo "空闲 ✓"
 
 ```bash
 # ① 实例起来了、监听口在
-docker logs mihomo-gateway 2>&1 | grep -E "easytier.*(running|listener)" | tail -3
+docker logs mihomo-gateway 2>&1 | grep -Ei "easytier.*(running|listener)" | tail -3
 # ② 宿主上出现 mihomo 的 TUN（接管生效 ✓）
 ip -o link show | grep -c Meta          # ⇒ 1 ✓
 # ③ 宿主终端能上国外（这是"接管"的最终判据 ✓）
@@ -54,7 +54,8 @@ ip route get <你的 SSH 来源 IP>          # ⇒ 应显示 dev <物理网卡> 
   一个都不能少 ✓；否则 SSH 来源网段、内网、Docker 网桥会被一起送进隧道 ✗；
 * **动宿主网络前先备份 + 挂自动回滚** ✓：
   ```bash
-  cp docker-compose.yml gateway.yaml /tmp/backup-$(date +%m%d-%H%M)/
+  d=/tmp/backup-$(date +%m%d-%H%M); mkdir -p "$d"
+  cp docker-compose.yml gateway.yaml "$d"/
   ( sleep 600; [ -f /tmp/ok ] || docker compose -p easytier-gateway up -d --force-recreate mihomo ) &
   ```
 

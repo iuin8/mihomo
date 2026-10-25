@@ -11,7 +11,7 @@
 | ② | **离网进内网**（经家侧） | 家侧**公告内网网段** + 家侧镜像=**本 fork 构建** + 分组切到入口节点 | 家侧用 `:latest`（会跑到官方构建 ⇒ 公告不生效 ✗）；家侧规则把 underlay 收进隧道 | `curl /proxies/<入口节点>/delay?url=<内网服务>` 有毫秒数 ✓ |
 | ③ | **家侧借本机机场**（出口） | 家侧 `MATCH → et-mac`；本机出口节点 `dialer-proxy=<机场组>`；`purpose=4` 走 forward dialer | 给入口节点配 `dialer-proxy`；把 `interface-name` 指向 overlay 设备 | 家侧终端 `curl https://www.google.com` ⇒ 200；家侧日志含 `using et-mac` |
 | ④ | **本机自己上网** | TUN 开、机场组可用 | 内网规则误吞公网；TUN 关 | 经 7897 `curl https://www.google.com` ⇒ 200 |
-| ⑤ | **集群内 DNS** | `et-k8s-pdd` 节点 + `nameserver-policy` | 删该节点 / 改 policy | `dscacheutil -q host -a name kubernetes.default.svc.cluster.local` 能解析 |
+| ⑤ | **集群内 DNS** | `<集群 DNS 节点>` + `nameserver-policy` | 删该节点 / 改 policy | `dscacheutil -q host -a name kubernetes.default.svc.cluster.local` 能解析 |
 
 ## 二、共享设置清单（谁动谁受影响）
 
@@ -151,7 +151,7 @@ sniffer:                           # 最小集；见下方 A/B
   （`config/config.go` 的 `DefaultRawConfig()`；`UnmarshalRawConfig` 在默认值上做 unmarshal）。
   ⇒ overlay 里**省略这些字段 = 继承 true**，不是关闭；当前运行态仍包含这三项。
 - 上面的 A/B **只证明 `enable` 是必要条件**；它不证明那三项可选（省略 ≠ false）。
-- 本次回归：baidu/google/github/pdd 200、内网探针 403、13 组选择器不变 ✓
+- 本次回归：baidu/google/github/<内网服务> 200、内网探针 403、13 组选择器不变 ✓
 - 真要把全局副作用关小：必须在 overlay 里**显式**写 `parse-pure-ip: false` /
   `force-dns-mapping: false` / `override-destination: false` 并重新 apply 复测；
   预计关掉 `parse-pure-ip`/`override-destination` 会让真 IP 的 TUN 连接无法按域名匹配（回落到 IP 规则），

@@ -9,10 +9,10 @@
 #
 # ⚠️ 内核必须是本 fork 构建的：上游内核会**静默忽略** tun: true（配置校验还照样通过），
 #    结果就是又回到 no-TUN——表现为代理子网 TCP 不通、ICMP 不可用，且没有任何报错提示。
-#    docker-compose.yml 会自动用本仓库源码编译，无需你手动准备二进制。
+#    docker-compose.yml 拉取本 fork 的镜像（GHCR），**不会**在本地编译；要自编见 Dockerfile。
 #
-# 两个硬性要求由 docker-compose.yml 满足（NET_ADMIN + /dev/net/tun、ip_forward=1）；
-# NAT 不需要 —— 实测 EasyTier 在 TUN 模式下自己会 SNAT（SOP §6.13）✓。
+# `/dev/net/tun` 与 `NET_ADMIN` 由 compose 提供；`ip_forward` **不在** compose 里设
+# （host 网络下 Docker 不允 sysctls）⇒ 宿主机需自己开启。NAT 不需要 —— 实测 guest 自身 SNAT ✓。
 # 你只需改下面标了「改这里」的几处，并保留 prewarm: true（家侧必需）。
 
 # ── 2026-10-14 补：宿主终端接管（"合并路线"）────────────────────────────────────
@@ -50,8 +50,8 @@ proxies:
   type: easytier
   network-name: private-overlay
   network-secret: "<改这里：与所有节点一致的网络密钥>"
-  hostname: ssy-fa-gw
-  instance-name: ssy-fa-gw
+  hostname: "<改这里：家侧主机名>"
+  instance-name: "<改这里：家侧主机名>"
   ipv4: 10.144.0.2/24
   interface-name: <改这里：物理网卡名，如 enp2s0>
   state-dir: /root/.config/mihomo/easytier
@@ -80,7 +80,9 @@ proxies:
   peers:
   - tcp://<改这里：会合点公网IP或域名>:11010
   udp: true
-  ipv4: 10.144.0.1/24
+  # 入口节点也要本地接管时才开 tun；每个 overlay /24 只能有一个 tun:true 持有者 ⇒ 用独立 /24
+  # （目标拓扑；现场若仍是同 /24 双 tun，先按 ops-sop 判据迁移，别直接抄）
+  ipv4: 10.144.1.1/24
   interface-name: <改这里：物理网卡名，如 enp2s0>
   tun: true
   tun-routes:
