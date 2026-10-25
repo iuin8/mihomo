@@ -21,10 +21,12 @@ while [ -L "$SRC" ]; do
 done
 SCRIPT_DIR=$(cd "$(dirname "$SRC")" && pwd)
 ROOT=${CLASH_GROUP_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}
+# 机器相关的标识符（frp 节点特征、家侧 ssh 别名）只放在 local-state/tools.env（0600，不入 git）
+[ -r "$ROOT/local-state/tools.env" ] && . "$ROOT/local-state/tools.env"
 SOCK=${CLASH_GROUP_SOCK:-/var/run/clash-verge-service/users/$(id -u)/verge-mihomo.sock}
 GRP='内网入口'
 BYPASS_SSH=${BYPASS_SSH:-}                  # 家侧 ssh 别名；未设时 bypass/isolated 的 ssh 判据直接报缺配置
-BYPASS_MARK=${BYPASS_MARK:-fa.internet}     # frp+ssh 订阅里的节点/分组特征
+BYPASS_MARK=${BYPASS_MARK:-}                # 未配置时 bypass/isolated 判据直接报缺配置
 # 验收目标放本机(敏感, 不入 git)；没有该文件时要求显式 PROBE_INTERNAL
 PROBES=${PROBES:-$ROOT/local-state/probes.conf}
 PROBE_INTERNAL=${PROBE_INTERNAL:-}
@@ -61,7 +63,7 @@ bypass_present() {
     | python3 -c "
 import json,sys
 p = json.load(sys.stdin)['proxies']
-print('yes' if any(sys.argv[1] in k for k in p) else 'no')" "$BYPASS_MARK" 2>/dev/null
+print('unknown' if not sys.argv[1] else ('yes' if any(sys.argv[1] in k for k in p) else 'no'))" "$BYPASS_MARK" 2>/dev/null
 }
 home_ssh() { [ -n "$BYPASS_SSH" ] || return 3; timeout 14 ssh -o BatchMode=yes -o ConnectTimeout=8 -o ControlPath=none "$BYPASS_SSH" true >/dev/null 2>&1; }
 # 注意：curl 失败时 -w 也会输出 000，再 `|| echo 000` 会拼成 000000 ✗
@@ -104,10 +106,12 @@ check() {
   echo "② 现状：frp+ssh 订阅=${bp} · 家侧 ssh=${hssh} · 内网 $(probe_hint)=${et}"
   case "$want" in
     bypass)
+      [[ "$bp" != unknown ]] || { echo "  ✗ 未设置 BYPASS_MARK（local-state/tools.env）⇒ 无法验证旁路订阅"; fail=1; }
       [[ "$hssh" != missing ]] || { echo "  ✗ 未设置 BYPASS_SSH ⇒ 无法验证旁路订阅"; fail=1; }
       [[ "$bp" == yes ]] || { echo "  ✗ 配置里没有 frp+ssh 订阅的节点 ⇒ 先在 CVR 激活它"; fail=1; }
       [[ "$hssh" == yes ]] || { echo "  ✗ 家侧连不上 ⇒ 旁路订阅没生效"; fail=1; } ;;
     isolated)
+      [[ "$bp" != unknown ]] || { echo "  ✗ 未设置 BYPASS_MARK（local-state/tools.env）⇒ 无法验证隔离"; fail=1; }
       [[ "$hssh" != missing ]] || { echo "  ✗ 未设置 BYPASS_SSH ⇒ 无法验证隔离"; fail=1; }
       [[ "$hssh" == no ]] || { echo "  ✗ 家侧 ssh 仍可达 ⇒ frp+ssh 订阅没停干净"; fail=1; }
       # 隔离还必须覆盖"内网地址本身不可达"：否则这条网络自带内网通路，验收无意义

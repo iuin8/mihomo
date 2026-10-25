@@ -10,28 +10,22 @@
 # 纪律:所有路径写死 ✓ 不接受任何自由参数(尤其不接受"用户指定的文件/URL") ✗ —— 否则等于把 root 交给调用方。
 # 信任锚 = 我们的 GitHub 发布(HTTPS ✓)+ 同一发布里的 checksums.txt ✓(与 CVR 自带升级通道同级 ✓,不更弱 ✓)。
 set -eu
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+umask 022
 
 LOG="/var/log/clash-group-et-apply.log"
+log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" "$2" | tee -a "$LOG"; }
+die() { log ERROR "$1"; exit 1; }
 
 REL="https://github.com/iuin8/mihomo/releases/download/Prerelease-Alpha"
 API="https://api.github.com/repos/iuin8/mihomo/releases/tags/Prerelease-Alpha"
 ASSET="mihomo-darwin-arm64"
 
-log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" "$2" | tee -a "$LOG"; }
-die() { log ERROR "$1"; exit 1; }
-# fetch —— 3 次重试(2026-10-16 实测:GitHub 个别对象会长时间 0 字节超时 ✗,而同一发布里的大文件正常 ✓)
-fetch() { i=1; while [ "$i" -le 3 ]; do curl -fsSL --max-time 600 -o "$2" "$1" && return 0; log WARN "下载失败(第 $i 次): $1"; i=$((i+1)); sleep 3; done; return 1; }
-fetch_api() { i=1; while [ "$i" -le 3 ]; do curl -fsSL --max-time 120 -H 'Accept: application/octet-stream' -o "$2" "$1" && return 0; i=$((i+1)); sleep 3; done; return 1; }
-
-# ── 配置来源（root 助手的脚本位置不是用户目录；不猜） ──────────────────────────
-#   优先级 1：CLASH_GROUP_CONFIG_SRC（显式指定候选配置）
-#   优先级 2：/etc/clash-group/et-apply.conf（安装器生成，0600；可含 CLASH_GROUP_STATE_DIR/CLASH_GROUP_UID）
-#   优先级 3：SUDO_USER 的 home → ~/.local/state/clash-group/et-apply
-#   都没有 ⇒ 明确失败（既不用脚本自身位置推，也不回落到 /root）
-LOG="/var/log/clash-group-et-apply.log"
-log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$1" "$2" | tee -a "$LOG"; }
-die() { log ERROR "$1"; exit 1; }
-
+# ── 配置来源：只允许 root 置备的 /etc 配置，或从 SUDO_USER 推导；不接受环境变量指定文件/目录 ──
+#   1) /etc/clash-group/et-apply.conf（安装器生成，0600；可设 CLASH_GROUP_STATE_DIR/CLASH_GROUP_UID）
+#   2) SUDO_USER 的 home → ~/.local/state/clash-group/et-apply
+#   都没有 ⇒ 明确失败（不用脚本位置推，也不回落到 /root）
 [ -r /etc/clash-group/et-apply.conf ] && . /etc/clash-group/et-apply.conf
 STATE_DIR=${CLASH_GROUP_STATE_DIR:-}
 if [ -z "$STATE_DIR" ]; then
@@ -40,6 +34,7 @@ if [ -z "$STATE_DIR" ]; then
   [ -n "$HOME_U" ] || die "无法解析用户 $SUDO_USER 的 home"
   STATE_DIR="$HOME_U/.local/state/clash-group/et-apply"
 fi
+OWNER=${CLASH_GROUP_OWNER:-${SUDO_USER:-}}
 U=${CLASH_GROUP_UID:-$(id -u "${SUDO_USER:-$(id -un)}")}
 RUNTIME="/Library/Application Support/clash-verge-service/users/$U/runtime"
 CONFIG="$RUNTIME/config.yaml"
@@ -48,8 +43,16 @@ CORE="$COREDIR/verge-mihomo-alpha"
 [ -x "$CORE" ] || CORE="$COREDIR/verge-mihomo"
 SOCK="/var/run/clash-verge-service/users/$U/verge-mihomo.sock"
 LABEL="io.github.clash-verge-rev.clash-verge-rev.service"
-SRC="${CLASH_GROUP_CONFIG_SRC:-$STATE_DIR/config.yaml}"
-PIN="$STATE_DIR/pinned-core.txt"   # <版本> <sha256> ✓ 由 core-upgrade 写入
+SRC="$STATE_DIR/config.yaml"
+PINDIR=/var/lib/clash-group
+PIN="$PINDIR/pinned-core"
+
+write_pin() {  # $1=版本 $2=sha256
+  [ -d "$PINDIR" ] || install -d -o root -g wheel -m 700 "$PINDIR" || { log WARN "无法创建 $PINDIR"; return 1; }
+  t=$(mktemp "$PINDIR/.pin.XXXXXX") || { log WARN "无法创建 pin 临时文件"; return 1; }
+  printf '%s %s\n' "$1" "$2" > "$t" || { rm -f "$t"; return 1; }
+  chmod 600 "$t"; mv -f "$t" "$PIN" || { rm -f "$t"; return 1; }
+}
 
 kernel_pids() { pgrep -f 'clash-verge-service/cores/verge-mihomo' 2>/dev/null || true; }
 kernel_version() { curl -s --max-time 5 --unix-socket "$SOCK" http://localhost/version 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p'; }
@@ -87,14 +90,19 @@ do_restart() {
 cmd_stage() {
   [ -f "$SRC" ] || die "源配置不存在: $SRC"
   [ -r "$SRC" ] || die "源配置不可读: $SRC"
+  [ -n "$OWNER" ] || die "无法确定调用用户，拒绝读取候选配置"
+  [ "$(stat -f '%Su' "$SRC")" = "$OWNER" ] || die "候选配置不属于 $OWNER: $SRC"
   tmp="$RUNTIME/.et-apply-candidate.yaml"
   install -o root -g wheel -m 600 "$SRC" "$tmp" || die "候选文件写入失败"
   # ★ 必须让内核自己校验通过,否则拒绝安装(绝不把坏配置放进去)
-  if ! "$CORE" -t -d "$RUNTIME" -f "$tmp" >/tmp/et-validate.out 2>&1; then
-    rm -f "$tmp"
-    log ERROR "配置校验未通过,已丢弃: $(tail -3 /tmp/et-validate.out | tr '\n' ' ')"
+  vout=$(mktemp "${TMPDIR:-/tmp}/et-validate.XXXXXX") || die "无法创建校验输出文件"
+  if ! "$CORE" -t -d "$RUNTIME" -f "$tmp" >"$vout" 2>&1; then
+    tailout=$(tail -3 "$vout" | tr '\n' ' ')
+    rm -f "$tmp" "$vout"
+    log ERROR "配置校验未通过,已丢弃: $tailout"
     exit 2
   fi
+  rm -f "$vout"
   ts=$(date '+%Y%m%d-%H%M%S')
   [ -f "$CONFIG" ] && cp -p "$CONFIG" "$RUNTIME/config.yaml.et-bak-$ts"
   mv -f "$tmp" "$CONFIG" || die "替换 config.yaml 失败"
@@ -153,7 +161,7 @@ PYEOF
   if [ "$ver" = "$old_ver" ]; then
     # 已是最新也把 pin 写上(bootstrap ✓):否则漂移检测要等下一次升级才生效 ✗
     sha="$(shasum -a 256 "$CORE" | awk '{print $1}')"
-    printf '%s %s\n' "$ver" "$sha" > "$PIN" && chown fa:staff "$PIN" 2>/dev/null || log WARN "写入 pin 失败"
+    write_pin "$ver" "$sha" || log WARN "写入 pin 失败"
     log INFO "已是最新($ver)✓ 无需升级;pin 已写入 sha=$(echo "$sha" | cut -c1-16)…"
     return 0
   fi
@@ -191,7 +199,7 @@ EOF
   core_install_from "$work/core"
   if do_restart "$ver"; then
     sha="$(shasum -a 256 "$CORE" | awk '{print $1}')"
-    printf '%s %s\n' "$ver" "$sha" > "$PIN" && chown fa:staff "$PIN" 2>/dev/null || log WARN "写入 pin 失败"
+    write_pin "$ver" "$sha" || log WARN "写入 pin 失败"
     log INFO "core-upgrade 完成 ✓ 版本 $old_ver ⇒ $(kernel_version) ✓ pid=[$(kernel_pids | tr '\n' ' ')] | pin=$ver sha=$(echo "$sha" | cut -c1-16)…"
     return 0
   fi

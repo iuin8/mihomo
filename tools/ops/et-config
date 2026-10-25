@@ -54,6 +54,18 @@ ET_NET_MODE = os.environ.get("ET_NET_MODE") or shutil.which("et-net-mode") or st
     pathlib.Path(__file__).resolve().parent / "et-net-mode")
 MIXED = "http://127.0.0.1:7897"
 PROBES = os.environ.get("ET_PROBES") or str(pathlib.Path(ROOT) / "local-state" / "probes.conf")
+# 机器相关的标识符（frp 节点特征、家侧 ssh 别名）只放在 local-state/tools.env（0600，不入 git）
+_ENVFILE = os.path.join(ROOT, "local-state", "tools.env")
+if os.path.exists(_ENVFILE):
+    try:
+        for _line in open(_ENVFILE, encoding="utf-8"):
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
+    except OSError:
+        pass
 
 try:
     import yaml
@@ -123,10 +135,12 @@ def upsert_items(base, extra, where, key="name"):
 
 
 
-BYPASS_MARK = os.environ.get("ET_BYPASS_MARK", "fa.internet")  # 与 et-net-mode 默认一致
+BYPASS_MARK = os.environ.get("ET_BYPASS_MARK", "")  # 未配置 ⇒ 相关门禁显式失败（见 bypass_absent）
 
 
 def base_has_bypass(path=BASE):
+    if not BYPASS_MARK:
+        return False
     try:
         cfg = yaml.safe_load(open(path)) or {}
     except Exception:
@@ -336,6 +350,8 @@ def bypass_absent():
         keys = json.loads(body).get("proxies", {}).keys()
     except ValueError:
         return False, "控制面返回非 JSON"
+    if not BYPASS_MARK:
+        return False, "BYPASS_MARK 未配置（应在 local-state/tools.env）⇒ 无法验证订阅互斥"
     hits = [k for k in keys if BYPASS_MARK in k]
     return (not hits), ("配置里无 frp 订阅节点" if not hits else f"仍有 {len(hits)} 个 frp 订阅节点")
 
@@ -401,8 +417,9 @@ def classify(cfg):
     rules = [str(r) for r in (cfg.get("rules") or [])]
     names = {p.get("name") for p in (cfg.get("proxies") or []) if isinstance(p, dict)}
     entry = any(r.startswith("IP-CIDR,10.0.0.0/8,") and r.endswith("内网入口") for r in rules)
-    frp = any(r.split(",")[-1] in ("ssy_g", "mac_ssy_g") for r in rules)
-    if entry and any(n in names for n in ("et-lan", "et-fa", "et-k8s-pdd")):
+    # frp 订阅的节点特征来自 local-state/tools.env；未配置时不猜
+    frp = bool(BYPASS_MARK) and any(BYPASS_MARK in r for r in rules)
+    if entry and any(n.startswith(("et-lan", "et-fa", "et-k8s")) for n in names):
         return "et"
     if frp:
         return "frp"

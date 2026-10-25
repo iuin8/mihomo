@@ -33,8 +33,9 @@ if [ -r "$DENY" ]; then
   hits=0
   while IFS= read -r pat; do
     case "$pat" in ''|'#'*) continue ;; esac
-    # 只扫文档/模板；命中文件名即可，不回显整行（避免二次泄漏）
-    for f in $(grep -rlF "$pat" --include='*.md' --include='*.yaml' --include='*.yml' . 2>/dev/null); do
+    # 文档/模板 + 仓库内运维工具（.sh / 无扩展名）都要扫；命中文件名即可，不回显整行
+    for f in $(grep -rlF "$pat" --include='*.md' --include='*.yaml' --include='*.yml' . 2>/dev/null) \
+             $(grep -rlF "$pat" "$SCRIPT_DIR/../../tools/ops" 2>/dev/null); do
       hits=$((hits+1))
       echo "✗ $f: 出现真实内网目标（denylist 第 $hits 条命中）⇒ 请改占位符"
       bad=$((bad+1))

@@ -30,3 +30,5 @@ test/config/cache*
 .omc
 .gitnexus
 .claude/scheduled_tasks.lock
+
+__pycache__/
