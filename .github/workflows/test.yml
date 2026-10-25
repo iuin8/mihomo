@@ -7,11 +7,13 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
     branches:
       - Alpha
+      - 'fa/**'
     tags:
       - "v*"
   pull_request:
     branches:
       - Alpha
+      - 'fa/**'
 
 jobs:
   test:
