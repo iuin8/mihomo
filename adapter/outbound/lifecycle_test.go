@@ -55,3 +55,12 @@ func TestCloseWhenIdleWithoutConnectionsClosesImmediately(t *testing.T) {
 		t.Fatalf("idle adapter closed %d times, want 1", inner.closed.Load())
 	}
 }
+
+func TestDialAfterCloseWhenIdleFails(t *testing.T) {
+	inner := &fakeAdapter{}
+	a := NewAutoCloseProxyAdapter(inner).(*autoCloseProxyAdapter)
+	a.CloseWhenIdle()
+	if _, err := a.DialContext(context.Background(), nil); err == nil {
+		t.Fatal("a replaced adapter accepted a new dial")
+	}
+}

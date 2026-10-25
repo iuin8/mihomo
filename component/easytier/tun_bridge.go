@@ -381,7 +381,6 @@ type TunBridge struct {
 	device packetDevice
 	cancel context.CancelFunc
 	done   chan struct{}
-	err    error
 
 	closeOnce sync.Once
 	closeErr  error
@@ -397,8 +396,7 @@ func StartTunBridge(parent context.Context, options TunDeviceOptions, plane pack
 	bridge := &TunBridge{device: device, cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(bridge.done)
-		bridge.err = runTunBridge(ctx, device, plane, options.Prefix, options.Routes)
-		if err := bridge.err; err != nil {
+		if err := runTunBridge(ctx, device, plane, options.Prefix, options.Routes); err != nil {
 			// FORK(easytier-tun): 桥停了就是 overlay 通路断了 —— 这条以前没有任何日志。
 			log.Warnln("[EasyTier] TUN bridge stopped: %v", err)
 		}
@@ -420,12 +418,4 @@ func (b *TunBridge) Close() error {
 		}
 	})
 	return b.closeErr
-}
-
-// Err 返回搬运循环结束时的错误（须在 Close 之后读）。
-func (b *TunBridge) Err() error {
-	if b == nil {
-		return nil
-	}
-	return b.err
 }

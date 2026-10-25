@@ -43,6 +43,15 @@ func (p *Proxy) Adapter() C.ProxyAdapter {
 	return p.ProxyAdapter
 }
 
+// CloseWhenIdle lets the tunnel release a proxy that a reload replaced or
+// removed without cutting connections that are still using it. It forwards to
+// the wrapper that tracks those connections.
+func (p *Proxy) CloseWhenIdle() {
+	if c, ok := p.ProxyAdapter.(interface{ CloseWhenIdle() }); ok {
+		c.CloseWhenIdle()
+	}
+}
+
 // AliveForTestUrl implements C.Proxy
 func (p *Proxy) AliveForTestUrl(url string) bool {
 	if state, ok := p.extra.Load(url); ok {
