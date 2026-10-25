@@ -12,6 +12,7 @@
 | `install-helpers.sh` | 安装 `et-apply` + 生成 `/etc/clash-group/et-apply.conf` 与 sudoers + 链接用户工具 | 用户（dry-run）/ root（`--apply`） |
 | `install-core.sh` | 把本 fork 内核装进 Clash Verge 服务侧（默认）/App 侧（`--app`），含自证与备份 | root（`--apply`） |
 | `deploy-et-apply.sh` | 部署助手并做验收（快照/恢复 13 组、restart 计时） | root |
+| `et-route-migrate.sh` | 清理遗留 overlay 接口（默认只读 dry-run；`--apply` 需映射 + 预期路由数） | 用户（dry-run）/ root（`--apply`） |
 
 ## 配置来源（不使用任何个人路径）
 
@@ -33,6 +34,30 @@ et-config build && sudo -n et-apply stage && sudo -n et-apply restart
 sudo -n et-apply rollback            # 配置
 sudo -n et-apply core-rollback       # 内核
 ```
+
+## 遗留 overlay 路由清理（`et-route-migrate.sh`）
+
+默认**只读**：打印当前 `10.144.0.0/24` 路由、映射计划与预期剩余条数，不删除任何东西。
+映射必须由人给出（脚本不猜）：
+
+```text
+# <iface> <keep|remove> <label> [start-command...]
+easytier5 remove old-fa systemctl start easytier@old-fa
+easytier6 keep   et-lan
+```
+
+```bash
+tools/ops/et-route-migrate.sh --map /path/to/map            # dry-run
+sudo tools/ops/et-route-migrate.sh --map /path/to/map --expect-routes 0 --apply
+```
+
+`start-command` 是**无引号的简单 shell 片段**（只允许 `[A-Za-z0-9_./@:-]` 与空格，
+避免注入/引号解析坏）；apply 时若某个 remove 项没有 start-command，默认拒绝，
+只有显式 `--allow-irreversible` 才继续（已知死亡的遗留设备）。
+
+`--apply` 前置：root、`--expect-routes`、当前每条 `10.144.0.0/24` 路由的 dev 都在 map 中、
+无 `easytier` 进程/容器、目标接口无 `fuser` 属主；先备份路由与映射，写 `rollback.sh`，
+删接口后立即与 30s 后各验一次路由数；**verify 失败自动执行 rollback.sh**。
 
 ## 安全边界
 
