@@ -37,9 +37,8 @@ proxies:
 
     # ⑤ 与家侧互联
     peers: ["tcp://<改这里：会合点公网IP或域名>:11010"]
-    # ★ 默认 TCP-only：办公/酒店/公共网络常封 UDP，开着只会让打洞一直失败 ✗
-    #   确认你的网络放行 UDP 后再改 true（能提升 P2P 成功率 ✓）
-    udp: false
+    # 默认开 UDP：P2P 打洞成功率高；只有在网络封 UDP（办公/酒店/公共 Wi-Fi）时才本地改 false
+    udp: true
     # 出口节点**不要**写 exit-nodes（只在需要借网的入口节点写；否则上游拒绝/504环）
     no-listener: true
 

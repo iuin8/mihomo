@@ -23,7 +23,7 @@ name: easytier-gateway
 services:
   mihomo:
     # 生产建议钉版本而不是 latest：GW_TAG=v1.19.32-fa.1001 docker compose up -d
-    image: ghcr.io/iuin8/mihomo:${GW_TAG:-latest}
+    image: ghcr.io/iuin8/mihomo:${GW_TAG:?必须钉版本，如 v1.19.32-fa.1028}
     container_name: mihomo-gateway
     # 「合并路线」：宿主终端也走本机出口时必须 host 网络 —— 只有这样容器里的 mihomo
     # 才看得到宿主的流量并接管它 ✓（bridge 模式下宿主的流量根本进不来 ✗）。

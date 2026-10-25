@@ -25,7 +25,7 @@ mkdir -p /data/docker/mihomo/easytier-gateway && cd /data/docker/mihomo/easytier
 # 3) 校验后启动
 docker run --rm -v "$PWD/gateway.yaml":/root/.config/mihomo/config.yaml:ro \
   -v /data/docker/mihomo/geoip/geoip.metadb:/root/.config/mihomo/geoip/metadb:ro \
-  --entrypoint mihomo ghcr.io/iuin8/mihomo:latest -t -d /root/.config/mihomo   # ⇒ test is successful ✓
+  --entrypoint mihomo "ghcr.io/iuin8/mihomo:$GW_TAG" -t -d /root/.config/mihomo   # ⇒ test is successful ✓
 docker compose -p easytier-gateway up -d
 
 # 4) 起之前确认 host 模式下要占的端口是空的（7890 / 9090 / 11110）
@@ -70,7 +70,7 @@ ip -o link show | grep Meta || echo "TUN 已消失 ✓"    # 确认回滚到位 
 ## ★ 镜像必须固定版本（不可用 `latest`）
 
 家侧运行的内核**必须是我们 fork 的构建**（含 `proxy-networks` 运行期修复）。用 `latest` 会悄悄跑到旧/官方构建，
-表现为"公告了网段但完全不生效"。做法（compose 已支持 `${GW_TAG:-latest}`）：
+表现为"公告了网段但完全不生效"。做法（compose 用 `${GW_TAG:?...}`，未设直接报错而不是落到 latest）：
 
 ```yaml
 # .env（与 docker-compose.yml 同目录）

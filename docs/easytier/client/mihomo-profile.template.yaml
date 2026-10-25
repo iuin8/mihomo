@@ -20,9 +20,8 @@ proxies:
     # 不写静态 ipv4 ⇒ dhcp 自动取唯一地址 ✓(多台机器共用同一模板也不会撞地址)
     peers:
       - tcp://<RENDEZVOUS, 会合点地址>:11010
-    # ★ 默认 TCP-only:办公/酒店/公共网络常封 UDP, 开着只会让打洞一直失败 ✗
-    #   确认你的网络放行 UDP 后再改 true(能提升 P2P 成功率 ✓)
-    udp: false
+    # 默认开 UDP：P2P 打洞成功率高；只有在网络封 UDP（办公/酒店/公共 Wi-Fi）时才本地改 false
+    udp: true
     exit-nodes:
       - <EXIT_ADDR, 家侧网关的 overlay 地址>      # 家侧"公告内网"的角色节点
 
