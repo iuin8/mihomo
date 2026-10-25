@@ -8,14 +8,18 @@ import (
 )
 
 // BoundedWriter decouples log producers from a slow log sink (a pipe whose
-// reader is not draining, a blocked terminal, ...). Writes never block:
-// once the queue is full, lines are dropped and counted.
+// reader is not draining, a blocked terminal, ...). Writes never block: once
+// the queue is full, lines are dropped and counted.
 type BoundedWriter struct {
 	dst     io.Writer
 	ch      chan []byte
 	dropped atomic.Uint64
-	once    sync.Once
-	wg      sync.WaitGroup
+	pending atomic.Int64 // lines taken from ch and not yet written
+
+	mu     sync.Mutex
+	closed bool
+	once   sync.Once
+	wg     sync.WaitGroup
 }
 
 func NewBoundedWriter(dst io.Writer, capacity int) *BoundedWriter {
@@ -27,7 +31,9 @@ func NewBoundedWriter(dst io.Writer, capacity int) *BoundedWriter {
 	go func() {
 		defer w.wg.Done()
 		for b := range w.ch {
+			w.pending.Add(1)
 			_, _ = w.dst.Write(b)
+			w.pending.Add(-1)
 		}
 	}()
 	return w
@@ -36,6 +42,12 @@ func NewBoundedWriter(dst io.Writer, capacity int) *BoundedWriter {
 func (w *BoundedWriter) Write(p []byte) (int, error) {
 	b := make([]byte, len(p))
 	copy(b, p)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		w.dropped.Add(1)
+		return len(p), nil
+	}
 	select {
 	case w.ch <- b:
 	default:
@@ -44,21 +56,45 @@ func (w *BoundedWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Dropped returns how many lines were discarded because the sink was too slow.
+// Dropped returns how many lines were discarded because the sink was too slow
+// (or because the writer was already closed).
 func (w *BoundedWriter) Dropped() uint64 { return w.dropped.Load() }
 
-// Flush waits (bounded) for queued lines to reach the sink.
-func (w *BoundedWriter) Flush(timeout time.Duration) {
+// Flush reports whether every queued and in-flight line reached the sink
+// before the timeout. It is false when the sink is stuck.
+func (w *BoundedWriter) Flush(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	for len(w.ch) > 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+	for {
+		if len(w.ch) == 0 && w.pending.Load() == 0 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Microsecond)
 	}
 }
 
-func (w *BoundedWriter) Close() error {
-	w.once.Do(func() {
-		close(w.ch)
-		w.wg.Wait()
-	})
-	return nil
+// Close stops accepting lines and closes the queue. It waits at most timeout
+// for the writer goroutine; a stuck sink makes it return false instead of
+// blocking the caller. Lines still queued when the timeout expires are
+// abandoned (the process is usually exiting).
+func (w *BoundedWriter) Close(timeout time.Duration) bool {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return true
+	}
+	w.closed = true
+	close(w.ch)
+	w.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { w.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }

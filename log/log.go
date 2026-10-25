@@ -77,8 +77,8 @@ func UnSubscribe(sub observable.Subscription[Event]) {
 // DroppedLogLines reports lines discarded because the log sink stopped draining.
 func DroppedLogLines() uint64 { return sink.Dropped() }
 
-// FlushLogs waits (bounded) for queued lines to reach the sink.
-func FlushLogs(timeout time.Duration) { sink.Flush(timeout) }
+// FlushLogs reports whether queued lines reached the sink within timeout.
+func FlushLogs(timeout time.Duration) bool { return sink.Flush(timeout) }
 
 func Level() LogLevel {
 	return level
