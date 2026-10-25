@@ -8,7 +8,7 @@
 | # | 功能 | 必须成立（依赖） | 破坏它的典型改法 ✗ | 回归判据（一条命令） |
 | --- | --- | --- | --- | --- |
 | ① | **现场直连内网**（公司/家 LAN） | 分组 `<内网分组> = DIRECT`；A 类域名在 `fake-ip-filter`；B 类域名在 `nameserver-policy` | 现场把分组切到入口节点；删 `fake-ip-filter` | 终端 `curl <内网服务>` ⇒ 2xx/3xx 且 **<100ms** |
-| ② | **离网进内网**（经家侧） | 家侧**公告内网网段** + 家侧镜像=**本 fork 构建** + 分组切到入口节点 | 家侧用 `:latest`（会跑到官方构建 ⇒ 公告不生效 ✗）；家侧规则把 underlay 收进隧道 | `curl /proxies/<入口节点>/delay?url=<内网服务>` 有毫秒数 ✓ |
+| ② | **离网进内网**（经家侧） | 家侧**公告内网网段** + 家侧镜像=**本 fork 构建** + 分组切到入口节点 | 家侧用 `:latest`（会解析到旧/未验证 fork 构建 ⇒ 不可复现、公告可能不生效 ✗）；家侧规则把 underlay 收进隧道 | `curl /proxies/<入口节点>/delay?url=<内网服务>` 有毫秒数 ✓ |
 | ③ | **家侧借本机机场**（出口） | 家侧 `MATCH → et-mac`；本机出口节点 `dialer-proxy=<机场组>`；`purpose=4` 走 forward dialer | 给入口节点配 `dialer-proxy`；把 `interface-name` 指向 overlay 设备 | 家侧终端 `curl https://www.google.com` ⇒ 200；家侧日志含 `using et-mac` |
 | ④ | **本机自己上网** | TUN 开、机场组可用 | 内网规则误吞公网；TUN 关 | 经 7897 `curl https://www.google.com` ⇒ 200 |
 | ⑤ | **集群内 DNS** | `<集群 DNS 节点>` + `nameserver-policy` | 删该节点 / 改 policy | `dscacheutil -q host -a name kubernetes.default.svc.cluster.local` 能解析 |
@@ -24,7 +24,7 @@
 | `udp` | 默认 `true`；**仅当所在网络封锁外网 UDP** 时设 `false` | ②（打洞能力） | 把它当成通用做法 ✗（这是环境事实，不是修复 ✗） |
 | `disable-p2p` | **默认不要用** ✗ | ② | 用它去绕"规则回环" ⇒ 治标、自废性能 ✗（回环应修 underlay 绑定/规则 ✗） |
 | 规则顺序 | overlay 自身（会合点/对端）**必须最先 DIRECT** | ②③ | 把公网/私有网段的兜底规则放到最前 ⇒ 自环/自锁 ✗ |
-| 镜像版本 | **固定版本号**（`GW_TAG=vX.Y.Z-fa.NNNN`），永不用 `latest` ✗ | ② | 用 `latest` ⇒ 悄悄跑到官方构建 ✗ |
+| 镜像版本 | **固定版本号**（`GW_TAG=vX.Y.Z-fa.NNNN`），永不用 `latest` ✗ | ② | 用 `latest` ⇒ 解析到旧/未验证 fork 构建，无法用 `mihomo -v` 回溯 ✗ |
 
 ## 二·补、域名规则的**作用域**陷阱（一条规则吃掉整个后缀 ✗）
 
