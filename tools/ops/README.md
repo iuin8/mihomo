@@ -48,7 +48,7 @@ easytier6 keep   et-lan
 
 ```bash
 tools/ops/et-route-migrate.sh --map /path/to/map            # dry-run
-sudo tools/ops/et-route-migrate.sh --map /path/to/map --expect-routes 0 \
+sudo tools/ops/et-route-migrate.sh --map /path/to/map --expect-routes 2 \
   --allow-irreversible \
   --data-plane-check 'curl -fsS --max-time 5 http://intranet.example/' \
   --apply
@@ -65,7 +65,8 @@ sudo tools/ops/et-route-migrate.sh --map /path/to/map --expect-routes 0 \
 `--allow-irreversible` 下只提示“需人工”，不会打印 `apply complete`。
 
 `--data-plane-check` 在**脚本所在主机**上执行，必须是简单 token 命令（无引号/元字符）。
-家侧 3 条遗留没有 start-command，实际窗口用 `--allow-irreversible`；删除前后还会从客户端
+家侧当前正确拓扑是 easytier0/1 两条（.1/.2，gateway 的 WASI 节点所有，不是遗留）；dry-run 先核对。
+删除前后还会从客户端
 跑 `et-net-mode check easytier` 作为 et-lan 路径的独立证据（脚本管不到客户端探针）。
 
 ## 安全边界
