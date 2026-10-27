@@ -460,6 +460,24 @@ func (c *autoReleaseConn) Close() error {
 	return err
 }
 
+// CloseWrite preserves TCP half-close. Relay uses it to finish one direction
+// without closing the whole connection (and releasing the adapter ref) while
+// the other direction is still copying.
+func (c *autoReleaseConn) CloseWrite() error {
+	if cw, ok := N.UnwrapWriter(c.Conn).(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	// The wrapped connection has no half-close capability. Fall back to a full
+	// close; the adapter reference is still released only by the final Close.
+	return c.Conn.Close()
+}
+
+// UpstreamWriter/UpstreamReader expose the wrapped connection so sing can
+// calculate its real headroom. Without this the TUN read waiter allocates a
+// buffer without front headroom and shadowsocks2 panics in ExtendHeader.
+func (c *autoReleaseConn) UpstreamWriter() any { return c.Conn }
+func (c *autoReleaseConn) UpstreamReader() any { return c.Conn }
+
 type autoReleasePacketConn struct {
 	C.PacketConn
 	p    *autoCloseProxyAdapter
@@ -471,6 +489,9 @@ func (c *autoReleasePacketConn) Close() error {
 	c.once.Do(c.p.releaseRef)
 	return err
 }
+
+func (c *autoReleasePacketConn) UpstreamWriter() any { return c.PacketConn }
+func (c *autoReleasePacketConn) UpstreamReader() any { return c.PacketConn }
 
 func (p *autoCloseProxyAdapter) Close() error {
 	p.closeOnce.Do(func() {
