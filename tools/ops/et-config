@@ -135,8 +135,7 @@ def upsert_items(base, extra, where, key="name"):
 
 
 
-# BYPASS_MARK 是 canonical；ET_BYPASS_MARK 仅为旧调用方的 deprecated alias。
-BYPASS_MARK = os.environ.get("BYPASS_MARK") or os.environ.get("ET_BYPASS_MARK", "")
+BYPASS_MARK = os.environ.get("BYPASS_MARK", "")  # canonical: local-state/tools.env + et-net-mode
 K8S_NODE_PREFIX = os.environ.get("K8S_NODE_PREFIX", "")   # 机器相关：local-state/tools.env
 FRP_GROUPS = [g for g in os.environ.get("FRP_GROUPS", "").split(",") if g]
 
