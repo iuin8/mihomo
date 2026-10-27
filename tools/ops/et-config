@@ -52,7 +52,6 @@ RUNTIME_CONFIG = os.environ.get("CLASH_GROUP_RUNTIME") or (
     f"/Library/Application Support/clash-verge-service/users/{_UID}/runtime/config.yaml")
 ET_NET_MODE = os.environ.get("ET_NET_MODE") or shutil.which("et-net-mode") or str(
     pathlib.Path(__file__).resolve().parent / "et-net-mode")
-MIXED = "http://127.0.0.1:7897"
 PROBES = os.environ.get("ET_PROBES") or str(pathlib.Path(ROOT) / "local-state" / "probes.conf")
 # 机器相关的标识符（frp 节点特征、家侧 ssh 别名）只放在 local-state/tools.env（0600，不入 git）
 _ENVFILE = os.path.join(ROOT, "local-state", "tools.env")
@@ -248,10 +247,6 @@ def api(path, method="GET", body=None, timeout=6):
 
 
 def mixed_port():
-    """从候选配置读 mixed-port；ET_MIXED 可覆盖（不硬编码）"""
-    env = os.environ.get("ET_MIXED")
-    if env:
-        return env
     try:
         cfg = yaml.safe_load(open(CANDIDATE))
         return str((cfg or {}).get("mixed-port") or 7897)
