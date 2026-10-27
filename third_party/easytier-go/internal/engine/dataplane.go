@@ -42,10 +42,6 @@ type dataPlaneCore interface {
 		coreabi.ResourceID,
 		[]byte,
 	) (coreabi.OperationID, error)
-	SubmitTCPShutdownWrite(
-		context.Context,
-		coreabi.ResourceID,
-	) (coreabi.OperationID, error)
 	SubmitUDPBind(
 		context.Context,
 		uint16,

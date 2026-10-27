@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -123,40 +122,10 @@ func (conn *streamConn) Write(buffer []byte) (int, error) {
 	return written, nil
 }
 
-// tcpShutdownTimeout bounds how long Close waits for the guest to emit FIN.
-//
-// Two seconds is enough for a healthy loopback/wazero round trip (the observed
-// shutdown completion is sub-millisecond) while keeping a wedged guest from
-// holding one goroutine per closed connection. On timeout the resource is still
-// released below, so the guest-side handle can never leak; only the FIN is lost,
-// which is the same outcome as a peer that vanished.
-const tcpShutdownTimeout = 2 * time.Second
-
 func (conn *streamConn) Close() error {
 	conn.closeOnce.Do(func() {
 		conn.closed.Store(true)
-		// Half-close first: dropping the resource alone never emits FIN, so the
-		// peer keeps the connection ESTABLISHED (and an exit node's forwarding
-		// task waits on it forever). Release the resource in every case.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), tcpShutdownTimeout)
-		_, shutdownErr := conn.instance.performOperation(
-			shutdownCtx,
-			coreabi.OperationTCPShutdownWrite,
-			func(
-				callCtx context.Context,
-				core dataPlaneCore,
-			) (coreabi.OperationID, error) {
-				return core.SubmitTCPShutdownWrite(callCtx, conn.resource)
-			},
-		)
-		cancel()
-		if shutdownErr != nil {
-			shutdownErr = fmt.Errorf("shutdown write: %w", shutdownErr)
-		}
-		conn.closeErr = shutdownErr
-		if err := conn.instance.closeDataPlaneResource(conn.resource); err != nil && conn.closeErr == nil {
-			conn.closeErr = err
-		}
+		conn.closeErr = conn.instance.closeDataPlaneResource(conn.resource)
 		close(conn.closeDone)
 	})
 	<-conn.closeDone

@@ -6,7 +6,7 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0
 	github.com/coreos/go-iptables v0.8.0
 	github.com/dlclark/regexp2 v1.12.0
-	github.com/easytier/easytier/easytier-go v0.0.0-20261018160429-5af90471bfe6
+	github.com/easytier/easytier/easytier-go v0.0.0-20261026163904-48ccc56a1aa4
 	github.com/enfein/mieru/v3 v3.38.0
 	github.com/gobwas/ws v1.4.0
 	github.com/gofrs/uuid/v5 v5.4.0

@@ -4,6 +4,30 @@
 > 家侧与出口用同一镜像；升级见 `ops-sop.md`。
 > 下文命令中的部署目录/容器名写的是本机示例，换机器时按实际替换。
 
+## 2026-10-27 · 同步上游 #2754（Rust TCP teardown，未发布）
+
+上游 #2754 已由维护者以 **Rust guest 侧生命周期**合并（merge `34631908`，PR head `b661721a`）：
+
+- Close 不等待 FIN 握手；socket/flow/stack lease 交给 reactor，负责 FIN 重传、对端 FIN/ACK、TIME-WAIT（60s 兜底）
+- 排空未读入向数据，避免接收窗口堵住对端 FIN
+- 不保留“整个 guest command loop 卡死时 2.5s Close 上界”
+
+本 fork 同步：
+
+- pin `github.com/easytier/easytier/easytier-go` →
+  `v0.0.0-20261026163904-48ccc56a1aa4`（EasyTier main `48ccc56a`）
+- **删除** `third_party/easytier-go-fin-on-close.patch`、`easytier-go-wasm-provenance.patch`、
+  `third_party/easytier-go-wasi/`；**不再直接使用上游 `internal/artifact`**（其 provenance 指向
+  不可达的 `5f1eaa7c`），改用下面的 fork-owned 重编产物
+- 保留 fork 补丁：interpreter、host-misc、patch-config
+- wasm 由 pin `48ccc56a` 的源码重编（上游 artifact provenance 指向不可达的 5f1eaa7c）：
+  Commit `48ccc56a…` / SHA256 `a9ed0c85…`；fork-owned `third_party/easytier-go-artifact/`
+  固定 commit/sha/schema，并由 setup 断言关键 ABI、无 ring 导入
+- 验证：`go test ./component/easytier ./adapter/outbound` PASS；`go build ./...` PASS；
+  `third_party/easytier-go/tests` 的 TCP/UDP 数据面测试 PASS
+
+发布前仍需按 fa.1028 流程做真机验收（退出节点 20 次公网请求 `EST=0`、TIME_WAIT 正常、无 Close 错误）。
+
 ## v1.19.32-fa.1028（内核 `1.10.0-fa.1028`，2026-10-25）
 
 构建：run `40155504062`（repo `iuin8/mihomo`，ref `fa/trunk`，head `8a923ce1`）→

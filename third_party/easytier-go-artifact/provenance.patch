@@ -1,0 +1,21 @@
+--- a/internal/artifact/provenance.go
++++ b/internal/artifact/provenance.go
+@@ -3,6 +3,6 @@
+ package artifact
+ 
+ const (
+-	Commit = "5f1eaa7c9f9d3e89e9b75a6d87531a436fae40c4"
+-	SHA256 = "de332a01eb4141e2e86ecee89500c40cc7d07a822a381868f95bb231bfc3739c"
++	Commit = "48ccc56a1aa4a63ec5192f71e85b330b155f0136"
++	SHA256 = "a9ed0c8561b1d63a7422e2c1ebcc9293a410fac7606cc8a7a35ccdbb906bd05d"
+ )
+--- a/proto/provenance.go
++++ b/proto/provenance.go
+@@ -3,6 +3,6 @@
+ package proto
+ 
+ const (
+-	EasyTierCommit = "5f1eaa7c9f9d3e89e9b75a6d87531a436fae40c4"
++	EasyTierCommit = "48ccc56a1aa4a63ec5192f71e85b330b155f0136"
+ 	SchemaSHA256   = "33516bc93a3fd43df341ce081a904c1f8c5fd00ea5c33d78925e2359312a926c"
+ )

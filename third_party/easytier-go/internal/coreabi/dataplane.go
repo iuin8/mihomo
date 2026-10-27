@@ -41,14 +41,10 @@ const (
 	OperationUDPBind
 	OperationUDPReceive
 	OperationUDPSend
-	// OperationTCPShutdownWrite sends FIN on an established stream. It exists so
-	// that net.Conn.Close can half-close gracefully instead of dropping the
-	// resource: the peer only learns about the close through a FIN.
-	OperationTCPShutdownWrite
 )
 
 func (kind OperationKind) valid() bool {
-	return kind >= OperationTCPConnect && kind <= OperationTCPShutdownWrite
+	return kind >= OperationTCPConnect && kind <= OperationUDPSend
 }
 
 type ErrorKind uint16
@@ -210,19 +206,6 @@ func (core *Core) SubmitTCPWrite(
 		uint64(stream),
 		uint64(pointer),
 		uint64(len(data)),
-	)
-}
-
-// SubmitTCPShutdownWrite asks the guest to half-close the stream (it calls
-// shutdown() on its socket, which is what emits FIN).
-func (core *Core) SubmitTCPShutdownWrite(
-	ctx context.Context,
-	stream ResourceID,
-) (OperationID, error) {
-	return core.submit(
-		ctx,
-		"easytier_data_plane_tcp_shutdown_write_submit",
-		uint64(stream),
 	)
 }
 
@@ -449,12 +432,6 @@ func (core *Core) TakeResult(
 			completion,
 			"easytier_data_plane_udp_send_result_take",
 		)
-	case OperationTCPShutdownWrite:
-		err = core.takeStatusResult(
-			ctx,
-			completion,
-			"easytier_data_plane_tcp_shutdown_write_result_take",
-		)
 	default:
 		return OperationResult{}, fmt.Errorf(
 			"take unknown data plane operation kind %d",
@@ -626,28 +603,6 @@ func (core *Core) takeVariableResult(
 		return nil, nil, fmt.Errorf("read %s metadata from guest memory", name)
 	}
 	return data, append([]byte(nil), bytes...), nil
-}
-
-// takeStatusResult reads an ABI result that reports only a status code
-// (0 = success, negative = data plane error).
-func (core *Core) takeStatusResult(
-	ctx context.Context,
-	completion Completion,
-	name string,
-) error {
-	result, err := core.callOne(
-		ctx,
-		name,
-		core.handle,
-		uint64(completion.Operation),
-	)
-	if err != nil {
-		return err
-	}
-	if status := int32(result); status < 0 {
-		return core.dataPlaneStatusError(ctx, name, status)
-	}
-	return nil
 }
 
 func (core *Core) takeLengthResult(
