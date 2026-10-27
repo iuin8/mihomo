@@ -135,7 +135,8 @@ def upsert_items(base, extra, where, key="name"):
 
 
 
-BYPASS_MARK = os.environ.get("ET_BYPASS_MARK", "")  # 未配置 ⇒ 相关门禁显式失败（见 bypass_absent）
+# BYPASS_MARK 是 canonical；ET_BYPASS_MARK 仅为旧调用方的 deprecated alias。
+BYPASS_MARK = os.environ.get("BYPASS_MARK") or os.environ.get("ET_BYPASS_MARK", "")
 K8S_NODE_PREFIX = os.environ.get("K8S_NODE_PREFIX", "")   # 机器相关：local-state/tools.env
 FRP_GROUPS = [g for g in os.environ.get("FRP_GROUPS", "").split(",") if g]
 
