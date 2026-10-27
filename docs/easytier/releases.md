@@ -4,7 +4,21 @@
 > 家侧与出口用同一镜像；升级见 `ops-sop.md`。
 > 下文命令中的部署目录/容器名写的是本机示例，换机器时按实际替换。
 
-## 2026-10-27 · 同步上游 #2754（Rust TCP teardown，未发布）
+## v1.19.32-fa.1030（内核 `1.10.0-fa.1030`，2026-10-27）
+
+构建：run `40477853855`（repo `iuin8/mihomo`，ref `fa/trunk`，head `1896ea57`）。
+
+本版包含：
+
+- 上游 #2754 Rust guest 侧 TCP teardown 同步（详见下一节）
+- **F-02 headroom 回归修复**：`autoReleaseConn`/`autoReleasePacketConn` 暴露
+  `UpstreamWriter/Reader`，避免 TUN 读缓冲无 front headroom 导致 shadowsocks2
+  `ExtendHeader(18)` panic；`CloseWrite` 经 `N.UnwrapWriter` 到真实链路，fallback 语义明确。
+
+真机验收（2026-10-27，移动网）：本机/家侧均 fa.1030；20 次 `https://pdd.iuin.dev`
+20/20 200；家侧 19 TIME-WAIT / 0 ESTAB，65s 后 0；无 Close/panic；gateway healthy/restarts=0。
+
+## 2026-10-27 · 同步上游 #2754（Rust TCP teardown）
 
 上游 #2754 已由维护者以 **Rust guest 侧生命周期**合并（merge `34631908`，PR head `b661721a`）：
 
@@ -26,7 +40,7 @@
 - 验证：`go test ./component/easytier ./adapter/outbound` PASS；`go build ./...` PASS；
   `third_party/easytier-go/tests` 的 TCP/UDP 数据面测试 PASS
 
-发布前仍需按 fa.1028 流程做真机验收（退出节点 20 次公网请求 `EST=0`、TIME_WAIT 正常、无 Close 错误）。
+已随 `fa.1030` 发布；真机验收见上节。
 
 ## v1.19.32-fa.1028（内核 `1.10.0-fa.1028`，2026-10-25）
 
