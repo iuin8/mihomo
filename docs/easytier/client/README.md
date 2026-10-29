@@ -23,13 +23,13 @@ CLUSTER_DOMAIN=cluster.local DNS=<内网DNS> sh render.sh > my-profile.yaml
 短模板 `mihomo-profile.template.yaml` 适合**已有机场订阅**的人做内网增量；如果对方没有机场，
 或需要一份能独立跑的最小完整配置，用这两个文件/公开 Gist：
 
-- Gist: <https://gist.github.com/iuin8/e3c15017e69138b6ad5d99f605ccba44>
-- 本仓库：`mihomo-profile.complete.template.yaml`（占位符）与
-  `mihomo-profile.complete.example.yaml`（全脱敏示例）
+- 仓库示例: `../examples/`（脱敏模板 + 假值示例）
+- 本仓库：`../examples/complete.template.yaml`（占位符）与
+  `../examples/complete.example.yaml`（全脱敏示例）
 
 ```bash
 # 完整版模板渲染（示例值都是假的，按真实拓扑替换）
-TEMPLATE=docs/easytier/client/mihomo-profile.complete.template.yaml \
+TEMPLATE=docs/easytier/examples/complete.template.yaml \
 LAN_NODE=et-home NET_NAME=example-overlay NET_SECRET=CHANGE_ME \
 RENDEZVOUS=10.200.0.10 EXIT_ADDR=10.200.0.2 PHYS_NIC=en0 GROUP=内网入口 \
 OVERLAY=10.200.0.0/24 HOME_CIDR=192.168.1.0/24 CORP_CIDR=10.0.0.0/8 \
