@@ -1,0 +1,68 @@
+# ============================================================================
+# 完整独立版「EasyTier 内网接入」脱敏示例
+#
+# 所有地址/域名/secret 都是示例值，不能直接用于生产：
+#   - 把 network-secret 换成你的 overlay secret；
+#   - 把 peers / EXIT_ADDR / CIDR / 域名换成你的拓扑；
+#   - 把 en0 换成持有本机 LAN 地址的物理网卡。
+# 该文件是**完整配置**，可直接由 fork mihomo -f 或 CVR 本地导入使用。
+# ============================================================================
+
+mixed-port: 7897
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+unified-delay: true
+
+tun:
+  enable: true
+  stack: gvisor
+  auto-route: true
+  auto-detect-interface: true
+  dns-hijack:
+    - "any:53"
+  mtu: 1500
+
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "+.corp.example.com"
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+  nameserver-policy:
+    "+.cluster.local":
+      - "10.96.0.10#et-home"
+
+proxies:
+  - name: et-home
+    type: easytier
+    network-name: example-overlay
+    network-secret: "<NET_SECRET>"
+    no-listener: true
+    tun: false
+    udp: true
+    interface-name: en0
+    peers:
+      - tcp://10.200.0.10:11010
+    exit-nodes:
+      - 10.200.0.2
+
+proxy-groups:
+  - name: 内网入口
+    type: select
+    proxies:
+      - DIRECT
+      - et-home
+
+rules:
+  - IP-CIDR,10.200.0.0/24,DIRECT,no-resolve
+  - IP-CIDR,192.168.1.0/24,内网入口
+  - IP-CIDR,10.0.0.0/8,内网入口
+  - DOMAIN-SUFFIX,corp.example.com,内网入口
+  - DOMAIN-SUFFIX,cluster.local,et-home
+  - MATCH,DIRECT

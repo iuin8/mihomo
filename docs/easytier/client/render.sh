@@ -5,10 +5,11 @@
 #   PHYS_NIC=en0 GROUP=内网入口 OVERLAY=10.144.0.0/24 HOME_CIDR=192.168.1.0/24 \
 #   CORP_CIDR=10.0.0.0/8 CORP_DOMAIN=x.example.com CLUSTER_DOMAIN=cluster.local DNS=10.96.0.10 \
 #   sh render.sh > my-profile.yaml
+#   完整版模板: TEMPLATE=.../mihomo-profile.complete.template.yaml sh render.sh > my-profile.yaml
 #   注:PHYS_NIC 必须是持有本机 LAN 地址、且不是 Meta/tun/utun/easytier* 的那块网卡 ✓
 #       (留空会让内核按目标自动探测 ⇒ 大概率选中 overlay 自己 ⇒ 回环 ✗)
 set -eu
-T="$(dirname "$0")/mihomo-profile.template.yaml"
+T="${TEMPLATE:-$(dirname "$0")/mihomo-profile.template.yaml}"
 [ -f "$T" ] || { echo "找不到模板: $T" >&2; exit 1; }
 python3 - "$T" <<'PY'
 import os, re, sys

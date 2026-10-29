@@ -18,6 +18,28 @@ HOME_CIDR=192.168.1.0/24 CORP_CIDR=10.0.0.0/8 CORP_DOMAIN=<内网域名> \
 CLUSTER_DOMAIN=cluster.local DNS=<内网DNS> sh render.sh > my-profile.yaml
 ```
 
+## 完整独立版（无机场也能直接导入）
+
+短模板 `mihomo-profile.template.yaml` 适合**已有机场订阅**的人做内网增量；如果对方没有机场，
+或需要一份能独立跑的最小完整配置，用这两个文件/公开 Gist：
+
+- Gist: <https://gist.github.com/iuin8/e3c15017e69138b6ad5d99f605ccba44>
+- 本仓库：`mihomo-profile.complete.template.yaml`（占位符）与
+  `mihomo-profile.complete.example.yaml`（全脱敏示例）
+
+```bash
+# 完整版模板渲染（示例值都是假的，按真实拓扑替换）
+TEMPLATE=docs/easytier/client/mihomo-profile.complete.template.yaml \
+LAN_NODE=et-home NET_NAME=example-overlay NET_SECRET=CHANGE_ME \
+RENDEZVOUS=10.200.0.10 EXIT_ADDR=10.200.0.2 PHYS_NIC=en0 GROUP=内网入口 \
+OVERLAY=10.200.0.0/24 HOME_CIDR=192.168.1.0/24 CORP_CIDR=10.0.0.0/8 \
+CORP_DOMAIN=corp.example.com CLUSTER_DOMAIN=cluster.local DNS=10.96.0.10 \
+sh docs/easytier/client/render.sh > my-profile.yaml
+```
+
+完整版直接包含 `mixed-port`、TUN、DNS、proxies、groups、rules；不需要依赖机场。
+`NET_SECRET` 仍是 overlay 入网资格，对外分享前必须另建网络/secret，不能直接把真实值给对方。
+
 ## 交付前自检(必须全过 ✓)
 
 ```bash

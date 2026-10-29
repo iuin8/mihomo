@@ -15,7 +15,7 @@
   `UpstreamWriter/Reader`，避免 TUN 读缓冲无 front headroom 导致 shadowsocks2
   `ExtendHeader(18)` panic；`CloseWrite` 经 `N.UnwrapWriter` 到真实链路，fallback 语义明确。
 
-真机验收（2026-10-27，移动网）：本机/家侧均 fa.1030；20 次 `https://pdd.iuin.dev`
+真机验收（2026-10-27，移动网）：本机/家侧均 fa.1030；20 次 `<PUBLIC_TARGET>`
 20/20 200；家侧 19 TIME-WAIT / 0 ESTAB，65s 后 0；无 Close/panic；gateway healthy/restarts=0。
 
 ## 2026-10-27 · 同步上游 #2754（Rust TCP teardown）
