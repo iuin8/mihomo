@@ -9,7 +9,7 @@
 # 由 .github/workflows/mihomo-image.yml 构建（多架构 amd64/arm64）。
 #
 # 想自己编译内核（改了代码、或拉不到 GHCR）时直接在仓库根构建：
-#   docker build -f docs/easytier/Dockerfile -t ghcr.io/iuin8/mihomo:<tag> .
+#   docker build -f docker/Dockerfile.easytier -t ghcr.io/iuin8/mihomo:<tag> .
 #
 # 这里**没有** iptables/MASQUERADE，也不需要：实测 EasyTier（guest）在 TUN 模式下自己会 SNAT，
 # 内网主机看到的是本机内网地址、回包正常。若你的内网拓扑特殊、实测回包不通，

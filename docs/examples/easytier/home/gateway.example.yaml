@@ -9,7 +9,7 @@
 #
 # ⚠️ 内核必须是本 fork 构建的：上游内核会**静默忽略** tun: true（配置校验还照样通过），
 #    结果就是又回到 no-TUN——表现为代理子网 TCP 不通、ICMP 不可用，且没有任何报错提示。
-#    docker-compose.yml 拉取本 fork 的镜像（GHCR），**不会**在本地编译；要自编见 Dockerfile。
+#    docker-compose.yml 拉取本 fork 的镜像（GHCR），**不会**在本地编译；要自编见 docker/Dockerfile.easytier。
 #
 # `/dev/net/tun` 与 `NET_ADMIN` 由 compose 提供。本拓扑**不需要** NAT/`ip_forward`：
 # WASI guest 在自己的 smoltcp 栈里做转发与 SNAT（host 网络下 Docker 也不允许设 sysctls）✓。
