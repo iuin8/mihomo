@@ -16,7 +16,7 @@
 # 再按 ops-sop 的故障模式加一条 SNAT（不要默认加）。
 #
 # 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
-# ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
+# ../../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
 
 name: easytier-gateway
 
@@ -63,8 +63,8 @@ services:
 
       # ← 改成你的 geoip 目录：Geo 数据必须持久化。否则重建容器时它会去 GitHub 拉 GeoIP/GeoSite，
       #    国内网络拉不到 ⇒ fatal ⇒ 重启循环 ✗（实测踩过 ✓）。
-      - /data/docker/mihomo/geoip/geoip.metadb:/root/.config/mihomo/geoip.metadb:ro
-      - /data/docker/mihomo/geoip/GeoSite.dat:/root/.config/mihomo/GeoSite.dat:ro
+      - ./geoip/geoip.metadb:/root/.config/mihomo/geoip.metadb:ro
+      - ./geoip/GeoSite.dat:/root/.config/mihomo/GeoSite.dat:ro
       # 节点标识（machine_id）的持久化点 ✓ —— 用 Docker 托管卷，不落在仓库目录里 ✓（不需要用户看/改 ✓）
       # · 名字**显式固定**：否则默认是 <project>_gateway-state ✗，改一次项目名就换卷 ✓（今天刚改过 ✗）
       # · `docker compose down -v` / `docker volume prune` 会删掉它 ✗ → 只会换一个新标识 ✓，不会断连 ✓

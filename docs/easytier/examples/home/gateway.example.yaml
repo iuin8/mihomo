@@ -17,7 +17,7 @@
 
 # ── 2026-10-14 补：宿主终端接管（"合并路线"）────────────────────────────────────
 # 目标：家侧**宿主机自己**的流量（终端 curl、浏览器…）也走本机出口。
-# 做法：容器改 network_mode: host（见 docker-compose.yml ✓）＋ 下面这段 tun。
+# 做法：容器改 network_mode: host（见 docker-compose.example.yml ✓）＋ 下面这段 tun。
 # 安全底线：route-exclude-address 里的私网段**绝不能省** ✓ —— 一旦把管理面
 # （ssh 来源网段）、内网、docker 网桥也接管，就会把自己的管理连接送进隧道 ✗。
 # 实测判据：宿主上 `ip -o link show | grep -c Meta` = 1 ✓、
@@ -48,25 +48,25 @@ proxies:
 #   取值：持有本机 LAN 地址、且设备名不是 Meta/tun/utun/easytier* 的那块 ✓
 - name: et-gateway
   type: easytier
-  network-name: private-overlay
-  network-secret: "<改这里：与所有节点一致的网络密钥>"
-  hostname: "<改这里：家侧主机名>"
-  instance-name: "<改这里：家侧主机名>"
-  ipv4: 10.144.0.2/24
-  interface-name: <改这里：物理网卡名，如 enp2s0>
-  state-dir: /root/.config/mihomo/easytier
+  network-name: example-overlay
+  network-secret: "<NET_SECRET>"
+  hostname: home-gateway
+  instance-name: home-gateway
+  ipv4: 10.200.0.2/24
+  interface-name: en0
+  state-dir: ./easytier
   listeners:
   - tcp://0.0.0.0:11110
   - udp://0.0.0.0:11110
   peers:
-  - tcp://<改这里：会合点公网IP或域名>:11010
+  - tcp://10.200.0.10:11010
   enable-exit-node: true
   # 「全出口」推荐写法:两个半区 0.0.0.0/1 + 128.0.0.0/1（语义等价于 0/0，作为保守约定）
   # 注：2026-10-24 本组受控实验（两实例均 tun:false）里 0/0 单条/双公告均可用，
   #     "前缀 0 不生效"未能复现；生产家侧 tun:true 路径未覆盖；
   #     全出口在 #1b 修复前不用于生产（见 docs/easytier/feature-matrix.md）
   # proxy-networks: ["<内网网段>", "0.0.0.0/1", "128.0.0.0/1"]
-  proxy-networks: ["<改这里：要公告给别人的网段，如 192.168.1.0/24>"]
+  proxy-networks: ["192.168.1.0/24"]
   udp: true
   mtu: 1380
   tun: true
@@ -74,22 +74,22 @@ proxies:
   tun-routes: []
 - name: et-mac
   type: easytier
-  network-name: private-overlay
-  network-secret: "<改这里：与所有节点一致的网络密钥>"
+  network-name: example-overlay
+  network-secret: "<NET_SECRET>"
   no-listener: true
   peers:
-  - tcp://<改这里：会合点公网IP或域名>:11010
+  - tcp://10.200.0.10:11010
   udp: true
   # 入口节点也要本地接管时才开 tun；每个 overlay /24 只能有一个 tun:true 持有者 ⇒ 用独立 /24
   # （目标拓扑；现场若仍是同 /24 双 tun，先按 ops-sop 判据迁移，别直接抄）
-  ipv4: 10.144.1.1/24
-  interface-name: <改这里：物理网卡名，如 enp2s0>
+  ipv4: 10.200.1.1/24
+  interface-name: en0
   tun: true
   tun-routes:
   - 1.1.1.1/32
-  - 10.145.0.0/24
+  - 10.200.2.0/24
   exit-nodes:
-  - 10.144.0.6
+  - 10.200.0.6
   prewarm: true
 dns:
   enable: true
@@ -104,10 +104,10 @@ sniffer:
 rules:
 # ★ 会合点必须直连(2026-10-19 血案 ✓):家侧若把公网会合点也送进隧道,就会自锁——
 #   建 overlay 必须先连会合点,而连会合点的流量又被兜底规则塞进 overlay ✗
-- IP-CIDR,<会合点 IP>/32,DIRECT,no-resolve
+- IP-CIDR,10.200.0.10/32,DIRECT,no-resolve
 - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
 - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
-- IP-CIDR,192.168.0.0/24,et-mac,no-resolve
+- IP-CIDR,192.168.1.0/24,et-mac,no-resolve
 - GEOIP,private,DIRECT,no-resolve
 - GEOSITE,cn,DIRECT
 - GEOIP,cn,DIRECT

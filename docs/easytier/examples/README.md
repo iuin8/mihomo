@@ -1,30 +1,31 @@
-# EasyTier 内网接入示例（脱敏）
+# EasyTier 示例（脱敏）
 
-本目录只放**仓库内的脱敏示例**，不要放真实 secret、真实内网域名或真实公网 IP。
+本目录按角色分成三个文件夹；每个角色都有一份**完整、脱敏、可独立阅读**的示例配置。
+这里只放假值/占位符，**不放真实 secret、真实内网域名或真实公网 IP**。
 
-| 文件 | 用途 |
-|---|---|
-| `complete.template.yaml` | 完整独立配置占位符模板；可直接编辑或用 `render.sh` 渲染 |
-| `complete.example.yaml` | 完整独立配置脱敏示例；所有值都是假的 |
+| 目录 | 角色 | 完整示例 |
+|---|---|---|
+| [`client/`](client/) | 客户端：接入内网 | `complete.template.yaml` / `complete.example.yaml` |
+| [`exit/`](exit/) | 出口：把家侧的包用自己的网络送出去 | `complete.example.yaml` |
+| [`home/`](home/) | 家侧网关：公告内网 + 可选接管宿主 | `gateway.example.yaml` / `docker-compose.example.yml` |
 
-## 与 `client/` 短模板的区别
+## 共同前提
 
-- `client/mihomo-profile.template.yaml`：给**已有机场订阅**的人做内网增量；
-- 本目录 `complete.*.yaml`：**不依赖机场**的完整配置，包含 `mixed-port`、TUN、DNS、proxies、groups、rules。
+- 内核必须是**本 fork 的 mihomo**：`type: easytier` 和 `tun: true` 是 fork 能力，上游会静默忽略；
+- `NET_SECRET` 是 overlay 入网资格，不能公开；对外分享请另建 overlay + secret；
+- TUN 需要 root / `CAP_NET_ADMIN`；CVR 服务模式会处理；
+- 示例里的 `10.200.0.0/24`、`example-overlay`、`home-gateway`、`en0` 等都是假值。
 
-## 渲染
+## 校验
 
 ```bash
-TEMPLATE=docs/easytier/examples/complete.template.yaml \
-LAN_NODE=et-home NET_NAME=example-overlay NET_SECRET=CHANGE_ME \
-RENDEZVOUS=10.200.0.10 EXIT_ADDR=10.200.0.2 PHYS_NIC=en0 GROUP=内网入口 \
-OVERLAY=10.200.0.0/24 HOME_CIDR=192.168.1.0/24 CORP_CIDR=10.0.0.0/8 \
-CORP_DOMAIN=corp.example.com CLUSTER_DOMAIN=cluster.local DNS=10.96.0.10 \
-sh docs/easytier/client/render.sh > my-profile.yaml
+sh docs/easytier/check-templates.sh        # 不得有真实 secret/公网 IP/真实目标
+mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/client/complete.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/exit/complete.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/home/gateway.example.yaml
 ```
 
-## 安全
+## 可直接用的私密完整配置
 
-- `<NET_SECRET>` 是 overlay 入网资格；分享配置 = 分享入网资格。
-- 对外分享请另建 overlay + secret，或让对方填自己的 secret。
-- 需要一份**可直接使用**的私密完整配置时，放**secret gist**，不要放公开 repo；不要把真实值贴到 Issue/日志/截图。
+仓库只放脱敏示例。需要给**可信人**的、带真实 overlay 参数的完整配置放 **secret gist**，
+不要复制进 repo，也不要改成公开 gist；分享链接外泄时轮换 overlay secret。

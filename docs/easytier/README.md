@@ -62,12 +62,18 @@
 
 ## 分享给别人（订阅化 ✓ 模板化 ✓）
 
+示例已按角色整理到 [`examples/`](examples/)：
+
+- [`examples/client/`](examples/client/)：完整客户端配置 + 渲染器；
+- [`examples/exit/`](examples/exit/)：完整出口配置；
+- [`examples/home/`](examples/home/)：完整家侧网关配置 + compose。
+
 ```text
-① 复制 docs/easytier/client/mihomo-profile.template.yaml → my-profile.yaml
-② 填值（或一键渲染,推荐 ✓）:
-   sh docs/easytier/client/render.sh        # 缺任一变量会**拒绝输出** ✗;输出前会校验 YAML ✓
-③ 导入:Clash Verge Rev → 订阅 → 导入**本地文件**（或把这个文件放进静态托管,作为**订阅 URL** 分享 ✓）
-④ 切换:分组 <内网分组名> —— 现场选 DIRECT ✓ / 离网选入口节点 ✓（终端与浏览器自动生效 ✓）
+① 选对应角色的完整示例（client/exit/home）
+② 填值（或客户端一键渲染）:
+   sh docs/easytier/examples/client/render.sh   # 缺任一变量拒绝输出；输出前校验 YAML
+③ 导入:Clash Verge Rev → 订阅 → 导入本地文件/订阅 URL；home/exit 按 README 部署
+④ 切换:分组 <内网分组名> —— 现场选 DIRECT ✓ / 离网选入口节点 ✓
 ⑤ 交付前自检:sh docs/easytier/check-templates.sh   # 不得有明文 secret / 公网 IP ✗
 ```
 
@@ -93,7 +99,7 @@
 | 配置改对了却"没生效" ✗ | 改的是**生成物**（`clash-verge.yaml`）而不是内核真正读的运行时配置 ✗ | 改 profile ✓ 或改运行时 ✓（两者要一致 ✓） |
 | macOS 上自建 TUN 完全不通 ✗ | macOS `utun` 每包带 **4 字节地址族头** ✗，裸读写会让内核丢弃/误判 ✗ | 本 fork 已修（`tun_packet_darwin.go` ✓）；**必须用本 fork 的内核** ✓ |
 | 一开始"借出口成功"的读数 ✗ | 那是 guest 在宿主上的**裸直连**（不出现在 `/connections`、不经过 TUN ✗） | 判据要看**替对端拨号那条连接的字节数**（`wrote/read` ✓），不要看表象 ✓ |
-| 家侧网关带 `sysctls` + host 网络起不来 ✗ | host 模式下 Docker 禁止设 `ip_forward` ✗ | 删掉 `sysctls` ✓（见 `home/docker-compose.yml` ✓） |
+| 家侧网关带 `sysctls` + host 网络起不来 ✗ | host 模式下 Docker 禁止设 `ip_forward` ✗ | 删掉 `sysctls` ✓（见 `examples/home/docker-compose.example.yml` ✓） |
 
 ## 安全（对外分享前必看 ✓）
 

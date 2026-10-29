@@ -1,0 +1,76 @@
+# ============================================================================
+# 出口（exit）节点完整脱敏示例：把家侧的包用自己的网络送出去
+#
+# 所有 secret / 会合点 / 网段 / 节点名都是示例值；把 <...> 和 fake 值替换为
+# 你的拓扑后再使用。必须使用本 fork 的 mihomo（上游会静默忽略 tun: true）。
+# ============================================================================
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+
+tun:
+  enable: true
+  stack: gvisor
+  auto-route: true
+  auto-detect-interface: true
+  route-exclude-address:
+    - 10.0.0.0/8
+    - 127.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
+  dns-hijack:
+    - any:53
+  mtu: 1500
+
+proxies:
+  - name: et-fa
+    type: easytier
+    network-name: example-overlay
+    network-secret: "<NET_SECRET>"
+    ipv4: 10.200.0.6/24
+    tun: true
+    tun-routes: []
+    proxy-networks:
+      - 192.168.1.0/24       # 本机所在网段（示例）
+    enable-exit-node: true
+    no-listener: true
+    udp: true
+    interface-name: en0      # 持有本机 LAN 地址的物理网卡
+    peers:
+      - tcp://10.200.0.10:11010
+    # 出口替对端拨号时必须走本机可用的代理组；没有机场时可指向 DIRECT 仅做结构演示
+    dialer-proxy: exit-proxy
+
+proxy-groups:
+  - name: exit-proxy
+    type: select
+    proxies:
+      - DIRECT
+      # 把这里替换成你的机场组/节点；否则国外目标仍会裸直连
+
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+  nameserver-policy:
+    geosite:geolocation-!cn:
+      - https://1.1.1.1/dns-query#exit-proxy
+      - https://8.8.8.8/dns-query#exit-proxy
+
+rules:
+  - IP-CIDR,10.200.0.0/24,DIRECT,no-resolve
+  - IP-CIDR,192.168.1.0/24,et-fa,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - GEOIP,private,DIRECT,no-resolve
+  - GEOSITE,cn,DIRECT
+  - GEOIP,cn,DIRECT
+  - MATCH,DIRECT
