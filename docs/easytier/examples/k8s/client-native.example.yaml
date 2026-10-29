@@ -1,0 +1,87 @@
+# ============================================================================
+# 普通容器版 EasyTier 客户端（无 TUN / 无 NET_ADMIN / 无 hostNetwork）
+#
+# 只开 SOCKS5：集群内的应用把 socks5h://easytier-client.default.svc:1080
+# 作为代理，即可访问 overlay/家侧；本文件不提供透明 L3 网关。
+# 需要透明网关时用 deployment.example.yaml（那需要 NET_ADMIN + /dev/net/tun）。
+# ============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: easytier-client
+  namespace: default
+spec:
+  selector:
+    app: easytier-client
+  ports:
+    - name: socks5
+      port: 1080
+      targetPort: 1080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easytier-client
+  namespace: default
+  labels:
+    app: easytier-client
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: easytier-client
+  template:
+    metadata:
+      labels:
+        app: easytier-client
+    spec:
+      # 需要固定到 master1 时使用；不需要可删掉整个 nodeSelector
+      nodeSelector:
+        kubernetes.io/hostname: master1
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: easytier
+          image: easytier/easytier:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+          ports:
+            - name: socks5
+              containerPort: 1080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            tcpSocket:
+              port: 1080
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 1080
+            periodSeconds: 30
+            failureThreshold: 6
+          args:
+            - --network-name
+            - "<NET_NAME>"
+            - --network-secret
+            - "<NET_SECRET>"
+            - --peers
+            - "tcp://<RENDEZVOUS>:11010"
+            - --no-tun
+            - --no-listener
+            - --socks5
+            - "1080"
+            - --exit-nodes
+            - "<EXIT_NODE>"
+            - --hostname
+            - easytier-client
+            - --instance-name
+            - easytier-client

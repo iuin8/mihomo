@@ -8,7 +8,7 @@
 | [`home/`](home/) | 家侧网关：公告内网 + 可选接管宿主 | `gateway.example.yaml` / `docker-compose.example.yml` |
 | [`rendezvous/`](rendezvous/) | 汇合点：让 NAT 后的两侧互相发现/中继 | `docker-compose.example.yml` |
 | [`local/`](local/) | 本机：客户端接入内网 / 出口替家侧出网 | `client.example.yaml` / `exit.example.yaml` |
-| [`k8s/`](k8s/) | Kubernetes 网关：`et-k8s` 节点 | `deployment.example.yaml` + `config.example.yaml` |
+| [`k8s/`](k8s/) | Kubernetes：普通 SOCKS5 客户端 / TUN 网关 | `client-native.example.yaml` / `deployment.example.yaml` |
 
 ## 目录结构
 
@@ -28,6 +28,7 @@ docs/easytier/examples/
 │   └── exit.example.yaml
 └── k8s/                  # 集群网关
     ├── README.md
+    ├── client-native.example.yaml
     ├── config.example.yaml
     ├── deployment.example.yaml
     └── kustomization.yaml

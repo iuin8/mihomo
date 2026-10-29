@@ -41,7 +41,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: mihomo
-          image: ghcr.io/iuin8/mihomo:v1.19.31-fa.1001
+          image: ghcr.io/iuin8/mihomo:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:

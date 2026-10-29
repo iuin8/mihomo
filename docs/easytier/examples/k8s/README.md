@@ -9,6 +9,21 @@ Service/Pod 网段公告给 overlay，外部客户端通过 `et-k8s` 访问集�
 | [`deployment.example.yaml`](deployment.example.yaml) | PVC + Deployment（hostNetwork/TUN/probe） |
 | [`kustomization.yaml`](kustomization.yaml) | 把 config 生成 ConfigMap，一并 apply |
 
+## 两种 k8s 形态
+
+| 文件 | 形态 | 权限 |
+|---|---|---|
+| [`client-native.example.yaml`](client-native.example.yaml) | **普通容器**：EasyTier 原生 SOCKS5（无 TUN） | 无特权 |
+| [`deployment.example.yaml`](deployment.example.yaml) | 透明 L3 网关（mihomo TUN） | `NET_ADMIN` + `/dev/net/tun` |
+
+不需要透明接管时优先用普通容器版；它不需要 mihomo，也不需要 TUN/NET_ADMIN。客户端使用：
+
+```text
+socks5h://easytier-client.default.svc.cluster.local:1080
+```
+
+需要“集群整体走 overlay”的透明网关才用 mihomo 版。
+
 ## 使用
 
 ```bash

@@ -10,7 +10,7 @@
 | [`home/`](examples/home/) | **家侧网关**：公告家里网段 ✓、替外网机器落地出网 ✓ | 家里（可 Docker `network_mode: host`） | 建 TUN + 转发（`NET_ADMIN` / 容器 host 网络） |
 | [`local/`](examples/local/) | **本机**：客户端接入内网 / 出口把家侧的包送出去 ✓（`exit.example.yaml`） | 一台普通机器或“好网络”机器 | 客户端 TUN 或出口 TUN |
 | [`rendezvous/`](examples/rendezvous/) | **会合点 / 中继**：让两侧 NAT 后也能连上 ✓ | 任意有公网 IP 的机器（云服务器） | 无（普通容器） |
-| [`k8s/`](examples/k8s/) | **Kubernetes 网关**：集群内 `hostNetwork` + TUN，公告 Service/Pod 网段 | Kubernetes 集群 | `NET_ADMIN` + `/dev/net/tun` |
+| [`k8s/`](examples/k8s/) | **Kubernetes**：普通 SOCKS5 客户端 / TUN 网关 | Kubernetes 集群 | 普通容器版无特权 |
 
 ```text
 家侧 home(10.200.0.2)  ⇄  会合点 rendezvous(公网:11010)  ⇄  本机 local(10.200.0.6)
