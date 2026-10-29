@@ -96,7 +96,7 @@ rules:
 
 代价与前置条件：
 - 公网流量绕经家侧（延迟 + 家侧带宽），家侧若配 `dialer-proxy` 则等于用家侧机场替对端出网；
-- **家侧必须稳定**：家侧容器被 OOM 杀掉会周期性断会话（见 `../examples/easytier/home/docker-compose.example.yml` 的 `mem_limit` 说明）；
+- **家侧必须稳定**：家侧容器被 OOM 杀掉会周期性断会话（见 `examples/home/docker-compose.example.yml` 的 `mem_limit` 说明）；
 - 判据：入口侧 `curl <只有家侧能访问的域名>` ⇒ 2xx；`dig` 拿到的是公网 IP 也算通过 ✓。
 
 > ⚠️ **当前不达生产标准（2026-10-22 实测）**：`fa.1027` 上让家侧公告默认路由后，
@@ -210,14 +210,14 @@ ssh <家侧> "docker exec mihomo-gateway sh -c 'strings /proc/1/exe | grep -c \"
    |---|---|---|
    | 上游订阅 | 机场 `profiles/<uid>.yaml`（`type: remote`） | ✗ 不编辑；要改行为用 merge/override 覆盖 |
    | 内核默认 | mihomo 源码默认值（如 `config/config.go` 的 `nameserver`） | ✗ 不追改 |
-   | **我们这层** | ① 对外发布：`../examples/easytier/local/client.example.yaml`（自包含）② 本机 overlay：`~/.local/state/clash-group/et-apply/overlay.yaml`（唯一手改 ✓）③ 本机订阅 profile | ✓ 唯一可改；改完用 `et-config apply` |
+   | **我们这层** | ① 对外发布：`examples/local/client.example.yaml`（自包含）② 本机 overlay：`~/.local/state/clash-group/et-apply/overlay.yaml`（唯一手改 ✓）③ 本机订阅 profile | ✓ 唯一可改；改完用 `et-config apply` |
    | 生成物 | 候选 `config.yaml`、CVR `clash-verge.yaml`、`/Library/.../runtime/config.yaml`（内核 `-f`） | ✗ 禁止手改，只由 `et-config` / CVR 产生 |
    ```
    ① grep -rl "<值>" "$CVR_DIR"                看命中哪个文件（排除 .bak / backup）
    ② profiles.yaml 的 current                   命中机场 profile ⇒ 上游层 ⇒ 不改
    ③ grep -rn "<值>" mihomo/{config,constant}   命中 ⇒ 内核默认层 ⇒ 不改
    ```
-   **对外分享只有一件东西** ✓：`../examples/easytier/local/client.example.yaml` —— 使用者「装 Clash + 导入这一份」，
+   **对外分享只有一件东西** ✓：`examples/local/client.example.yaml` —— 使用者「装 Clash + 导入这一份」，
    不改任何全局设置。本机两处是运行态，不对外；与模板**语义漂移即视为缺陷** ✗。
    ⚠️ 本机运行态 = **CVR 当前产物 + `overlay.yaml`（~1.3 KB）叠加** ✓，由 `et-config apply` 生成；
    不再维护整份快照 ✗（实测整份快照会因机场轮换域名而冻结旧数据 ✗）。叠加是幂等的 4 种操作

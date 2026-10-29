@@ -13,8 +13,8 @@
 ```bash
 # 1) 复制到一个不放在 git checkout 里的目录
 mkdir -p /data/docker/mihomo/easytier-gateway && cd /data/docker/mihomo/easytier-gateway
-cp <repo>/docs/examples/easytier/home/gateway.example.yaml ./gateway.yaml
-cp <repo>/docs/examples/easytier/home/docker-compose.example.yml ./docker-compose.yml
+cp <repo>/docs/easytier/examples/home/gateway.example.yaml ./gateway.yaml
+cp <repo>/docs/easytier/examples/home/docker-compose.example.yml ./docker-compose.yml
 mkdir -p geoip
 
 # 2) 改 gateway.yaml 的 secret / 会合点 / 家里网段 / 网卡
@@ -36,5 +36,5 @@ ip -o link show | grep -c Meta                 # 宿主 TUN 数
 curl -s -o /dev/null -w '%{http_code}\n' https://www.google.com/   # 宿主终端 ⇒ 200
 ```
 
-会合点、私网/内网规则与 `tun-routes` 的细节见 [`../../../easytier/tun-mode-spec.md`](../../../easytier/tun-mode-spec.md)；
+会合点、私网/内网规则与 `tun-routes` 的细节见 [`../../tun-mode-spec.md`](../../tun-mode-spec.md)；
 会合点部署见 [`../rendezvous/`](../rendezvous/)。

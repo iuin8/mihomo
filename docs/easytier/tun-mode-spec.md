@@ -1,7 +1,7 @@
 # 规格：EasyTier 出站 TUN 模式（fork-only）
 
 > **现状（2026-10-03）**：本文的选项契约与验收标准仍然有效 ✓。此后新增/变化的部分：
-> ① 家侧配置需要 `prewarm: true` ✓（服务端预启动实例，见 `../examples/easytier/home/gateway.example.yaml` 的 `prewarm: true`）；
+> ① 家侧配置需要 `prewarm: true` ✓（服务端预启动实例，见 `examples/home/gateway.example.yaml` 的 `prewarm: true`）；
 > ② 家侧镜像已发布为 `ghcr.io/iuin8/mihomo`（纯 mihomo，无入口脚本 ✓）；
 > ③ NAT 由 EasyTier 自身完成，**不再需要 iptables** ✓（实测：家侧 TUN 模式下 guest 自身 SNAT）。
 

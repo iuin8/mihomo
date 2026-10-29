@@ -4,7 +4,7 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
-SCAN_ROOTS="$SCRIPT_DIR $(cd "$SCRIPT_DIR/../examples/easytier" && pwd)"
+SCAN_ROOTS="$SCRIPT_DIR"
 bad=0
 # ① network-secret 必须占位
 for f in $(grep -rl "network-secret" $SCAN_ROOTS --include='*.yaml' --include='*.yml' --include='*.md' 2>/dev/null); do

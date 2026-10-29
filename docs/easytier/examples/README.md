@@ -12,7 +12,7 @@
 ## 目录结构
 
 ```text
-docs/examples/easytier/
+docs/easytier/examples/
 ├── README.md
 ├── home/                 # 家侧
 │   ├── README.md
@@ -38,9 +38,9 @@ docs/examples/easytier/
 
 ```bash
 sh docs/easytier/check-templates.sh        # 不得有真实 secret/公网 IP/真实目标
-mihomo -t -d /tmp/mihomo-validate -f docs/examples/easytier/local/client.example.yaml
-mihomo -t -d /tmp/mihomo-validate -f docs/examples/easytier/local/exit.example.yaml
-mihomo -t -d /tmp/mihomo-validate -f docs/examples/easytier/home/gateway.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/local/client.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/local/exit.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/home/gateway.example.yaml
 ```
 
 ## 可直接用的私密完整配置
