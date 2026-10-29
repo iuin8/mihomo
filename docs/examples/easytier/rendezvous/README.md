@@ -4,12 +4,12 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| [`docker-compose.yml`](docker-compose.yml) | 一条命令起会合点（私有模式 + 端口 + `ulimit` + 日志轮转 ✓） |
+| [`docker-compose.example.yml`](docker-compose.example.yml) | 一条命令起会合点（私有模式 + 端口 + `ulimit` + 日志轮转 ✓） |
 
 ## 部署
 
 ```bash
-scp docker-compose.yml root@<你的云服务器>:/root/easytier-rendezvous/
+scp docker-compose.example.yml root@<你的云服务器>:/root/easytier-rendezvous/
 ssh root@<你的云服务器> 'cd /root/easytier-rendezvous && docker compose up -d'
 ```
 

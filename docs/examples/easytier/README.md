@@ -6,8 +6,28 @@
 | 目录 | 部署方 | 完整示例 |
 |---|---|---|
 | [`home/`](home/) | 家侧网关：公告内网 + 可选接管宿主 | `gateway.example.yaml` / `docker-compose.example.yml` |
-| [`rendezvous/`](rendezvous/) | 汇合点：让 NAT 后的两侧互相发现/中继 | `docker-compose.yml` |
+| [`rendezvous/`](rendezvous/) | 汇合点：让 NAT 后的两侧互相发现/中继 | `docker-compose.example.yml` |
 | [`local/`](local/) | 本机：客户端接入内网 / 出口替家侧出网 | `client.template.yaml` / `client.example.yaml` / `exit.example.yaml` |
+
+## 目录结构
+
+```text
+docs/examples/easytier/
+├── README.md
+├── home/                 # 家侧
+│   ├── README.md
+│   ├── gateway.example.yaml
+│   └── docker-compose.example.yml
+├── rendezvous/           # 汇合点
+│   ├── README.md
+│   └── docker-compose.example.yml
+└── local/                # 本机
+    ├── README.md
+    ├── client.template.yaml
+    ├── client.example.yaml
+    ├── exit.example.yaml
+    └── render.sh
+```
 
 ## 共同前提
 

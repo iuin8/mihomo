@@ -16,7 +16,7 @@
 # 再按 ops-sop 的故障模式加一条 SNAT（不要默认加）。
 #
 # 家侧没有公网 IP / 不能做端口映射时：不需要任何入站端口，两端都通过
-# ../rendezvous/docker-compose.yml 里那台"共享节点"会合即可。
+# ../rendezvous/docker-compose.example.yml 里那台"共享节点"会合即可。
 
 name: easytier-gateway
 
