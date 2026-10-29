@@ -60,12 +60,11 @@
 > 三类都落到**同一个入口分组** ⇒ 终端与浏览器**自动**生效，无需给任何客户端单独配代理 ✓。
 
 
-## 分享给别人（订阅化 ✓ 模板化 ✓）
+## 分享给别人（示例化 ✓）
 
 示例已按三方部署整理到 [`examples/easytier/`](../examples/easytier/)：
 
-- [`examples/easytier/local/`](../examples/easytier/local/)：本机（客户端/出口）完整配置 + 渲染器；
-
+- [`examples/easytier/local/`](../examples/easytier/local/)：本机（客户端/出口）完整配置；
 - [`examples/easytier/home/`](../examples/easytier/home/)：家侧完整网关配置 + compose；
 - [`examples/easytier/rendezvous/`](../examples/easytier/rendezvous/)：汇合点部署。
 
@@ -77,7 +76,7 @@
 ⑤ 交付前自检:sh docs/easytier/check-templates.sh   # 不得有明文 secret / 公网 IP ✗
 ```
 
-> ⚠️ 模板含 overlay 入网资格 ⇒ 对外分享建议**单独一套网络 + 单独 secret** ✓。
+> ⚠️ 示例含 overlay 入网资格 ⇒ 对外分享建议**单独一套网络 + 单独 secret** ✓。
 
 ## 三条不可省的判据（少一条就会出现"看着通、其实没通"✗）
 
@@ -93,7 +92,7 @@
 
 | 现象 | 真因 | 处置 |
 | --- | --- | --- |
-| 家侧终端 `curl google` 不通 ✗ | 宿主机根本没被接管（流量直连出网 ✗） | 家侧容器改 `network_mode: host` + 开 `tun` ✓（见 `home/`） |
+| 家侧终端 `curl google` 不通 ✗ | 宿主机根本没被接管（流量直连出网 ✗） | 家侧容器改 `network_mode: host` + 开 `tun` ✓（见 `../examples/easytier/home/`） |
 | 借出口"国内能通、国外不通" ✗ | 出口侧没配 `dialer-proxy` ⇒ 裸直连 ✗ | 见判据 1 ✓ |
 | 国外目标解析成奇怪 IP ✗ | 出口用了裸国内 DNS ✗ | 见判据 2 ✓ |
 | 配置改对了却"没生效" ✗ | 改的是**生成物**（`clash-verge.yaml`）而不是内核真正读的运行时配置 ✗ | 改 profile ✓ 或改运行时 ✓（两者要一致 ✓） |
@@ -104,7 +103,7 @@
 ## 安全（对外分享前必看 ✓）
 
 * 配置里含 **`network-secret`** ⇒ **分享配置 = 给出入网资格** ✓；
-* 对外分享建议：**单独一套网络名 + 单独的密钥** ✓（`rendezvous/` 里也是同一份密钥 ✓）；
+* 对外分享建议：**单独一套网络名 + 单独的密钥** ✓（`../examples/easytier/rendezvous/` 里也是同一份密钥 ✓）；
 * 会合点用**私有模式** ✓（`--private-mode true` ✓）：只接受同名同密钥的网络 ✓，不必配 fail2ban ✓；
 * 会合点放公网只需开 **11010 tcp+udp** ✓，其余端口按需 ✓。
 
@@ -121,7 +120,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://<家侧内网某台机器的 IP>
 curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com/   ⇒ 期望 200 ✓
 ```
 
-详细到每个角色的步骤，见各自目录里的 `README.md` ✓。设计与验收规格见 [`tun-mode-spec.md`](tun-mode-spec.md) ✓；
+详细到每个部署方的步骤，见 `../examples/easytier/{home,rendezvous,local}/README.md` ✓。设计与验收规格见 [`tun-mode-spec.md`](tun-mode-spec.md) ✓；
 macOS 服务模式下内核被 SIGKILL 的那个坑见 [`service-mode-sigkill.md`](service-mode-sigkill.md) ✓。
 - 想**全自动改配置/重建内核**、或排查"借出口超时"?看 [`ops-sop.md`](ops-sop.md)(特权助手 + 测试纪律 + 故障模式表 ✓)
 
