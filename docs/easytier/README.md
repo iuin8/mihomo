@@ -71,9 +71,8 @@
 
 ```text
 ① 选对应部署方的完整示例（home/rendezvous/local）
-② 填值（或客户端一键渲染）:
-   sh docs/examples/easytier/local/render.sh   # 缺任一变量拒绝输出；输出前校验 YAML
-③ 导入:Clash Verge Rev → 订阅 → 导入本地文件/订阅 URL；home/exit 按 README 部署
+② 复制示例并替换占位值（local/client.example.yaml 或 local/exit.example.yaml）
+③ 导入:Clash Verge Rev → 订阅 → 导入本地文件/订阅 URL；home/rendezvous 按 README 部署
 ④ 切换:分组 <内网分组名> —— 现场选 DIRECT ✓ / 离网选入口节点 ✓
 ⑤ 交付前自检:sh docs/easytier/check-templates.sh   # 不得有明文 secret / 公网 IP ✗
 ```

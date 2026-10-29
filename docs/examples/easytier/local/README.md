@@ -7,20 +7,13 @@
 
 | 文件 | 用途 |
 |---|---|
-| [`client.template.yaml`](client.template.yaml) | 客户端完整配置模板（mixed-port / TUN / DNS / proxy / group / rules） |
 | [`client.example.yaml`](client.example.yaml) | 客户端完整脱敏示例（假值，结构可直接参考） |
 | [`exit.example.yaml`](exit.example.yaml) | 出口完整脱敏示例（TUN、出口节点、DNS、规则） |
-| [`render.sh`](render.sh) | 渲染 `client.template.yaml`；缺任一变量拒绝输出，渲染后做 YAML 自检 |
 
-## 客户端：渲染
+## 客户端
 
-```bash
-LAN_NODE=et-home NET_NAME=example-overlay NET_SECRET=CHANGE_ME \
-RENDEZVOUS=10.200.0.10 EXIT_ADDR=10.200.0.2 PHYS_NIC=en0 GROUP=内网入口 \
-OVERLAY=10.200.0.0/24 HOME_CIDR=192.168.1.0/24 CORP_CIDR=10.0.0.0/8 \
-CORP_DOMAIN=corp.example.com CLUSTER_DOMAIN=cluster.local DNS=10.96.0.10 \
-sh render.sh > my-profile.yaml
-```
+复制 [`client.example.yaml`](client.example.yaml) 后替换 `NET_SECRET`、`peers`、`exit-nodes`、
+网段、域名、`interface-name` 等占位值。
 
 - `PHYS_NIC`：持有本机 LAN 地址、设备名不是 `Meta/tun/utun/easytier*` 的物理网卡；
 - `NET_SECRET`：overlay 入网资格，不能公开；
