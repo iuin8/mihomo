@@ -1,13 +1,13 @@
-# EasyTier 示例（脱敏）
+# EasyTier 示例（按三方部署）
 
-本目录按角色分成三个文件夹；每个角色都有一份**完整、脱敏、可独立阅读**的示例配置。
+本目录按**部署方**分三个文件夹；每方都有完整、脱敏、可独立阅读的示例。
 这里只放假值/占位符，**不放真实 secret、真实内网域名或真实公网 IP**。
 
-| 目录 | 角色 | 完整示例 |
+| 目录 | 部署方 | 完整示例 |
 |---|---|---|
-| [`client/`](client/) | 客户端：接入内网 | `complete.template.yaml` / `complete.example.yaml` |
-| [`exit/`](exit/) | 出口：把家侧的包用自己的网络送出去 | `complete.example.yaml` |
 | [`home/`](home/) | 家侧网关：公告内网 + 可选接管宿主 | `gateway.example.yaml` / `docker-compose.example.yml` |
+| [`rendezvous/`](rendezvous/) | 汇合点：让 NAT 后的两侧互相发现/中继 | `docker-compose.yml` |
+| [`local/`](local/) | 本机：客户端接入内网 / 出口替家侧出网 | `client.template.yaml` / `client.example.yaml` / `exit.example.yaml` |
 
 ## 共同前提
 
@@ -20,9 +20,9 @@
 
 ```bash
 sh docs/easytier/check-templates.sh        # 不得有真实 secret/公网 IP/真实目标
-mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/client/complete.example.yaml
-mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/exit/complete.example.yaml
-mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/home/gateway.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/examples/easytier/local/client.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/examples/easytier/local/exit.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/examples/easytier/home/gateway.example.yaml
 ```
 
 ## 可直接用的私密完整配置

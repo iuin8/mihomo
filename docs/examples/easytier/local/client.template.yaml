@@ -1,10 +1,8 @@
 # ============================================================================
 # 完整独立版「EasyTier 内网接入」配置模板（直接给 fork mihomo / CVR 使用）
 #
-# 与短增量模板的区别：
-#   - 这份是**完整配置**：mixed-port、TUN、DNS、proxies、groups、rules 全都在；
-#   - 不依赖机场订阅；适合没有机场、只想接内网的人；
-#   - 有机场的人仍建议用短模板，把本文件的内网段合并进机场 profile。
+# 这是完整独立配置：mixed-port、TUN、DNS、proxies、groups、rules 全都在；
+# 不依赖机场订阅；有机场的人可把本文件的内网段合并进现有 profile。
 #
 # 安全：<NET_SECRET> 是 overlay 入网资格。分享配置 = 分享入网资格；
 #       对外分享前请另建一套 overlay + secret，或把 secret 留空让对方填。

@@ -3,18 +3,18 @@
 **一句话目标**：任意一台机器，**只装 Clash + 导入一份配置**，就能
 ① 访问我家的内网 ✓　②（可选）**借我的网络出网** ✓ —— 不需要额外容器、不需要 VPN 客户端。
 
-父目录下三个角色，各自一个文件夹：
+示例按**三方部署**放在 `docs/examples/easytier/`：
 
 | 目录 | 角色 | 跑在哪 | 要什么权限 |
 | --- | --- | --- | --- |
-| [`home/`](home/) | **家侧网关**：公告家里网段 ✓、替外网机器落地出网 ✓ | 家里（可 Docker `network_mode: host`） | 建 TUN + 转发（`NET_ADMIN` / 容器 host 网络） |
-| [`exit/`](exit/) | **出口节点**：把家侧的包用自己的网络送出去 ✓（=`本机`/`workstation`） | 一台有"好网络"的机器（本方案里是 Mac） | 同上 |
-| [`rendezvous/`](rendezvous/) | **会合点 / 中继**：让两侧 NAT 后也能连上 ✓ | 任意有公网 IP 的机器（云服务器） | 无（普通容器） |
+| [`home/`](../examples/easytier/home/) | **家侧网关**：公告家里网段 ✓、替外网机器落地出网 ✓ | 家里（可 Docker `network_mode: host`） | 建 TUN + 转发（`NET_ADMIN` / 容器 host 网络） |
+| [`local/`](../examples/easytier/local/) | **本机**：客户端接入内网 / 出口把家侧的包送出去 ✓（`exit.example.yaml`） | 一台普通机器或“好网络”机器 | 客户端 TUN 或出口 TUN |
+| [`rendezvous/`](../examples/easytier/rendezvous/) | **会合点 / 中继**：让两侧 NAT 后也能连上 ✓ | 任意有公网 IP 的机器（云服务器） | 无（普通容器） |
 
 ```text
-家侧 home(10.144.0.2)  ⇄  会合点 rendezvous(公网:11010)  ⇄  出口 exit(10.144.0.6)
+家侧 home(10.200.0.2)  ⇄  会合点 rendezvous(公网:11010)  ⇄  本机 local(10.200.0.6)
 
-> **示例地址声明**：本文档统一用 `10.144.0.0/24` 作为 overlay **示例**网段（`10.144.0.2` / `10.144.0.6` 等同理），
+> **示例地址声明**：本文档统一用 `10.200.0.0/24` 作为 overlay **示例**网段（`10.200.0.2` / `10.200.0.6` 等同理），
 > 可整体替换为你自己的网段；它只作示例，不代表内网业务地址，因此不进 denylist。
    ↑ 公告家里网段、当出口落地                                     ↑ 提供网络、也替家侧落地出网
         └── 家侧的机器（含宿主机终端）→ 需要出去的流量 → 出口 → 互联网
@@ -62,16 +62,17 @@
 
 ## 分享给别人（订阅化 ✓ 模板化 ✓）
 
-示例已按角色整理到 [`examples/`](examples/)：
+示例已按三方部署整理到 [`examples/easytier/`](../examples/easytier/)：
 
-- [`examples/client/`](examples/client/)：完整客户端配置 + 渲染器；
-- [`examples/exit/`](examples/exit/)：完整出口配置；
-- [`examples/home/`](examples/home/)：完整家侧网关配置 + compose。
+- [`examples/easytier/local/`](../examples/easytier/local/)：本机（客户端/出口）完整配置 + 渲染器；
+
+- [`examples/easytier/home/`](../examples/easytier/home/)：家侧完整网关配置 + compose；
+- [`examples/easytier/rendezvous/`](../examples/easytier/rendezvous/)：汇合点部署。
 
 ```text
-① 选对应角色的完整示例（client/exit/home）
+① 选对应部署方的完整示例（home/rendezvous/local）
 ② 填值（或客户端一键渲染）:
-   sh docs/easytier/examples/client/render.sh   # 缺任一变量拒绝输出；输出前校验 YAML
+   sh docs/examples/easytier/local/render.sh   # 缺任一变量拒绝输出；输出前校验 YAML
 ③ 导入:Clash Verge Rev → 订阅 → 导入本地文件/订阅 URL；home/exit 按 README 部署
 ④ 切换:分组 <内网分组名> —— 现场选 DIRECT ✓ / 离网选入口节点 ✓
 ⑤ 交付前自检:sh docs/easytier/check-templates.sh   # 不得有明文 secret / 公网 IP ✗
@@ -99,7 +100,7 @@
 | 配置改对了却"没生效" ✗ | 改的是**生成物**（`clash-verge.yaml`）而不是内核真正读的运行时配置 ✗ | 改 profile ✓ 或改运行时 ✓（两者要一致 ✓） |
 | macOS 上自建 TUN 完全不通 ✗ | macOS `utun` 每包带 **4 字节地址族头** ✗，裸读写会让内核丢弃/误判 ✗ | 本 fork 已修（`tun_packet_darwin.go` ✓）；**必须用本 fork 的内核** ✓ |
 | 一开始"借出口成功"的读数 ✗ | 那是 guest 在宿主上的**裸直连**（不出现在 `/connections`、不经过 TUN ✗） | 判据要看**替对端拨号那条连接的字节数**（`wrote/read` ✓），不要看表象 ✓ |
-| 家侧网关带 `sysctls` + host 网络起不来 ✗ | host 模式下 Docker 禁止设 `ip_forward` ✗ | 删掉 `sysctls` ✓（见 `examples/home/docker-compose.example.yml` ✓） |
+| 家侧网关带 `sysctls` + host 网络起不来 ✗ | host 模式下 Docker 禁止设 `ip_forward` ✗ | 删掉 `sysctls` ✓（见 `../examples/easytier/home/docker-compose.example.yml` ✓） |
 
 ## 安全（对外分享前必看 ✓）
 
@@ -125,4 +126,4 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.baidu.com/   ⇒ 期望 200
 macOS 服务模式下内核被 SIGKILL 的那个坑见 [`service-mode-sigkill.md`](service-mode-sigkill.md) ✓。
 - 想**全自动改配置/重建内核**、或排查"借出口超时"?看 [`ops-sop.md`](ops-sop.md)(特权助手 + 测试纪律 + 故障模式表 ✓)
 
-- [`examples/`](examples/)：完整独立配置的脱敏模板与假值示例（不含真实 secret）
+- [`../examples/easytier/`](../examples/easytier/)：按家侧/汇合点/本机整理的完整脱敏示例
