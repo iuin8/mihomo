@@ -233,7 +233,7 @@ apply 的完整语义（不只是 build + restart）：
 
 1. `utun1024` 存在（最多轮询 20s；缺失时流量绕过内核，读数无意义）；
 2. `/rules` 里**首条** `10.0.0.0/8` 规则指向 `内网入口`（其它 10/8 规则都不算）；
-3. `local-state/probes.conf` 里的目标**全部**通过（当前 403 / 200 / 302）。
+3. `local-state/probes.conf` 里的目标**全部**通过（当前 4 个；具体 URL/期望码只在本机 0600 文件里）。
    · 第三条走 **DIRECT/TUN**（`--noproxy '*'`），不是 mixed-port；若某目标只经 mixed-port 可达，要单独验；
    · 配置里是否还有 frp+ssh 订阅节点只作**现状打印**，不是判据（`check isolated` 才要求"连不上"）。
 
