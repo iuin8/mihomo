@@ -1,6 +1,6 @@
 # EasyTier 示例（按三方部署）
 
-本目录按**部署方**分三个文件夹；每方都有完整、脱敏、可独立阅读的示例。
+本目录按**部署方**分四个文件夹（家侧/汇合点/本机 + Kubernetes 网关）；每方都有完整、脱敏、可独立阅读的示例。
 这里只放假值/占位符，**不放真实 secret、真实内网域名或真实公网 IP**。
 
 | 目录 | 部署方 | 完整示例 |
@@ -8,6 +8,7 @@
 | [`home/`](home/) | 家侧网关：公告内网 + 可选接管宿主 | `gateway.example.yaml` / `docker-compose.example.yml` |
 | [`rendezvous/`](rendezvous/) | 汇合点：让 NAT 后的两侧互相发现/中继 | `docker-compose.example.yml` |
 | [`local/`](local/) | 本机：客户端接入内网 / 出口替家侧出网 | `client.example.yaml` / `exit.example.yaml` |
+| [`k8s/`](k8s/) | Kubernetes 网关：`et-k8s` 节点 | `deployment.example.yaml` + `config.example.yaml` |
 
 ## 目录结构
 
@@ -21,10 +22,15 @@ docs/easytier/examples/
 ├── rendezvous/           # 汇合点
 │   ├── README.md
 │   └── docker-compose.example.yml
-└── local/                # 本机
+├── local/                # 本机
+│   ├── README.md
+│   ├── client.example.yaml
+│   └── exit.example.yaml
+└── k8s/                  # 集群网关
     ├── README.md
-    ├── client.example.yaml
-    └── exit.example.yaml
+    ├── config.example.yaml
+    ├── deployment.example.yaml
+    └── kustomization.yaml
 ```
 
 ## 共同前提
@@ -41,6 +47,8 @@ sh docs/easytier/check-templates.sh        # 不得有真实 secret/公网 IP/�
 mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/local/client.example.yaml
 mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/local/exit.example.yaml
 mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/home/gateway.example.yaml
+mihomo -t -d /tmp/mihomo-validate -f docs/easytier/examples/k8s/config.example.yaml
+kubectl apply --dry-run=client -k docs/easytier/examples/k8s
 ```
 
 ## 可直接用的私密完整配置

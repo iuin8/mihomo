@@ -1,0 +1,63 @@
+# ============================================================================
+# Kubernetes 内的 EasyTier 网关（et-k8s）完整脱敏配置
+#
+# 用途：网关在集群内以 hostNetwork 运行，建 TUN；把集群 Service/Pod 网段
+# 公告给 overlay，外部客户端通过 et-k8s 访问集群内服务。
+#
+# 必改：NET_SECRET / OVERLAY_IP / RENDEZVOUS / CLUSTER_CIDR / POD_CIDR / PHYS_NIC
+# 注意：TUN 的 route-exclude 必须排除集群/宿主私网，否则会把集群流量送进 TUN。
+# ============================================================================
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9095
+
+tun:
+  enable: true
+  stack: gvisor
+  auto-route: true
+  auto-detect-interface: true
+  route-exclude-address:
+    - 10.0.0.0/8          # 示例：集群/宿主私网，按实际环境调整
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+    - 169.254.0.0/16
+  mtu: 1500
+
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+
+proxies:
+  - name: et-k8s
+    type: easytier
+    network-name: example-overlay
+    network-secret: "<NET_SECRET>"
+    hostname: easytier-gateway
+    ipv4: 10.200.0.30/24       # overlay 内唯一地址（示例）
+    tun: true
+    tun-routes: []
+    proxy-networks:
+      - 10.68.0.0/16           # 示例：Service CIDR
+      - 172.20.0.0/16          # 示例：Pod CIDR
+    enable-exit-node: true
+    no-listener: true
+    udp: true
+    mtu: 1380
+    prewarm: true
+    interface-name: eth0       # hostNetwork 下通常是 eth0；按节点实际网卡调整
+    peers:
+      - tcp://10.200.0.10:11010
+    state-dir: ./easytier
+
+rules:
+  # 网关自身不做业务分流；TUN 只负责宿主/出口流量，集群私网已 route-exclude
+  - MATCH,DIRECT

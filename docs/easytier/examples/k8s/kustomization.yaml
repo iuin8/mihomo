@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: default
+resources:
+  - deployment.example.yaml
+configMapGenerator:
+  - name: easytier-gateway
+    files:
+      - config.yaml=config.example.yaml
+generatorOptions:
+  # 直接 apply 时保持固定名字；改配置后 apply 会更新 ConfigMap
+  disableNameSuffixHash: true

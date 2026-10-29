@@ -1,0 +1,102 @@
+# ============================================================================
+# Kubernetes 部署：EasyTier 网关（hostNetwork + TUN）
+# 配置由 kustomization.yaml 的 configMapGenerator 从 config.example.yaml 生成。
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: easytier-gateway-state
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: standard   # 按集群实际 StorageClass 修改
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easytier-gateway
+  namespace: default
+  labels:
+    app: easytier-gateway
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: easytier-gateway
+  template:
+    metadata:
+      labels:
+        app: easytier-gateway
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: mihomo
+          image: ghcr.io/iuin8/mihomo:v1.19.31-fa.1001
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          startupProbe:
+            exec:
+              command:
+                - wget
+                - -qO-
+                - http://127.0.0.1:9095/version
+            failureThreshold: 30
+            periodSeconds: 10
+            timeoutSeconds: 1
+          readinessProbe:
+            exec:
+              command:
+                - wget
+                - -qO-
+                - http://127.0.0.1:9095/version
+            failureThreshold: 4
+            periodSeconds: 15
+            timeoutSeconds: 1
+          livenessProbe:
+            exec:
+              command:
+                - wget
+                - -qO-
+                - http://127.0.0.1:9095/version
+            failureThreshold: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /root/.config/mihomo/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: state
+              mountPath: /root/.config/mihomo/easytier
+            - name: tun
+              mountPath: /dev/net/tun
+      volumes:
+        - name: config
+          configMap:
+            name: easytier-gateway
+        - name: state
+          persistentVolumeClaim:
+            claimName: easytier-gateway-state
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
