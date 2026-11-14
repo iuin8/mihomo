@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/easytier/easytier/easytier-go/internal/artifact"
 	"github.com/easytier/easytier/easytier-go/internal/contextutil"
 	"github.com/easytier/easytier/easytier-go/internal/coreabi"
 	"github.com/easytier/easytier/easytier-go/internal/hostabi"
@@ -68,8 +67,7 @@ func NewHost(ctx context.Context, options Options) (_ *Host, err error) {
 	}
 
 	lifetime, cancel := context.WithCancel(contextutil.WithoutCancel(ctx))
-	// FORK: 解释器运行时——避免 wazero JIT 生成的可执行页被 macOS 代码签名策略判非法
-	runtime := wazero.NewRuntimeWithConfig(lifetime, wazero.NewRuntimeConfigInterpreter())
+	runtime := newRuntime(lifetime)
 	var module api.Module
 	var hostReactor *reactor.Reactor
 	defer func() {
@@ -100,16 +98,16 @@ func NewHost(ctx context.Context, options Options) (_ *Host, err error) {
 	if err = adapter.Instantiate(ctx, runtime); err != nil {
 		return nil, fmt.Errorf("instantiate EasyTier host ABI: %w", err)
 	}
-	compiled, err := runtime.CompileModule(ctx, artifact.Core())
+	compiled, release, err := compileCore(ctx, runtime)
 	if err != nil {
 		return nil, fmt.Errorf("compile embedded EasyTier core: %w", err)
 	}
-	defer compiled.Close(contextutil.WithoutCancel(ctx))
+	defer release()
 	moduleConfig := newModuleConfig()
 	if options.LogWriter != nil {
 		moduleConfig = moduleConfig.WithStdout(options.LogWriter)
 	}
-	module, err = runtime.InstantiateModule(ctx, compiled, moduleConfig)
+	module, err = runtime.InstantiateModule(withGuestMemoryAllocator(ctx), compiled, moduleConfig)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate embedded EasyTier core: %w", err)
 	}

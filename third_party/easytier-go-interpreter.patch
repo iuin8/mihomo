@@ -1,14 +1,20 @@
-diff --git a/internal/engine/host.go b/internal/engine/host.go
-index db2c769..a81519c 100644
---- a/internal/engine/host.go
-+++ b/internal/engine/host.go
-@@ -68,7 +68,8 @@ func NewHost(ctx context.Context, options Options) (_ *Host, err error) {
- 	}
+--- a/internal/engine/compile.go
++++ b/internal/engine/compile.go
+@@ -21,13 +21,10 @@
+ }
  
- 	lifetime, cancel := context.WithCancel(contextutil.WithoutCancel(ctx))
--	runtime := wazero.NewRuntime(lifetime)
-+	// FORK: 解释器运行时——避免 wazero JIT 生成的可执行页被 macOS 代码签名策略判非法
-+	runtime := wazero.NewRuntimeWithConfig(lifetime, wazero.NewRuntimeConfigInterpreter())
- 	var module api.Module
- 	var hostReactor *reactor.Reactor
- 	defer func() {
+ func newRuntime(ctx context.Context) wazero.Runtime {
+-	coreCompilation.Lock()
+-	if coreCompilation.cache == nil {
+-		coreCompilation.cache = wazero.NewCompilationCache()
+-	}
+-	cache := coreCompilation.cache
+-	coreCompilation.Unlock()
+-	return wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCompilationCache(cache))
++	// FORK: interpreter runtime. The privileged service re-signs the core with a
++	// hardened runtime that forbids JIT pages; wazero's compiler would otherwise
++	// generate machine code and the kernel gets killed by code signing.
++	return wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter())
+ }
+ 
+ // compileCore returns the core compiled in runtime and a function that drops

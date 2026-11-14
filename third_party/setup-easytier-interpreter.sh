@@ -63,8 +63,8 @@ for patch_file in "${patch_files[@]}"; do
 done
 
 # 断言补丁真的落地了，避免静默退化成 JIT
-grep -q 'NewRuntimeConfigInterpreter' "$build/internal/engine/host.go" || fail "补丁未生效：$build/internal/engine/host.go 里没有解释器运行时"
-grep -q 'wazero.NewRuntime(' "$build/internal/engine/host.go" && fail "仍有 wazero.NewRuntime( 直调（JIT），补丁不完整"
+grep -q 'NewRuntimeConfigInterpreter' "$build/internal/engine/compile.go" || fail "补丁未生效：$build/internal/engine/compile.go 里没有解释器运行时"
+grep -q 'wazero.NewRuntime(' "$build/internal/engine/compile.go" && fail "仍有 wazero.NewRuntime( 直调（JIT），补丁不完整"
 
 # 3) 安装 fork-owned artifact，并做完整门禁。
 cp -p "$artifact_dir/easytier_core.wasm" "$build/internal/artifact/easytier_core.wasm"

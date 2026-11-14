@@ -1,3 +1,20 @@
+## v1.19.34-fa.0（mihomo 上游合并，2026-11-14）
+
+- 合并上游 `v1.19.34`（17 commits）；冲突仅 `adapter/outbound/easytier.go`、`go.mod`：
+  - `easytier.go`：fork TUN bridge 已经消费 host packet；`tun:true` 时不再启动上游
+    `drainHostPackets`，`tun:false` 才启动，避免双消费者抢包；
+  - `go.mod`：保留 fork 的 `replace ... => ./third_party/easytier-go`，同时升级
+    `easytier-go` 到 `2abb1676`、`mieru` 到 `3.39.0` 及上游其他依赖。
+- `third_party/easytier-go` 从 2abb 模块重建，fork patches 重新套用；
+  `third_party/easytier-go-artifact` 用 EasyTier `2abb1676` 重编：
+  - wasm SHA256 `8c2ca817…`；schema `fbf1c987…`；解释器补丁已从旧 `host.go`
+    迁移到上游新 `internal/engine/compile.go`（上游已把 runtime 构造抽到那里）。
+- 验证：`go build ./...` PASS；`go test ./...` PASS；
+  `go test ./adapter/outbound ./component/easytier` PASS。
+- 注意：vendored `third_party/easytier-go/tests` 的 macOS UDP 最大载荷用例报
+  `message too long`（测试/宿主 socket 限制，非主模块测试）；发布前仍需真机
+  EasyTier/TUN 验收。
+
 # 发布记录（镜像 tag ↔ 内核版本）
 
 > 只有本 fork 的镜像/内核可用：上游内核会静默忽略 `tun: true`。
