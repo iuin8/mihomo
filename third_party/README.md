@@ -3,7 +3,7 @@
 ## 为什么有 `easytier-go/`
 
 `component/easytier` 通过 `github.com/easytier/easytier/easytier-go` 把 EasyTier 以 **WASI guest**（wazero）方式跑在内核里。
-该依赖内部在 `internal/engine/host.go` 用 **`wazero.NewRuntime(lifetime)`** 创建运行时 —— 那是 **编译器运行时（JIT）**，
+该依赖内部在 `internal/engine/compile.go` 的 `newRuntime` 创建运行时 —— 上游使用 **编译器运行时（JIT）**，
 且**没有对外注入口子**（`Options` 里没有 runtime 配置）。
 
 macOS 上这会致命：
@@ -16,8 +16,8 @@ macOS 上这会致命：
 所以本 fork 把该依赖的那一行改为**解释器运行时**，彻底不生成机器码：
 
 ```go
-// 原：runtime := wazero.NewRuntime(lifetime)                                      // 编译器 / JIT
-// 现：runtime := wazero.NewRuntimeWithConfig(lifetime, wazero.NewRuntimeConfigInterpreter())
+// 原：wazero.NewRuntimeConfig().WithCompilationCache(cache)          // 编译器 / JIT
+// 现：wazero.NewRuntimeConfigInterpreter()                           // 解释器运行时
 ```
 
 行为差异只在性能：WASI 走解释器会慢一些，但 **TUN 模式下数据面走原生路径**，家里内网吞吐不受影响
@@ -28,7 +28,7 @@ macOS 上这会致命：
 | 文件 | 说明 |
 | --- | --- |
 | `easytier-go/` | `github.com/easytier/easytier/easytier-go` 的副本，只在下面列出的补丁涉及的文件上与上游不同（`testdata/` 为省体积已删，只影响该依赖自身的测试） |
-| `easytier-go-interpreter.patch` | 解释器运行时（`internal/engine/host.go`），见上一节 |
+| `easytier-go-interpreter.patch` | 解释器运行时（`internal/engine/compile.go`），见上一节 |
 | `easytier-go-host-misc.patch` | ① 把 guest 的 stdout/stderr 接到 mihomo 的日志（`internal/{engine,host}/host.go` 的 `LogWriter`）；② 新增 `tests/host_route_learning_test.go`，以 Skip 记录「经中心学路由」这条缺失的覆盖 |
 | `easytier-go-patch-config.patch` | 公开 `Instance.PatchConfig`（`internal/host/rpc.go`），让宿主能在实例起来后对账创建期 TOML 里生效不了的字段（见 `component/easytier/proxy_network.go`） |
 | `easytier-go-artifact/` | 用 pin 的 EasyTier 源码重编的 guest wasm + provenance + `SHA256SUMS`；上游 artifact 的 provenance 指向不可达提交，fork 必须固定自己的 commit/sha/schema/feature。 |
