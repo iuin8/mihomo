@@ -48,7 +48,7 @@ SIG=$(codesign -dv "$NEW" 2>&1 | grep CodeDirectory || true)
 case "$SIG" in *runtime*) echo "✗ flags 含 runtime（Hardened Runtime 会杀 wazero JIT）⇒ 拒绝" >&2; exit 1;; esac
 
 TARGETS=("$SVC"); [ "$MODE" = app ] && TARGETS+=("$APP")
-echo "① 目标（$MODE）"
+echo "① 目标（${MODE}）"
 for t in "${TARGETS[@]}"; do
   [ -f "$t" ] && echo "   $t = $(shasum -a 256 "$t" | awk '{print $1}')" || echo "   $t = (不存在)"
 done
