@@ -349,7 +349,24 @@ func (e *EasyTier) init() error {
 		e.mu.Unlock()
 		log.Infoln("[EasyTier](%s) tun mode enabled on %s", e.Name(), e.tunPrefix)
 	}
+	// Upstream v1.19.34 drains otherwise-unused host packets. The fork's TUN
+	// bridge (tun:true) already consumes ReceivePacket; starting this drain as well
+	// would race the bridge for the same packets.
+	if !e.option.Tun {
+		go e.drainHostPackets(instance)
+	}
 	return nil
+}
+
+// The outbound uses the core's netstack, not a host TUN device. Drain unused
+// raw IP packets so the bounded host packet queue cannot stall the data plane.
+// ReceivePacket unblocks when the instance closes or the adapter is canceled.
+func (e *EasyTier) drainHostPackets(instance *corehost.Instance) {
+	for {
+		if _, err := instance.ReceivePacket(e.ctx); err != nil {
+			return
+		}
+	}
 }
 
 func (e *EasyTier) currentInstance() (*corehost.Instance, error) {
